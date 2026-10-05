@@ -1,9 +1,11 @@
 import { processImage, DEFAULT_PROC } from './core/processing.js';
+import { imageReady } from './core/imageload.js';
 import { shapesToGeometry, toWorld } from './core/geometry.js';
 import { stlBinary, threeMF, objWithMtl, svg, mergeToIndexed } from './core/exporters.js';
 import { buildFeatures, DEFAULT_SETTINGS, pencilAcross } from './core/features.js';
 import { renderTextImage, ensureFont, BUNDLED_FONTS, DEFAULT_TEXT } from './core/text.js';
 import { MODULES, MIC_PRESETS, CAKE_PRESETS, mergeDeep } from './modules.js';
+import { BODY_PRESETS, BODY_SHAPES, fitSlotY, parseSTL, autoOrient, placeCustomBody } from './core/micbody.js';
 import { Viewer3D } from './viewer3d.js';
 import { View2D, isTyping } from './view2d.js';
 import { Studio } from './studio.js';
@@ -19,7 +21,8 @@ document.addEventListener('mousedown', (e) => {
   if (isNumField(t) && document.activeElement !== t) { e.preventDefault(); t.focus(); t.select(); }
 });
 document.addEventListener('focusin', (e) => { if (isNumField(e.target)) e.target.select(); });
-const nextFrame = () => new Promise((r) => requestAnimationFrame(() => setTimeout(r, 0)));
+// rAF is paused while the window is hidden/occluded: never wait more than 100 ms for it.
+const nextFrame = () => new Promise((r) => { const t = setTimeout(r, 100); requestAnimationFrame(() => setTimeout(() => { clearTimeout(t); r(); }, 0)); });
 const escHtml = (s) => String(s).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
 const textOn = (hex) => {
   const n = parseInt(hex.slice(1), 16);
@@ -51,6 +54,7 @@ const pieceGeoms = new Map();
 let feat = null;             // buildFeatures() output
 let featParts = [];          // [{ key, name, fil, geometry, height, z, solid }]
 let ringDragPos = null;
+let bodyDragPos = null;
 
 // ---------------------------------------------------------------- views
 const view2d = new View2D($('canvas2d'), {
@@ -67,7 +71,15 @@ const view2d = new View2D($('canvas2d'), {
   onPlace: (x, y) => { stopPlacing(); placeRing(x, y); },
   onRingMove: (x, y) => { ringDragPos = [x, y]; },
   onRingDrop: (x, y) => { ringDragPos = null; placeRing(x, y); },
+  onBodyMove: (x, y) => { bodyDragPos = [x, y]; },
+  onBodyDrop: (x, y) => { bodyDragPos = null; placeBody(x, y); },
 });
+// Body centre (image px) → offset of the body relative to the design centre (mm, y-up).
+function placeBody(x, y) {
+  const [cx, cy] = center(), s = scale();
+  Object.assign(S.settings.micBody, { ox: Math.round((x - cx) * s * 10) / 10, oy: Math.round((cy - y) * s * 10) / 10 });
+  onSettingChanged('micBody.ox');
+}
 function placeRing(x, y) {
   Object.assign(S.settings.ring, { x, y, enabled: true, pos: 'manual' });
   rebuildFeatures();
@@ -97,7 +109,7 @@ const filamentIndex = (id) => Math.max(0, S.filaments.findIndex((f) => f.id === 
 const baseZ = () => feat?.pieceZ ?? 0;
 const filFor = (fil) => {
   const set = S.settings;
-  const id = fil === 'ring' ? set.ring.filament : fil === 'pencil' ? set.pencil.filament : set.base.filament;
+  const id = fil === 'ring' ? set.ring.filament : fil === 'pencil' ? set.pencil.filament : fil === 'micBody' ? set.micBody.filament : set.base.filament;
   return S.filaments.some((f) => f.id === id) ? id : (S.filaments.some((f) => f.id === set.base.filament) ? set.base.filament : S.filaments[0]?.id);
 };
 
@@ -110,7 +122,14 @@ function getDrawData() {
     hidePieces: !!feat?.hidePieces,
     marks: feat?.magnets || null,
     ring: r && S.settings.ring.enabled ? { ...r, ...(ringDragPos ? { x: ringDragPos[0], y: ringDragPos[1] } : {}) } : null,
+    body: bodyDraw(),
   };
+}
+function bodyDraw() {
+  const b = feat?.body;
+  if (!b) return null;
+  const dx = bodyDragPos ? bodyDragPos[0] - b.x : 0, dy = bodyDragPos ? bodyDragPos[1] - b.y : 0;
+  return { x: b.x + dx, y: b.y + dy, outline: dx || dy ? b.outline.map(([x, y]) => [x + dx, y + dy]) : b.outline, color: filament(filFor('micBody')).color };
 }
 
 function showBusy(text) { $('busyText').textContent = text; $('busy').hidden = false; }
@@ -147,7 +166,7 @@ async function loadImageFile(file) {
 async function loadImage(dataURL, name, state, { keep = false, source = 'image' } = {}) {
   const el = new Image();
   el.src = dataURL;
-  try { await el.decode(); } catch { toast('No se pudo leer la imagen.', true); return; }
+  try { await imageReady(el); } catch { toast('No se pudo leer la imagen.', true); return; }
   S.image = { name, dataURL, el };
   S.source = source;
   $('docName').textContent = source === 'text' ? '' : '· ' + name;
@@ -186,7 +205,7 @@ async function runProcessing(state = null, { keepSettings = false } = {}) {
     if (keepSettings) {
       const fresh = S.settings;
       S.settings = withDefaults(prevSettings);
-      for (const k of ['base', 'ring', 'pencil']) S.settings[k].filament = fresh[k].filament;
+      for (const k of ['base', 'ring', 'pencil', 'micBody']) S.settings[k].filament = fresh[k].filament;
     }
     if (state && state.pieces?.length === res.pieces.length) applyEditable(state);
     else if (state) { S.settings = withDefaults(state.settings); }
@@ -235,6 +254,7 @@ function setDefaults(res) {
   S.settings.base.filament = fid;
   S.settings.ring.filament = fid;
   S.settings.pencil.filament = fid;
+  S.settings.micBody.filament = fid;
   S.groups = [];
 }
 
@@ -270,7 +290,7 @@ function rebuildFeatures() {
   feat = null;
   if (!S.result) { view2d.setUnderlays([]); view2d.setBounds(null); renderWarnings(); return; }
   try {
-    feat = buildFeatures(S.result, S.settings, { scale: scale(), center: center(), detail: S.proc.detail, smooth: S.proc.smooth });
+    feat = buildFeatures(S.result, S.settings, { scale: scale(), center: center(), detail: S.proc.detail, smooth: S.proc.smooth, customBody: customBodyFor(S.settings.micBody) });
   } catch (err) {
     console.error(err);
     toast('No se pudieron generar los accesorios: ' + err.message, true);
@@ -290,7 +310,7 @@ function rebuildFeatures() {
       const key = 'S:' + so.key, color = filament(filFor(so.fil)).color;
       viewer.setExtra(key, so.geometry, { color, height: 1, z: 0 });
       featParts.push({ key, name: so.name, fil: so.fil, geometry: so.geometry, solid: true, shapes: so.footprint });
-      under.push({ shapes: so.footprint, color, alpha: 0.85, dashed: true });
+      if (so.fil !== 'micBody') under.push({ shapes: so.footprint, color, alpha: 0.85, dashed: true });
     }
   }
   view2d.setUnderlays(under);
@@ -386,7 +406,7 @@ async function restore(json) {
     if (s.source === 'text') {
       await ensureFont(S.text.font, S.text.weight);
       const r = renderTextImage(S.text, s.settings.widthMM);
-      const el = new Image(); el.src = r.dataURL; await el.decode();
+      const el = new Image(); el.src = r.dataURL; await imageReady(el);
       S.image = { name: 'texto.png', dataURL: r.dataURL, el };
     }
     S.source = s.source;
@@ -611,7 +631,7 @@ $('filamentList').addEventListener('click', (e) => {
   S.filaments = S.filaments.filter((f) => f.id !== id);
   for (const p of S.pieces) if (p.filament === id) p.filament = fallback;
   S.clusterFilament = S.clusterFilament.map((f) => (f === id ? fallback : f));
-  for (const k of ['base', 'ring', 'pencil']) if (S.settings[k].filament === id) S.settings[k].filament = fallback;
+  for (const k of ['base', 'ring', 'pencil', 'micBody']) if (S.settings[k].filament === id) S.settings[k].filament = fallback;
   refresh(); commit();
 });
 $('btnAddFilament').onclick = () => {
@@ -691,6 +711,8 @@ function syncSettingsInputs() {
   const across = pencilAcross(p);
   $('pencilInfo').textContent = `Lápiz ≈ ${fmt(across)} mm de ancho · ${fmt(across * (p.type === 'round' ? Math.PI : p.type === 'hex' ? 6 / Math.sqrt(3) : 0) + (p.type === 'triangle' ? 2 * Math.sqrt(3) * Math.max(0.5, across - 2) + 2 * Math.PI : 0))} mm de circunferencia · canal interior ${fmt(across + p.tolerance)} mm`;
   renderFilaments();
+  try { renderMicBodyUI(); } catch { /* not initialised yet during startup */ }
+  document.body.classList.toggle('has-micbody', !!S.settings.micBody?.enabled);
   renderStatus();
 }
 
@@ -745,6 +767,117 @@ $('cakePreset').addEventListener('change', (e) => {
   mergeDeep(S.settings.sticks, { ...p.sticks, enabled: true });
   onSettingChanged('widthMM');
 });
+// ---------------------------------------------------------------- mic body
+const MB_LIB_KEY = 'r3d.micBodies';
+const mbRaw = new Map(), mbPlaced = new Map();
+const mbLib = () => { try { return JSON.parse(localStorage.getItem(MB_LIB_KEY) || '[]'); } catch { return []; } };
+const f32ToB64 = (a) => { const u = new Uint8Array(a.buffer, a.byteOffset, a.byteLength); let s = ''; for (let i = 0; i < u.length; i += 0x8000) s += String.fromCharCode(...u.subarray(i, i + 0x8000)); return btoa(s); };
+const b64ToF32 = (b) => { const s = atob(b), u = new Uint8Array(s.length); for (let i = 0; i < s.length; i++) u[i] = s.charCodeAt(i); return new Float32Array(u.buffer); };
+function customBodyFor(mb) {
+  if (!mb?.enabled || mb.shape !== 'custom' || !mb.customId) return null;
+  const key = mb.customId + '|' + (mb.customRot || [0, 0, 0]).join(',');
+  if (mbPlaced.has(key)) return mbPlaced.get(key);
+  let raw = mbRaw.get(mb.customId);
+  if (!raw) {
+    const e = mbLib().find((x) => x.id === mb.customId);
+    if (!e) return null;
+    raw = b64ToF32(e.data);
+    mbRaw.set(mb.customId, raw);
+  }
+  const r = { positions: placeCustomBody(raw, mb.customRot).body };
+  mbPlaced.set(key, r);
+  return r;
+}
+function renderMicBodyUI() {
+  $('micBodyPreset').innerHTML = '<option value="">— elegir —</option>' + Object.entries(BODY_PRESETS).map(([k, p]) => `<option value="${k}">${escHtml(p.name)}</option>`).join('')
+    + mbLib().map((e) => `<option value="custom:${e.id}">📦 ${escHtml(e.name)}</option>`).join('');
+  $('micBodyShape').innerHTML = Object.entries(BODY_SHAPES).map(([k, n]) => `<option value="${k}">${escHtml(n)}</option>`).join('');
+  $('micBodyCustom').innerHTML = mbLib().map((e) => `<option value="${e.id}">${escHtml(e.name)}</option>`).join('') || '<option value="">(ninguno cargado)</option>';
+  const mb = S.settings.micBody;
+  $('micBodyShape').value = mb.shape;
+  $('micBodyCustom').value = mb.customId || '';
+  $('micBodyPreset').value = mb.shape === 'custom' ? (mb.customId ? 'custom:' + mb.customId : '') : (mb.preset && BODY_PRESETS[mb.preset] ? mb.preset : '');
+}
+renderMicBodyUI();
+$('micBodyPreset').addEventListener('change', (e) => {
+  const v = e.target.value, mb = S.settings.micBody;
+  if (!v) return;
+  if (v.startsWith('custom:')) {
+    const id = v.slice(7), ent = mbLib().find((x) => x.id === id);
+    Object.assign(mb, { shape: 'custom', customId: id, customRot: ent?.rot || [0, 0, 0], preset: null });
+  } else {
+    const keep = { enabled: true, filament: mb.filament, ox: mb.ox, oy: mb.oy, rot: mb.rot, customId: mb.customId, customRot: mb.customRot };
+    Object.assign(mb, structuredClone(BODY_PRESETS[v]), keep, { preset: v });
+    delete mb.name;
+  }
+  renderMicBodyUI();
+  onSettingChanged('micBody.preset');
+});
+$('micBodyShape').addEventListener('change', () => { S.settings.micBody.preset = null; renderMicBodyUI(); });
+$('micBodyCustom').addEventListener('change', (e) => {
+  const ent = mbLib().find((x) => x.id === e.target.value);
+  if (!ent) return;
+  Object.assign(S.settings.micBody, { customId: ent.id, customRot: ent.rot || [0, 0, 0] });
+  renderMicBodyUI();
+  onSettingChanged('micBody.customId');
+});
+$('btnMicBodyLoad').onclick = () => $('micBodyFile').click();
+$('micBodyFile').addEventListener('change', async (e) => {
+  const file = e.target.files[0];
+  e.target.value = '';
+  if (!file) return;
+  try {
+    const raw = parseSTL(await file.arrayBuffer());
+    if (!raw.length) throw new Error('El STL no tiene triángulos.');
+    const rot = autoOrient(raw), id = 'b' + Date.now().toString(36);
+    const name = file.name.replace(/\.stl$/i, '');
+    const lib = mbLib().filter((x) => x.name !== name);
+    lib.push({ id, name, rot, data: f32ToB64(raw) });
+    try { localStorage.setItem(MB_LIB_KEY, JSON.stringify(lib)); } catch { toast('El STL es muy grande para guardarlo en la biblioteca; se usará solo en esta sesión.', true); }
+    mbRaw.set(id, raw);
+    Object.assign(S.settings.micBody, { enabled: true, shape: 'custom', customId: id, customRot: rot, preset: null });
+    renderMicBodyUI();
+    onSettingChanged('micBody.customId');
+    const size = placeCustomBody(raw, rot).size;
+    toast(`Cuerpo cargado: ${size.map((v) => fmt(v)).join(' × ')} mm`);
+  } catch (err) { toast('No se pudo leer el STL: ' + err.message, true); }
+});
+const rotCustom = (axis) => {
+  const mb = S.settings.micBody;
+  if (!mb.customId) return;
+  const r = [...(mb.customRot || [0, 0, 0])];
+  r[axis] = (r[axis] + 90) % 360;
+  mb.customRot = r;
+  const lib = mbLib(), ent = lib.find((x) => x.id === mb.customId);
+  if (ent) { ent.rot = r; try { localStorage.setItem(MB_LIB_KEY, JSON.stringify(lib)); } catch { /* keep in memory */ } }
+  onSettingChanged('micBody.customRot');
+};
+$('btnMicBodyRotX').onclick = () => rotCustom(0);
+$('btnMicBodyRotY').onclick = () => rotCustom(1);
+$('btnMicBodyDel').onclick = async () => {
+  const mb = S.settings.micBody;
+  if (!mb.customId) return;
+  const r = await window.api.confirm({ message: '¿Quitar este cuerpo de la biblioteca?', buttons: ['Quitar', 'Cancelar'], cancelId: 1 });
+  if (r !== 0) return;
+  localStorage.setItem(MB_LIB_KEY, JSON.stringify(mbLib().filter((x) => x.id !== mb.customId)));
+  mbRaw.delete(mb.customId);
+  Object.assign(mb, structuredClone(BODY_PRESETS.square), { shape: 'rect', preset: 'square', customId: null });
+  delete mb.name;
+  renderMicBodyUI();
+  onSettingChanged('micBody.shape');
+};
+$('btnMicSlotFit').onclick = () => {
+  const mb = S.settings.micBody;
+  const r = fitSlotY(mb);
+  mb.slotY = r.slotY;
+  onSettingChanged('micBody.slotY');
+  toast(r.wall >= 1.2 ? `Hueco centrado: pared mínima ${fmt(r.wall)} mm` : 'El hueco no cabe en esta forma: reduce la ranura o agranda el cuerpo.', r.wall < 1.2);
+};
+$('btnMicBodyCenter').onclick = () => {
+  Object.assign(S.settings.micBody, { ox: 0, oy: 0 });
+  onSettingChanged('micBody.ox');
+};
+
 $('btnPlaceRing').onclick = () => {
   if (!S.result) return;
   view2d.placing = true;
@@ -837,7 +970,7 @@ async function doExport(kind) {
     if (kind === 'svg') {
       const layers = [];
       const s = scale();
-      for (const fp of featParts) layers.push({ name: fp.name, color: filament(filFor(fp.fil)).color, items: [fp.shapes] });
+      for (const fp of featParts) if (fp.key !== 'S:micrings') layers.push({ name: fp.name, color: filament(filFor(fp.fil)).color, items: [fp.shapes] });
       if (!feat?.hidePieces) for (const f of S.filaments) {
         const items = S.result.pieces.filter((p) => S.pieces[p.id].enabled && S.pieces[p.id].filament === f.id).map((p) => p.shapes);
         if (items.length) layers.push({ name: f.name, color: f.color, items });
@@ -1107,7 +1240,7 @@ async function enterModule(id) {
   if (keep) {
     const old = S.settings;
     S.settings = moduleSettings(id);
-    for (const k of ['base', 'ring', 'pencil']) S.settings[k].filament = old[k].filament ?? old.base.filament;
+    for (const k of ['base', 'ring', 'pencil', 'micBody']) S.settings[k].filament = old[k]?.filament ?? old.base.filament;
     applyModuleUI();
     if (S.source === 'text') { await applyText(); } else { rebuildFeatures(); refresh(); viewer.frame(); commit(); }
     syncSettingsInputs();
@@ -1164,7 +1297,7 @@ if (stUpdate) {
     else if (d.state === 'up-to-date' || d.state === 'error') stUpdate.hidden = true;
   });
 }
-window.__r3d = { S, setSelection, doExport, exportParts, undo, redo, commit, hist, setViewMode, enterModule, applyText, showHome, studio, getFeat: () => feat, onSettingChanged, placeRing, loadImageFile };
+window.__r3d = { S, setSelection, doExport, exportParts, undo, redo, commit, hist, setViewMode, enterModule, applyText, showHome, studio, getFeat: () => feat, onSettingChanged, placeRing, loadImageFile, view2d };
 
 syncProcInputs();
 updateUndoButtons();

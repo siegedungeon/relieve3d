@@ -14,9 +14,9 @@ export const MODULES = [
   },
   {
     id: 'mic', group: '3d', icon: '🎤', title: 'Logo para micrófono', source: 'image',
-    desc: 'Mic flag viral para DJI, Hollyland, Rode o verticales: imán o clip.',
-    cards: ['mic', 'base', 'magnets', 'tongue'],
-    patch: { widthMM: 32, base: { enabled: true, shape: 'circle', plateW: 40, plateH: 40, thickness: 3, margin: 1.5 }, magnets: { enabled: true, count: 1, diameter: 10, depth: 2 } },
+    desc: 'Mic flag viral para DJI, Hollyland, Rode o verticales: cuerpo completo con hueco, o placa con imán / clip.',
+    cards: ['micbody', 'mic', 'base', 'magnets', 'tongue'],
+    patch: { widthMM: 42, base: { enabled: true, shape: 'contour', thickness: 2, margin: 2 }, magnets: { enabled: false }, micBody: { enabled: true } },
   },
   {
     id: 'logo', group: '3d', icon: '🧩', title: 'Logo / figura en relieve', source: 'image',

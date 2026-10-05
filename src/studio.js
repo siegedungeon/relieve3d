@@ -4,13 +4,15 @@ import { processImage, DEFAULT_PROC } from './core/processing.js';
 import { edt, dilate, close, fillHoles, fillSmallHoles, components, connectIslands, fillPolygon, traceMask, maskBBox, countOn } from './core/raster.js';
 import { renderTextImage, ensureFont, BUNDLED_FONTS } from './core/text.js';
 import { CAKE_PRESETS } from './modules.js';
+import { imageReady } from './core/imageload.js';
 
 const BORDER = 200, SIL = 201, STICK = 202;   // special labels in the composite raster
 const fmt = (v) => String(Math.round(v * 100) / 100);
 const parseNum = (s) => parseFloat(String(s).trim().replace(',', '.'));
 const esc = (s) => String(s).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
 const hexRGB = (h) => { const n = parseInt(h.slice(1), 16); return [(n >> 16) & 255, (n >> 8) & 255, n & 255]; };
-const nextFrame = () => new Promise((r) => requestAnimationFrame(() => setTimeout(r, 0)));
+// rAF is paused while the window is hidden/occluded: never wait more than 100 ms for it.
+const nextFrame = () => new Promise((r) => { const t = setTimeout(r, 100); requestAnimationFrame(() => setTimeout(() => { clearTimeout(t); r(); }, 0)); });
 
 export const STUDIO_DEFAULTS = (mode) => ({
   mode,
@@ -368,7 +370,7 @@ export class Studio {
     this.cb.showBusy('Vectorizando…');
     await nextFrame();
     try {
-      const img = new Image(); img.src = src.dataURL; await img.decode();
+      const img = new Image(); img.src = src.dataURL; await imageReady(img);
       this.srcImage = img;
       const maxRes = 1400;
       const k = Math.min(1, maxRes / Math.max(img.naturalWidth, img.naturalHeight));
@@ -463,7 +465,7 @@ export class Studio {
     const r = renderTextImage({ text: e.text, font: e.font, weight: e.weight || 700, align: 'center', fill: '#000000', outline: false, thicken: 0 }, 100);
     const img = new Image(); img.src = r.dataURL;
     const cv = document.createElement('canvas'); cv.width = r.width; cv.height = r.height;
-    img.decode().then(() => {
+    imageReady(img).then(() => {
       const cx = cv.getContext('2d', { willReadFrequently: true });
       cx.drawImage(img, 0, 0);
       const d = cx.getImageData(0, 0, cv.width, cv.height);

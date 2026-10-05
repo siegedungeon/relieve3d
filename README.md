@@ -35,7 +35,7 @@ Al abrir aparece una **pantalla de inicio** para elegir qué crear (botón **Ini
 |---|---|
 | Llavero | Nombre o logo con silueta y argolla reforzada que se arrastra a cualquier posición |
 | Marcador de lápiz | Nombre con funda para lápiz redondo, hexagonal o triangular (calibre, largo, ancho del nombre, borde/silueta, fuentes del equipo) |
-| Logo para micrófono | Mic flag viral (círculo, estrella, cuadrado, corazón…) con presets DJI, Hollyland, Rode y verticales; sujeción por imán o lengüeta de clip |
+| Logo para micrófono | **Cuerpo completo** del mic flag (cuadrado, estrella, corazón, círculo, hexágono) con bordes redondeados, hueco inferior para el micrófono + ranura del clip (DJI, Hollyland, chinos verticales), aros laterales opcionales y el logo encima. El logo/cuerpo se mueve con el asa ✥ morada, se rota y el botón **Centrar hueco** ajusta el hueco para paredes uniformes. También puedes **cargar tu propio cuerpo STL** (queda guardado en la biblioteca) |
 | Logo / figura en relieve | Cualquier imagen a modelo multicolor por capas |
 | Imán de nevera | Figura con bolsillo oculto para imán |
 | Cake topper 3D | Texto impreso con palitos para torta o cupcake |

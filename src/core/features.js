@@ -6,6 +6,7 @@ import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 import {
   edt, dilate, fillHoles, union, subtract, countOn, fillPolygon, fillCircle, fillCapsule, shapePolygon, traceMask, maskBBox, connectIslands,
 } from './raster.js';
+import { DEFAULT_BODY, buildParametricBody, hull2D } from './micbody.js';
 
 export const DEFAULT_SETTINGS = () => ({
   widthMM: 60,
@@ -17,6 +18,7 @@ export const DEFAULT_SETTINGS = () => ({
   sticks: { enabled: false, count: 2, length: 70, width: 5, tip: true, bar: false, barHeight: 4, thickness: 3 },
   pencil: { enabled: false, type: 'hex', measure: 'diameter', value: 7, tolerance: 0.4, wall: 1.6, mount: 'side', length: 0, ends: 'closed-right', offset: 0, filament: null },
   cutter: { enabled: false, wall: 1, height: 14, flange: 4, flangeT: 1.6, offset: 0 },
+  micBody: DEFAULT_BODY(),
 });
 
 export const PENCIL_TYPES = { round: 'Redondo', hex: 'Hexagonal', triangle: 'Triangular' };
@@ -123,6 +125,10 @@ const rectPoly = (x0, y0, x1, y1) => [[x0, y0], [x1, y0], [x1, y1], [x0, y1]];
  */
 export function buildFeatures(result, settings, opts) {
   const set = { ...DEFAULT_SETTINGS(), ...settings };
+  // Mic body: the logo plate sits on top of a solid body with the mic cavity — magnets / clip tongue make no sense there.
+  const MB = set.micBody?.enabled && !set.cutter?.enabled ? { ...DEFAULT_BODY(), ...set.micBody } : null;
+  if (MB) { set.magnets = { ...set.magnets, enabled: false }; set.tongue = { ...set.tongue, enabled: false }; }
+  let bodyInfo = null;
   const s = opts.scale, [cx, cy] = opts.center;
   const eps = opts.detail ?? 0.8, smooth = opts.smooth ?? 1;
   const mm = (v) => v / s;
@@ -380,8 +386,51 @@ export function buildFeatures(result, settings, opts) {
   }
   if (tongue) layers.push({ key: 'tongue', name: 'Lengüeta clip', fil: 'base', shapes: trace(base ? subtract(tongue, base) : tongue), z: 0, height: set.tongue.thickness });
   if (pencilInfo) solids.push({ key: 'pencil', name: 'Funda lápiz', fil: 'pencil', geometry: pencilInfo.geometry, footprint: pencilInfo.footprint });
+  if (MB) addMicBody();
 
   return finish();
+
+  function addMicBody() {
+    let r;
+    const cb = opts.customBody;
+    if (MB.shape === 'custom' && cb?.positions?.length) {
+      let top = 0;
+      for (let i = 2; i < cb.positions.length; i += 3) top = Math.max(top, cb.positions[i]);
+      r = { body: cb.positions, rings: null, outline: hull2D(cb.positions), top, warnings: [] };
+    } else {
+      if (MB.shape === 'custom') warnings.push('Carga el STL de tu cuerpo de micrófono (o elige una forma).');
+      r = buildParametricBody(MB.shape === 'custom' ? { ...MB, shape: 'rect' } : MB);
+    }
+    warnings.push(...r.warnings);
+    const a = ((MB.rot || 0) * Math.PI) / 180, ca = Math.cos(a), sa = Math.sin(a);
+    const ox = MB.ox || 0, oy = MB.oy || 0;
+    const tx = (x, y) => [x * ca - y * sa + ox, x * sa + y * ca + oy];
+    const toGeo = (arr) => {
+      const p = new Float32Array(arr.length);
+      for (let i = 0; i < arr.length; i += 3) { const [x, y] = tx(arr[i], arr[i + 1]); p[i] = x; p[i + 1] = y; p[i + 2] = arr[i + 2]; }
+      const g = new THREE.BufferGeometry();
+      g.setAttribute('position', new THREE.BufferAttribute(p, 3));
+      g.computeVertexNormals();
+      return g;
+    };
+    const outer = r.outline.map(([x, y]) => { const [X, Y] = tx(x, y); return [cx + X / s, cy - Y / s]; });
+    for (const L of layers) L.z += r.top;
+    for (const so of solids) so.geometry.translate(0, 0, r.top);
+    pieceZ += r.top;
+    solids.unshift({ key: 'micbody', name: 'Cuerpo micrófono', fil: 'micBody', geometry: toGeo(r.body), footprint: [{ outer, holes: [] }] });
+    if (r.rings) {
+      let a0 = Infinity, a1 = -Infinity, b0 = Infinity, b1 = -Infinity;
+      for (let i = 0; i < r.rings.length; i += 3) { const [X, Y] = tx(r.rings[i], r.rings[i + 1]); a0 = Math.min(a0, X); a1 = Math.max(a1, X); b0 = Math.min(b0, Y); b1 = Math.max(b1, Y); }
+      const P = (X, Y) => [cx + X / s, cy - Y / s];
+      solids.splice(1, 0, { key: 'micrings', name: 'Aros laterales', fil: 'micBody', geometry: toGeo(r.rings), footprint: [{ outer: [P(a0, b0), P(a1, b0), P(a1, b1), P(a0, b1)], holes: [] }] });
+    }
+    // logo must sit on the body: warn when part of the design hangs over the edge
+    const inPoly = (p) => { let c = false; for (let i = 0, j = outer.length - 1; i < outer.length; j = i++) { const A = outer[i], B = outer[j]; if ((A[1] > p[1]) !== (B[1] > p[1]) && p[0] < ((B[0] - A[0]) * (p[1] - A[1])) / (B[1] - A[1]) + A[0]) c = !c; } return c; };
+    const plate = layers.find((L) => L.key === 'base');
+    const test = plate ? plate.shapes.flatMap((sh) => sh.outer) : [[fb[0], fb[1]], [fb[2], fb[1]], [fb[2], fb[3]], [fb[0], fb[3]]];
+    if (test.some((p) => !inPoly(p))) warnings.push('El logo sobresale del cuerpo del micrófono: reduce el ancho o muévelo.');
+    bodyInfo = { top: r.top, x: cx + ox / s, y: cy - oy / s, outline: outer };
+  }
 
   function finish() {
     // convert mm-space solids to model space (px XY)
@@ -392,10 +441,11 @@ export function buildFeatures(result, settings, opts) {
     for (const so of solids) for (const sh of so.footprint) for (const p of sh.outer) grow(p);
     let zTop = 0;
     for (const L of layers) zTop = Math.max(zTop, L.z + L.height);
-    if (pencilInfo) zTop = Math.max(zTop, cross.top);
+    if (pencilInfo) zTop = Math.max(zTop, cross.top + (bodyInfo?.top || 0));
+    if (bodyInfo) zTop = Math.max(zTop, bodyInfo.top);
     return {
       layers, solids, bounds: [bx0, by0, bx1, by1], ring: ringInfo, warnings: [...new Set(warnings)], hidePieces: cut,
-      pieceZ: cut ? 0 : pieceZ, zTop, magnets: magnetMarks, pencilAcross: pencilAcrossMM || null,
+      pieceZ: cut ? 0 : pieceZ, zTop, magnets: magnetMarks, pencilAcross: pencilAcrossMM || null, body: bodyInfo,
     };
   }
 }

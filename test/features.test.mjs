@@ -5,6 +5,7 @@ import { processImage } from '../src/core/processing.js';
 import { shapesToGeometry, toWorld } from '../src/core/geometry.js';
 import { mergeToIndexed } from '../src/core/exporters.js';
 import { buildFeatures, DEFAULT_SETTINGS, pencilAcross } from '../src/core/features.js';
+import { BODY_PRESETS } from '../src/core/micbody.js';
 import { edt, dilate, fillSmallHoles, connectIslands, components, fillCircle, countOn } from '../src/core/raster.js';
 
 // ---- raster primitives
@@ -65,6 +66,9 @@ const cases = {
   pencilRound: S({ base: { enabled: true }, pencil: { enabled: true, type: 'round', measure: 'circumference', value: 23.5, ends: 'open' } }),
   pencilTip: S({ base: { enabled: true }, pencil: { enabled: true, type: 'triangle', mount: 'tip', value: 8 } }),
   cutter: S({ cutter: { enabled: true } }),
+  micBody: S({ base: { enabled: true, thickness: 2 }, micBody: { enabled: true } }),
+  micStar3D: S({ base: { enabled: true }, micBody: { enabled: true, ...BODY_PRESETS.star, ox: 3, oy: -4, rot: 15 } }),
+  micHeart3D: S({ micBody: { enabled: true, ...BODY_PRESETS.heart }, magnets: { enabled: true }, tongue: { enabled: true } }),
 };
 for (const [name, set] of Object.entries(cases)) {
   const t0 = Date.now();
@@ -85,6 +89,16 @@ for (const [name, set] of Object.entries(cases)) {
   const base = f.layers.find((l) => l.key === 'base');
   assert(base.shapes.some((s) => s.holes.length), 'keychain base has a hole');
   assert(f.ring && f.ring.x < fb[0], 'ring on the left');
+}
+// mic body: logo plate sits on the body top, magnets/tongue ignored
+{
+  const f = buildFeatures(r, cases.micBody, { scale, center });
+  assert.strictEqual(f.solids[0].key, 'micbody');
+  assert(Math.abs(f.pieceZ - 42) < 1e-6, 'pieces on top of body + base');
+  assert(f.layers.every((l) => l.z >= 40), 'layers on the body');
+  assert(f.body && f.body.outline.length > 4);
+  const h = buildFeatures(r, cases.micHeart3D, { scale, center });
+  assert(!h.layers.some((l) => l.key === 'tongue' || l.key === 'baseLow'), 'no magnets/tongue with body');
 }
 assert(Math.abs(pencilAcross({ type: 'round', measure: 'circumference', value: Math.PI * 7 }) - 7) < 1e-9);
 console.log('features OK');

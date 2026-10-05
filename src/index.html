@@ -203,10 +203,66 @@
         <label class="row">Alto resultante (mm) <output id="setHeightOut"></output></label>
       </section>
 
+      <section class="card" data-card="micbody">
+        <h3><label class="chk"><input type="checkbox" data-set="micBody.enabled" /> 🎤 Cuerpo del micrófono</label></h3>
+        <div data-when="micBody.enabled=true">
+          <label class="row">Modelo <select id="micBodyPreset"></select></label>
+          <label class="row">Forma <select data-set="micBody.shape" id="micBodyShape"></select></label>
+          <div data-when="micBody.shape=custom">
+            <label class="row">Mi cuerpo STL <select id="micBodyCustom"></select></label>
+            <div class="row-buttons">
+              <button type="button" class="btn mini" id="btnMicBodyLoad">Cargar STL…</button>
+              <button type="button" class="btn mini" id="btnMicBodyRotX" title="Girar 90° sobre X">⟳ X</button>
+              <button type="button" class="btn mini" id="btnMicBodyRotY" title="Girar 90° sobre Y">⟳ Y</button>
+              <button type="button" class="btn mini" id="btnMicBodyDel" title="Quitar de la biblioteca">🗑</button>
+            </div>
+            <input type="file" id="micBodyFile" accept=".stl" hidden />
+            <p class="muted small">Se usa tal cual (con su hueco). La cara más plana queda arriba; usa ⟳ si no quedó bien orientado.</p>
+          </div>
+          <div data-when="micBody.shape!=custom">
+            <label class="row">Ancho (mm) <input inputmode="decimal" type="text" data-set="micBody.w" data-min="15" /></label>
+            <label class="row">Fondo (mm) <input inputmode="decimal" type="text" data-set="micBody.d" data-min="15" /></label>
+            <label class="row">Alto (mm) <input inputmode="decimal" type="text" data-set="micBody.h" data-min="5" /></label>
+            <label class="row" data-when="micBody.shape=rect">Radio esquinas (mm) <input inputmode="decimal" type="text" data-set="micBody.corner" /></label>
+            <label class="row" data-when="micBody.shape=star">Puntas <input inputmode="decimal" type="text" data-set="micBody.points" data-min="3" /></label>
+            <label class="row" data-when="micBody.shape=star">Profundidad puntas <input inputmode="decimal" type="text" data-set="micBody.inner" data-min="0.2" /></label>
+            <label class="row" data-when="micBody.shape=star|hexagon|heart">Redondeo puntas (mm) <input inputmode="decimal" type="text" data-set="micBody.tipR" /></label>
+            <label class="row" data-when="micBody.shape=star|heart">Redondeo valles (mm) <input inputmode="decimal" type="text" data-set="micBody.valleyR" /></label>
+            <label class="row">Bordes redondeados (mm) <input inputmode="decimal" type="text" data-set="micBody.fillet" /></label>
+            <h4>Hueco para el micrófono (abajo)</h4>
+            <label class="row">Largo ranura (mm) <input inputmode="decimal" type="text" data-set="micBody.slotL" /></label>
+            <label class="row">Grosor micrófono (mm) <input inputmode="decimal" type="text" data-set="micBody.slotT" /></label>
+            <label class="row">Ranura del clip (mm) <input inputmode="decimal" type="text" data-set="micBody.clipT" /></label>
+            <label class="row">Pared divisoria (mm) <input inputmode="decimal" type="text" data-set="micBody.divider" /></label>
+            <label class="row">Profundidad (mm) <input inputmode="decimal" type="text" data-set="micBody.depth" /></label>
+            <label class="row">Espacio sobre divisoria (mm) <input inputmode="decimal" type="text" data-set="micBody.gap" /></label>
+            <label class="row">Clip hacia <select data-set="micBody.clipSide"><option value="front">Adelante</option><option value="back">Atrás</option></select></label>
+            <label class="row">Desplazar hueco (mm) <input inputmode="decimal" type="text" data-set="micBody.slotY" data-allowneg="1" /></label>
+            <div class="row-buttons"><button type="button" class="btn mini" id="btnMicSlotFit">Centrar hueco en la forma</button></div>
+            <h4><label class="chk"><input type="checkbox" data-set="micBody.side.enabled" /> Aros laterales</label></h4>
+            <div data-when="micBody.side.enabled=true">
+              <label class="row">Ø exterior (mm) <input inputmode="decimal" type="text" data-set="micBody.side.outer" /></label>
+              <label class="row">Ø interior (mm) <input inputmode="decimal" type="text" data-set="micBody.side.inner" /></label>
+              <label class="row">Sobresale (mm) <input inputmode="decimal" type="text" data-set="micBody.side.height" /></label>
+            </div>
+          </div>
+          <h4>Logo sobre el cuerpo</h4>
+          <label class="row">Mover cuerpo X (mm) <input inputmode="decimal" type="text" data-set="micBody.ox" data-allowneg="1" /></label>
+          <label class="row">Mover cuerpo Y (mm) <input inputmode="decimal" type="text" data-set="micBody.oy" data-allowneg="1" /></label>
+          <label class="row">Girar cuerpo (°) <input inputmode="decimal" type="text" data-set="micBody.rot" data-allowneg="1" /></label>
+          <div class="row-buttons"><button type="button" class="btn mini" id="btnMicBodyCenter">Centrar logo</button></div>
+          <label class="row">Filamento cuerpo <select data-set="micBody.filament" class="fil-select"></select></label>
+          <p class="muted small">Arrastra el cuerpo en la vista 2D (asa ✥) para ubicar el logo. Se imprime tal cual, con el hueco hacia la cama: el techo del hueco es un puente y no necesita soportes.</p>
+        </div>
+      </section>
+
       <section class="card" data-card="mic">
         <h3>🎤 Micrófono</h3>
+        <div data-when="micBody.enabled=false">
         <label class="row">Modelo <select id="micPreset"></select></label>
         <p class="muted small">Ajusta automáticamente el tamaño de la placa y el sistema de sujeción (imán o lengüeta para el clip). Luego puedes afinar cada medida abajo.</p>
+        </div>
+        <p class="muted small" data-when="micBody.enabled=true">Con el cuerpo activo, el logo (con su base) se imprime encima del cuerpo. Desactívalo para hacer solo la placa con imán o lengüeta.</p>
       </section>
 
       <section class="card" data-card="base">

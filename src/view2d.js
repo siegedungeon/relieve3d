@@ -106,6 +106,11 @@ export class View2D {
         this.cb.onPlace(x, y);
         return;
       }
+      const body = this.cb.getDrawData?.()?.body;
+      if (body && this.onBodyHandle(...this.toImage(sx, sy), body)) {
+        const [x, y] = this.toImage(sx, sy);
+        drag = { type: 'body', dx: body.x - x, dy: body.y - y }; c.style.cursor = 'move'; return;
+      }
       const ring = this.cb.getDrawData?.()?.ring;
       if (ring) {
         const [x, y] = this.toImage(sx, sy);
@@ -120,6 +125,13 @@ export class View2D {
       if (drag?.type === 'pan') {
         this.ox = drag.ox + sx - drag.sx;
         this.oy = drag.oy + sy - drag.sy;
+        this.draw();
+        return;
+      }
+      if (drag?.type === 'body') {
+        const [x, y] = this.toImage(sx, sy);
+        drag.pos = [x + drag.dx, y + drag.dy];
+        this.cb.onBodyMove?.(...drag.pos);
         this.draw();
         return;
       }
@@ -138,6 +150,8 @@ export class View2D {
       const [x, y] = this.toImage(sx, sy);
       const h = this.pieceAt(x, y);
       if (h !== this.hover) { this.hover = h; this.cb.onHover(h); this.draw(); }
+      const bd = this.cb.getDrawData?.()?.body;
+      if (bd && !this.placing && this.onBodyHandle(x, y, bd)) { c.style.cursor = 'move'; return; }
       const rg = this.cb.getDrawData?.()?.ring;
       if (rg && !this.placing && Math.hypot(x - rg.x, y - rg.y) <= Math.max(rg.ro, 10 / this.scale)) { c.style.cursor = 'move'; return; }
       c.style.cursor = this.placing ? 'crosshair' : (this.tool === 'pan' || this.space) ? 'grab' : h >= 0 ? 'pointer' : 'default';
@@ -149,6 +163,7 @@ export class View2D {
       drag = null;
       c.style.cursor = 'default';
       if (d.type === 'ring') { if (d.pos) this.cb.onRingDrop?.(...d.pos); return; }
+      if (d.type === 'body') { if (d.pos) this.cb.onBodyDrop?.(...d.pos); return; }
       if (d.type !== 'select') return;
       if (this.rect) {
         const [ax, ay] = this.toImage(Math.min(this.rect[0], this.rect[2]), Math.min(this.rect[1], this.rect[3]));
@@ -187,6 +202,13 @@ export class View2D {
     ctx.setTransform(dpr * this.scale, 0, 0, dpr * this.scale, dpr * this.ox, dpr * this.oy);
     const px = 1 / this.scale;
 
+    if (d.body) {
+      const p = new Path2D();
+      d.body.outline.forEach(([x, y], i) => (i ? p.lineTo(x, y) : p.moveTo(x, y)));
+      p.closePath();
+      ctx.globalAlpha = 0.9; ctx.fillStyle = d.body.color; ctx.fill(p); ctx.globalAlpha = 1;
+      ctx.strokeStyle = 'rgba(0,0,0,.45)'; ctx.lineWidth = 1.5 * px; ctx.setLineDash([6 * px, 4 * px]); ctx.stroke(p); ctx.setLineDash([]);
+    }
     for (const u of this.underlays) {
       ctx.globalAlpha = u.alpha;
       ctx.fillStyle = u.color;
@@ -245,6 +267,7 @@ export class View2D {
       ctx.setLineDash([]);
     }
     if (d.ring) this.drawRing(ctx, d.ring, px);
+    if (d.body) this.drawBodyHandle(ctx, d.body, px);
 
     if (this.rect) {
       ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
@@ -257,6 +280,20 @@ export class View2D {
       ctx.strokeRect(Math.min(a, c2), Math.min(b, e), Math.abs(c2 - a), Math.abs(e - b));
       ctx.setLineDash([]);
     }
+  }
+
+  onBodyHandle(x, y, b) { return Math.hypot(x - b.x, y - b.y) <= 13 / this.scale; }
+
+  // body handle (move icon) at the body centre
+  drawBodyHandle(ctx, b, px) {
+    const R = 11 * px, a = 7 * px, h = 2.5 * px;
+    ctx.beginPath(); ctx.arc(b.x, b.y, R, 0, Math.PI * 2);
+    ctx.fillStyle = 'rgba(255,255,255,.92)'; ctx.fill();
+    ctx.strokeStyle = '#7c3aed'; ctx.lineWidth = 1.5 * px; ctx.stroke();
+    ctx.beginPath();
+    ctx.moveTo(b.x - a, b.y); ctx.lineTo(b.x + a, b.y); ctx.moveTo(b.x, b.y - a); ctx.lineTo(b.x, b.y + a);
+    for (const [dx, dy] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) { const tx = b.x + dx * a, ty = b.y + dy * a; ctx.moveTo(tx - dy * h - dx * h, ty - dx * h - dy * h); ctx.lineTo(tx, ty); ctx.lineTo(tx + dy * h - dx * h, ty + dx * h - dy * h); }
+    ctx.stroke();
   }
 
   // ring handle: the ring itself is part of the underlays; draw a draggable marker on top
