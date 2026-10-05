@@ -6,5 +6,7 @@ contextBridge.exposeInMainWorld('api', {
   confirm: (opts) => ipcRenderer.invoke('confirm', opts),
   onTestImage: (cb) => ipcRenderer.on('test-load-image', (e, d) => cb(d)),
   onUpdateStatus: (cb) => ipcRenderer.on('update-status', (e, d) => cb(d)),
+  appVersion: () => ipcRenderer.invoke('app-version'),
+  listFonts: () => ipcRenderer.invoke('list-fonts'),
   installUpdate: () => ipcRenderer.invoke('install-update'),
 });

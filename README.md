@@ -4,7 +4,7 @@ Programa de escritorio (Windows) para convertir una imagen (logo, nombre, dibujo
 
 ## Instalar
 
-Ejecuta `dist\Relieve3D Setup 1.0.0.exe` y sigue el asistente. Se crea un acceso directo en el escritorio.
+Descarga y ejecuta `Relieve3D Setup X.Y.Z.exe` desde los Releases de GitHub (o `dist\` si lo compilas localmente) y sigue el asistente. Se crea un acceso directo en el escritorio.
 
 ## Actualizaciones automáticas
 
@@ -25,7 +25,32 @@ instalador y lo publica como GitHub Release junto a los metadatos que
 `electron-updater` necesita (`latest.yml`). No hace falta ejecutar `npm run dist`
 a mano salvo para probar localmente.
 
-## Flujo de trabajo
+## Módulos
+
+Al abrir aparece una **pantalla de inicio** para elegir qué crear (botón **Inicio** para volver). Todas las medidas están en **milímetros**.
+
+**Modelos 3D** (exportan 3MF multicolor para Bambu Lab, STL único/por color, OBJ y SVG):
+
+| Módulo | Qué hace |
+|---|---|
+| Llavero | Nombre o logo con silueta y argolla reforzada que se arrastra a cualquier posición |
+| Marcador de lápiz | Nombre con funda para lápiz redondo, hexagonal o triangular (calibre, largo, ancho del nombre, borde/silueta, fuentes del equipo) |
+| Logo para micrófono | Mic flag viral (círculo, estrella, cuadrado, corazón…) con presets DJI, Hollyland, Rode y verticales; sujeción por imán o lengüeta de clip |
+| Logo / figura en relieve | Cualquier imagen a modelo multicolor por capas |
+| Imán de nevera | Figura con bolsillo oculto para imán |
+| Cake topper 3D | Texto impreso con palitos para torta o cupcake |
+| Topper de pitillo / Stanley | Figura con funda que encaja en el pitillo |
+| Placa para mascota | Nombre + teléfono con argolla para collar |
+| Letrero / placa | Placa con agujeros o imanes |
+| Cortador de galletas | Filo y pestaña a partir de la silueta |
+
+Los módulos de texto usan las fuentes más populares y las instaladas en el equipo, con contorno/bordeado opcional.
+
+**Diseño 2D**:
+- **Preparar logo**: vectoriza, quita fondo, reduce a 3–4 colores, engrosa colores finos, reorganiza elementos (mover/escalar/rotar/ocultar), añade borde y silueta de separación. Exporta SVG/PNG, guarda el proyecto `.r3s` para revisión del cliente o **Pasa a 3D** (llavero, micrófono, imán…).
+- **Cake topper láser**: letras engrosadas y soldadas en **una sola pieza** (sin letras sueltas ni huecos pequeños), puentes automáticos, palitos según tamaño de torta, doble capa opcional. Exporta **SVG de corte** para CorelDRAW.
+
+## Flujo de trabajo (modelos 3D)
 
 1. **Abrir imagen** (o arrastrarla a la ventana). Ideal: PNG con fondo transparente y colores planos. Si el fondo es blanco/sólido se quita automáticamente.
 2. El programa detecta los colores, separa cada **pieza** (zona continua de un color) y la vectoriza.

@@ -10,7 +10,8 @@ export class View2D {
     this.showEdges = true;
     this.placing = false;
     this.paths = new Map();
-    this.basePath = null;
+    this.underlays = [];
+    this.bounds = null;
     this.hover = -1;
     this.rect = null;
     this.space = false;
@@ -29,7 +30,9 @@ export class View2D {
     this.fit();
   }
 
-  setBaseShapes(shapes) { this.basePath = shapes ? shapesToPath(shapes) : null; }
+  // underlays: [{ shapes, color }] drawn below the pieces (base, ring, sleeve footprints…)
+  setUnderlays(list) { this.underlays = (list || []).map((u) => ({ color: u.color, alpha: u.alpha ?? 1, dashed: u.dashed, path: shapesToPath(u.shapes) })); }
+  setBounds(b) { this.bounds = b; }
 
   resize() {
     const r = this.canvas.parentElement.getBoundingClientRect();
@@ -45,8 +48,8 @@ export class View2D {
     const dpr = window.devicePixelRatio || 1;
     const cw = this.canvas.width / dpr, ch = this.canvas.height / dpr;
     if (cw < 10 || ch < 10) return;
-    const [x0, y0, x1, y1] = this.result.fgBBox;
-    const pad = 60;
+    const [x0, y0, x1, y1] = this.bounds || this.result.fgBBox;
+    const pad = 40;
     const w = x1 - x0, h = y1 - y0;
     this.scale = Math.min((cw - pad * 2) / w, (ch - pad * 2) / h);
     this.ox = cw / 2 - (x0 + w / 2) * this.scale;
@@ -103,6 +106,11 @@ export class View2D {
         this.cb.onPlace(x, y);
         return;
       }
+      const ring = this.cb.getDrawData?.()?.ring;
+      if (ring) {
+        const [x, y] = this.toImage(sx, sy);
+        if (Math.hypot(x - ring.x, y - ring.y) <= Math.max(ring.ro, 10 / this.scale)) { drag = { type: 'ring', dx: ring.x - x, dy: ring.y - y }; c.style.cursor = 'move'; return; }
+      }
       drag = { type: 'select', sx, sy, additive: e.shiftKey || e.ctrlKey || e.metaKey };
     });
 
@@ -115,6 +123,13 @@ export class View2D {
         this.draw();
         return;
       }
+      if (drag?.type === 'ring') {
+        const [x, y] = this.toImage(sx, sy);
+        drag.pos = [x + drag.dx, y + drag.dy];
+        this.cb.onRingMove?.(...drag.pos);
+        this.draw();
+        return;
+      }
       if (drag?.type === 'select' && Math.hypot(sx - drag.sx, sy - drag.sy) > 4) {
         this.rect = [drag.sx, drag.sy, sx, sy];
         this.draw();
@@ -123,6 +138,8 @@ export class View2D {
       const [x, y] = this.toImage(sx, sy);
       const h = this.pieceAt(x, y);
       if (h !== this.hover) { this.hover = h; this.cb.onHover(h); this.draw(); }
+      const rg = this.cb.getDrawData?.()?.ring;
+      if (rg && !this.placing && Math.hypot(x - rg.x, y - rg.y) <= Math.max(rg.ro, 10 / this.scale)) { c.style.cursor = 'move'; return; }
       c.style.cursor = this.placing ? 'crosshair' : (this.tool === 'pan' || this.space) ? 'grab' : h >= 0 ? 'pointer' : 'default';
     });
 
@@ -131,6 +148,7 @@ export class View2D {
       const d = drag;
       drag = null;
       c.style.cursor = 'default';
+      if (d.type === 'ring') { if (d.pos) this.cb.onRingDrop?.(...d.pos); return; }
       if (d.type !== 'select') return;
       if (this.rect) {
         const [ax, ay] = this.toImage(Math.min(this.rect[0], this.rect[2]), Math.min(this.rect[1], this.rect[3]));
@@ -169,14 +187,19 @@ export class View2D {
     ctx.setTransform(dpr * this.scale, 0, 0, dpr * this.scale, dpr * this.ox, dpr * this.oy);
     const px = 1 / this.scale;
 
-    if (this.basePath && d.base) {
-      ctx.fillStyle = d.base.color;
-      ctx.fill(this.basePath, 'evenodd');
+    for (const u of this.underlays) {
+      ctx.globalAlpha = u.alpha;
+      ctx.fillStyle = u.color;
+      ctx.fill(u.path, 'evenodd');
+      ctx.globalAlpha = 1;
       ctx.strokeStyle = 'rgba(0,0,0,.35)';
       ctx.lineWidth = px;
-      ctx.stroke(this.basePath);
+      if (u.dashed) ctx.setLineDash([5 * px, 4 * px]);
+      ctx.stroke(u.path);
+      ctx.setLineDash([]);
     }
     for (const p of r.pieces) {
+      if (d.hidePieces) break;
       const path = this.paths.get(p.id);
       const st = d.pieces[p.id];
       ctx.globalAlpha = st.enabled ? 1 : 0.18;
@@ -216,6 +239,11 @@ export class View2D {
       ctx.stroke(this.paths.get(this.hover));
       ctx.setLineDash([]);
     }
+    if (d.marks) {
+      ctx.strokeStyle = '#dc2626'; ctx.lineWidth = 1.5 * px; ctx.setLineDash([4 * px, 3 * px]);
+      for (const m of d.marks) { ctx.beginPath(); ctx.arc(m.c[0], m.c[1], m.r, 0, Math.PI * 2); ctx.stroke(); }
+      ctx.setLineDash([]);
+    }
     if (d.ring) this.drawRing(ctx, d.ring, px);
 
     if (this.rect) {
@@ -231,14 +259,19 @@ export class View2D {
     }
   }
 
+  // ring handle: the ring itself is part of the underlays; draw a draggable marker on top
   drawRing(ctx, ring, px) {
     ctx.beginPath();
     ctx.arc(ring.x, ring.y, ring.ro, 0, Math.PI * 2);
-    if (ring.ri > 0) { ctx.moveTo(ring.x + ring.ri, ring.y); ctx.arc(ring.x, ring.y, ring.ri, 0, Math.PI * 2, true); }
-    ctx.fillStyle = ring.color;
-    ctx.fill('evenodd');
-    ctx.strokeStyle = '#111827';
+    ctx.strokeStyle = '#2563eb';
     ctx.lineWidth = 1.5 * px;
+    ctx.setLineDash([4 * px, 3 * px]);
+    ctx.stroke();
+    ctx.setLineDash([]);
+    const a = Math.max(ring.ri * 0.6, 3 * px);
+    ctx.beginPath();
+    ctx.moveTo(ring.x - a, ring.y); ctx.lineTo(ring.x + a, ring.y);
+    ctx.moveTo(ring.x, ring.y - a); ctx.lineTo(ring.x, ring.y + a);
     ctx.stroke();
   }
 }

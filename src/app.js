@@ -1,8 +1,12 @@
-import { processImage, computeSilhouette, DEFAULT_PROC } from './core/processing.js';
-import { shapesToGeometry, ringGeometry, toWorld } from './core/geometry.js';
+import { processImage, DEFAULT_PROC } from './core/processing.js';
+import { shapesToGeometry, toWorld } from './core/geometry.js';
 import { stlBinary, threeMF, objWithMtl, svg, mergeToIndexed } from './core/exporters.js';
+import { buildFeatures, DEFAULT_SETTINGS, pencilAcross } from './core/features.js';
+import { renderTextImage, ensureFont, BUNDLED_FONTS, DEFAULT_TEXT } from './core/text.js';
+import { MODULES, MIC_PRESETS, CAKE_PRESETS, mergeDeep } from './modules.js';
 import { Viewer3D } from './viewer3d.js';
 import { View2D, isTyping } from './view2d.js';
+import { Studio } from './studio.js';
 
 const $ = (id) => document.getElementById(id);
 const fmt = (v) => String(Math.round(v * 100) / 100);
@@ -22,13 +26,14 @@ const textOn = (hex) => {
   return ((n >> 16) * 299 + ((n >> 8) & 255) * 587 + (n & 255) * 114) / 1000 > 150 ? '#1f2430' : '#ffffff';
 };
 
-const DEFAULT_SETTINGS = () => ({
-  widthMM: 60,
-  base: { enabled: false, margin: 2, thickness: 1.2, filament: null },
-  ring: { enabled: false, x: null, y: null, outer: 8, inner: 4, thickness: 2, filament: null },
-});
+const moduleDef = (id) => MODULES.find((m) => m.id === id) || MODULES.find((m) => m.id === 'logo');
+const moduleSettings = (id) => mergeDeep(DEFAULT_SETTINGS(), JSON.parse(JSON.stringify(moduleDef(id).patch || {})));
+const withDefaults = (s) => mergeDeep(DEFAULT_SETTINGS(), JSON.parse(JSON.stringify(s || {})));
 
 const S = {
+  module: 'logo',
+  source: 'image',           // 'image' | 'text'
+  text: DEFAULT_TEXT(),
   image: null,               // { name, dataURL, el }
   proc: { ...DEFAULT_PROC },
   result: null,
@@ -43,7 +48,9 @@ const S = {
 };
 let nextId = 1;
 const pieceGeoms = new Map();
-let baseShapes = null;
+let feat = null;             // buildFeatures() output
+let featParts = [];          // [{ key, name, fil, geometry, height, z, solid }]
+let ringDragPos = null;
 
 // ---------------------------------------------------------------- views
 const view2d = new View2D($('canvas2d'), {
@@ -57,15 +64,17 @@ const view2d = new View2D($('canvas2d'), {
     setSelection(additive ? [...S.selection, ...ids] : ids);
   },
   onHover: (pid) => renderHover(pid),
-  onPlace: (x, y) => {
-    Object.assign(S.settings.ring, { x, y, enabled: true });
-    stopPlacing();
-    rebuildRing();
-    syncSettingsInputs();
-    refresh();
-    commit();
-  },
+  onPlace: (x, y) => { stopPlacing(); placeRing(x, y); },
+  onRingMove: (x, y) => { ringDragPos = [x, y]; },
+  onRingDrop: (x, y) => { ringDragPos = null; placeRing(x, y); },
 });
+function placeRing(x, y) {
+  Object.assign(S.settings.ring, { x, y, enabled: true, pos: 'manual' });
+  rebuildFeatures();
+  syncSettingsInputs();
+  refresh();
+  commit();
+}
 
 const viewer = new Viewer3D($('view3d'), {
   onPick: (pid, additive) => {
@@ -85,19 +94,22 @@ const center = () => {
 };
 const filament = (id) => S.filaments.find((f) => f.id === id) || S.filaments[0];
 const filamentIndex = (id) => Math.max(0, S.filaments.findIndex((f) => f.id === id));
-const baseZ = () => (S.settings.base.enabled ? S.settings.base.thickness : 0);
+const baseZ = () => feat?.pieceZ ?? 0;
+const filFor = (fil) => {
+  const set = S.settings;
+  const id = fil === 'ring' ? set.ring.filament : fil === 'pencil' ? set.pencil.filament : set.base.filament;
+  return S.filaments.some((f) => f.id === id) ? id : (S.filaments.some((f) => f.id === set.base.filament) ? set.base.filament : S.filaments[0]?.id);
+};
 
 function getDrawData() {
   if (!S.result) return null;
-  const s = scale(), set = S.settings;
+  const r = feat?.ring;
   return {
     pieces: S.pieces.map((p) => ({ color: filament(p.filament).color, enabled: p.enabled })),
     selection: S.selection,
-    base: set.base.enabled ? { color: filament(set.base.filament).color } : null,
-    ring: set.ring.enabled && set.ring.x != null ? {
-      x: set.ring.x, y: set.ring.y, ro: set.ring.outer / 2 / s, ri: set.ring.inner / 2 / s,
-      color: filament(set.ring.filament).color,
-    } : null,
+    hidePieces: !!feat?.hidePieces,
+    marks: feat?.magnets || null,
+    ring: r && S.settings.ring.enabled ? { ...r, ...(ringDragPos ? { x: ringDragPos[0], y: ringDragPos[1] } : {}) } : null,
   };
 }
 
@@ -116,7 +128,7 @@ function toast(msg, error = false) {
 // ---------------------------------------------------------------- loading & processing
 async function loadImageFile(file) {
   if (!file) return;
-  if (/\.(r3d|json)$/i.test(file.name)) return openProjectFile(file);
+  if (/\.(r3d|r3s|json)$/i.test(file.name)) return openProjectFile(file);
   if (!file.type.startsWith('image/') && !/\.(png|jpe?g|webp|bmp|gif)$/i.test(file.name)) {
     toast('Formato no soportado: ' + file.name, true);
     return;
@@ -127,21 +139,25 @@ async function loadImageFile(file) {
     fr.onerror = rej;
     fr.readAsDataURL(file);
   });
+  if (S.source === 'text') S.proc = { ...DEFAULT_PROC };
   await loadImage(dataURL, file.name, null);
 }
 
-async function loadImage(dataURL, name, state) {
+// opts.keep: keep the current settings (text re-render / module switch with the same design)
+async function loadImage(dataURL, name, state, { keep = false, source = 'image' } = {}) {
   const el = new Image();
   el.src = dataURL;
   try { await el.decode(); } catch { toast('No se pudo leer la imagen.', true); return; }
   S.image = { name, dataURL, el };
-  $('docName').textContent = '· ' + name;
+  S.source = source;
+  $('docName').textContent = source === 'text' ? '' : '· ' + name;
   $('dropZone').classList.add('hidden');
-  hist.stack = []; hist.idx = -1;
-  if (!state) { S.settings = DEFAULT_SETTINGS(); S.groups = []; }
-  await runProcessing(state);
+  if (!keep) { hist.stack = []; hist.idx = -1; }
+  if (!state && !keep) { S.settings = moduleSettings(S.module); S.groups = []; }
+  await runProcessing(state, { keepSettings: keep });
   syncProcInputs();
   syncSettingsInputs();
+  syncTextInputs();
 }
 
 function getImageData(el, maxRes) {
@@ -168,25 +184,24 @@ async function runProcessing(state = null, { keepSettings = false } = {}) {
     S.selection.clear();
     setDefaults(res);
     if (keepSettings) {
-      S.settings = {
-        widthMM: prevSettings.widthMM,
-        base: { ...prevSettings.base, filament: S.settings.base.filament },
-        ring: { ...prevSettings.ring, filament: S.settings.ring.filament },
-      };
+      const fresh = S.settings;
+      S.settings = withDefaults(prevSettings);
+      for (const k of ['base', 'ring', 'pencil']) S.settings[k].filament = fresh[k].filament;
     }
     if (state && state.pieces?.length === res.pieces.length) applyEditable(state);
-    else if (state) { S.settings = { ...DEFAULT_SETTINGS(), ...state.settings }; }
+    else if (state) { S.settings = withDefaults(state.settings); }
 
     viewer.clear();
     pieceGeoms.clear();
+    featParts = [];
     const [cx, cy] = center();
     for (const p of res.pieces) {
       const g = shapesToGeometry(p.shapes, cx, cy);
       if (g) { pieceGeoms.set(p.id, g); viewer.addPiece(p.id, g); }
     }
     view2d.setContent(res, S.image.el);
-    rebuildBase();
-    rebuildRing();
+    rebuildFeatures();
+    view2d.fit();
     refresh();
     viewer.frame();
     if (!state || !hist.stack.length) commit();
@@ -210,9 +225,16 @@ function setDefaults(res) {
     enabled: true,
   }));
   const outer = res.pieces.filter((p) => p.depth === 0).sort((a, b) => b.area - a.area)[0] || res.pieces[0];
-  const fid = S.clusterFilament[outer.cluster];
+  let fid = S.clusterFilament[outer.cluster];
+  if (S.source === 'text') {
+    const bc = S.text.baseColor.toLowerCase();
+    const same = S.filaments.find((f) => f.color.toLowerCase() === bc);
+    if (same) fid = same.id;
+    else { fid = nextId++; S.filaments.push({ id: fid, name: 'Base', color: S.text.baseColor }); }
+  }
   S.settings.base.filament = fid;
   S.settings.ring.filament = fid;
+  S.settings.pencil.filament = fid;
   S.groups = [];
 }
 
@@ -233,48 +255,60 @@ function sync3D() {
       color: filament(st.filament).color,
       height: st.height,
       z: bz + st.elevation + off,
-      visible: st.enabled,
+      visible: st.enabled && !feat?.hidePieces,
       selected: S.selection.has(p.id),
     });
   }
-  const set = S.settings;
-  viewer.updateExtra('base', { color: filament(set.base.filament).color, height: set.base.thickness, z: 0 });
-  viewer.updateExtra('ring', { color: filament(set.ring.filament).color, height: set.ring.thickness, z: 0 });
+  for (const fp of featParts) viewer.updateExtra(fp.key, { color: filament(filFor(fp.fil)).color });
   viewer.requestRender();
 }
 
-function rebuildBase() {
-  const b = S.settings.base;
-  if (!S.result || !b.enabled) {
-    baseShapes = null;
-    view2d.setBaseShapes(null);
-    viewer.setExtra('base', null);
-    return;
-  }
-  baseShapes = computeSilhouette(S.result, b.margin / scale(), S.proc.detail, S.proc.smooth);
-  view2d.setBaseShapes(baseShapes);
-  const [cx, cy] = center();
-  viewer.setExtra('base', shapesToGeometry(baseShapes, cx, cy), { color: filament(b.filament).color, height: b.thickness, z: 0 });
-}
-
-function rebuildRing() {
-  const r = S.settings.ring;
-  if (!S.result || !r.enabled) { viewer.setExtra('ring', null); return; }
-  const s = scale();
-  if (r.x == null) {
-    const bb = S.result.fgBBox;
-    r.x = bb[0];
-    r.y = bb[1] + (bb[3] - bb[1]) * 0.3;
+// Rebuilds base / ring / sleeve / magnets… from the current settings.
+function rebuildFeatures() {
+  for (const fp of featParts) viewer.setExtra(fp.key, null);
+  featParts = [];
+  feat = null;
+  if (!S.result) { view2d.setUnderlays([]); view2d.setBounds(null); renderWarnings(); return; }
+  try {
+    feat = buildFeatures(S.result, S.settings, { scale: scale(), center: center(), detail: S.proc.detail, smooth: S.proc.smooth });
+  } catch (err) {
+    console.error(err);
+    toast('No se pudieron generar los accesorios: ' + err.message, true);
   }
   const [cx, cy] = center();
-  viewer.setExtra('ring', ringGeometry(r.x, r.y, r.outer / 2 / s, Math.min(r.inner, r.outer - 0.4) / 2 / s, cx, cy),
-    { color: filament(r.filament).color, height: r.thickness, z: 0 });
+  const under = [];
+  if (feat) {
+    for (const L of feat.layers) {
+      const g = shapesToGeometry(L.shapes, cx, cy);
+      if (!g) continue;
+      const key = 'L:' + L.key, color = filament(filFor(L.fil)).color;
+      viewer.setExtra(key, g, { color, height: L.height, z: L.z });
+      featParts.push({ key, name: L.name, fil: L.fil, geometry: g, height: L.height, z: L.z, shapes: L.shapes });
+      under.push({ shapes: L.shapes, color });
+    }
+    for (const so of feat.solids) {
+      const key = 'S:' + so.key, color = filament(filFor(so.fil)).color;
+      viewer.setExtra(key, so.geometry, { color, height: 1, z: 0 });
+      featParts.push({ key, name: so.name, fil: so.fil, geometry: so.geometry, solid: true, shapes: so.footprint });
+      under.push({ shapes: so.footprint, color, alpha: 0.85, dashed: true });
+    }
+  }
+  view2d.setUnderlays(under);
+  view2d.setBounds(feat?.bounds || null);
+  renderWarnings();
 }
 
-let baseTimer;
-function rebuildBaseDebounced() {
-  clearTimeout(baseTimer);
-  baseTimer = setTimeout(() => { rebuildBase(); sync3D(); view2d.draw(); }, 150);
+let featTimer;
+function rebuildFeaturesDebounced() {
+  clearTimeout(featTimer);
+  featTimer = setTimeout(() => { rebuildFeatures(); refresh(); }, 120);
+}
+
+function renderWarnings() {
+  const w = feat?.warnings || [];
+  const el = $('featWarn');
+  el.hidden = !w.length;
+  el.innerHTML = w.map((x) => `<div>⚠️ ${escHtml(x)}</div>`).join('');
 }
 
 // ---------------------------------------------------------------- selection
@@ -321,7 +355,7 @@ const hist = { stack: [], idx: -1 };
 function snapshot() {
   return JSON.stringify({
     proc: S.proc, pieces: S.pieces, filaments: S.filaments, clusterFilament: S.clusterFilament,
-    groups: S.groups, settings: S.settings,
+    groups: S.groups, settings: S.settings, module: S.module, source: S.source, text: S.text,
   });
 }
 function commit() {
@@ -339,21 +373,32 @@ function applyEditable(s) {
   S.filaments = s.filaments.map((f) => ({ ...f }));
   S.clusterFilament = [...s.clusterFilament];
   S.groups = s.groups.map((g) => ({ ...g, pieces: [...g.pieces] }));
-  S.settings = { ...DEFAULT_SETTINGS(), ...JSON.parse(JSON.stringify(s.settings)) };
+  S.settings = withDefaults(s.settings);
   nextId = Math.max(0, ...S.filaments.map((f) => f.id), ...S.groups.map((g) => g.id)) + 1;
   S.selection = new Set([...S.selection].filter((id) => id < S.pieces.length));
 }
 async function restore(json) {
   const s = JSON.parse(json);
-  if (JSON.stringify(s.proc) !== JSON.stringify(S.proc)) {
+  const textChanged = s.source === 'text' && JSON.stringify(s.text) !== JSON.stringify(S.text);
+  if (textChanged || s.source !== S.source) {
+    S.text = { ...DEFAULT_TEXT(), ...s.text };
+    S.proc = { ...s.proc };
+    if (s.source === 'text') {
+      await ensureFont(S.text.font, S.text.weight);
+      const r = renderTextImage(S.text, s.settings.widthMM);
+      const el = new Image(); el.src = r.dataURL; await el.decode();
+      S.image = { name: 'texto.png', dataURL: r.dataURL, el };
+    }
+    S.source = s.source;
+    await runProcessing(s);
+    syncTextInputs();
+  } else if (JSON.stringify(s.proc) !== JSON.stringify(S.proc)) {
     S.proc = { ...s.proc };
     syncProcInputs();
     await runProcessing(s);
   } else {
-    const oldBase = JSON.stringify([S.settings.base.enabled, S.settings.base.margin, S.settings.widthMM]);
     applyEditable(s);
-    if (oldBase !== JSON.stringify([S.settings.base.enabled, S.settings.base.margin, S.settings.widthMM])) rebuildBase();
-    rebuildRing();
+    rebuildFeatures();
   }
   syncSettingsInputs();
   refresh();
@@ -542,9 +587,7 @@ function renderFilaments() {
       <select>${opts}</select>
     </div>`).join('') : '';
   $('colorMatch').querySelectorAll('.cm-item').forEach((el) => { el.querySelector('select').value = S.clusterFilament[+el.dataset.c]; });
-  for (const id of ['baseFilament', 'ringFilament']) $(id).innerHTML = opts;
-  $('baseFilament').value = S.settings.base.filament ?? '';
-  $('ringFilament').value = S.settings.ring.filament ?? '';
+  document.querySelectorAll('.fil-select').forEach((el) => { el.innerHTML = opts; el.value = getPath(S.settings, el.dataset.set) ?? ''; });
 }
 $('filamentList').addEventListener('input', (e) => {
   const row = e.target.closest('.filament-row');
@@ -568,7 +611,7 @@ $('filamentList').addEventListener('click', (e) => {
   S.filaments = S.filaments.filter((f) => f.id !== id);
   for (const p of S.pieces) if (p.filament === id) p.filament = fallback;
   S.clusterFilament = S.clusterFilament.map((f) => (f === id ? fallback : f));
-  for (const k of ['base', 'ring']) if (S.settings[k].filament === id) S.settings[k].filament = fallback;
+  for (const k of ['base', 'ring', 'pencil']) if (S.settings[k].filament === id) S.settings[k].filament = fallback;
   refresh(); commit();
 });
 $('btnAddFilament').onclick = () => {
@@ -624,65 +667,108 @@ for (const id of ['procColors', 'procDetail', 'procSmooth', 'procMinArea', 'proc
 }
 $('btnReprocess').onclick = async () => { readProcInputs(); if (S.image) { await runProcessing(null, { keepSettings: true }); syncProcInputs(); syncSettingsInputs(); } };
 
+const getPath = (o, p) => p.split('.').reduce((a, k) => a?.[k], o);
+const setPath = (o, p, v) => { const ks = p.split('.'); const last = ks.pop(); ks.reduce((a, k) => a[k], o)[last] = v; };
+const evalWhen = (expr) => {
+  const neg = expr.includes('!=');
+  const [path, vals] = expr.split(neg ? '!=' : '=');
+  const v = String(getPath(S.settings, path));
+  const hit = vals.split('|').includes(v);
+  return neg ? !hit : hit;
+};
+
 function syncSettingsInputs() {
-  const s = S.settings;
-  $('setWidth').value = fmt(s.widthMM);
-  $('baseEnabled').checked = s.base.enabled;
-  $('baseMargin').value = s.base.margin;
-  $('baseThickness').value = s.base.thickness;
-  $('ringEnabled').checked = s.ring.enabled;
-  $('ringOuter').value = s.ring.outer;
-  $('ringInner').value = s.ring.inner;
-  $('ringThickness').value = s.ring.thickness;
+  document.querySelectorAll('[data-set]').forEach((el) => {
+    if (el === document.activeElement && el.type === 'text') return;
+    const v = getPath(S.settings, el.dataset.set);
+    if (el.type === 'checkbox') el.checked = !!v;
+    else if (el.tagName === 'SELECT') { if (!el.classList.contains('fil-select')) el.value = String(v); }
+    else el.value = v == null ? '' : fmt(v);
+  });
+  document.querySelectorAll('[data-when]').forEach((el) => { el.hidden = !evalWhen(el.dataset.when); });
+  const p = S.settings.pencil;
+  $('pencilValueLabel').textContent = p.measure === 'circumference' ? 'Circunferencia (mm)' : p.type === 'hex' ? 'Ancho entre caras (mm)' : 'Diámetro / ancho (mm)';
+  const across = pencilAcross(p);
+  $('pencilInfo').textContent = `Lápiz ≈ ${fmt(across)} mm de ancho · ${fmt(across * (p.type === 'round' ? Math.PI : p.type === 'hex' ? 6 / Math.sqrt(3) : 0) + (p.type === 'triangle' ? 2 * Math.sqrt(3) * Math.max(0.5, across - 2) + 2 * Math.PI : 0))} mm de circunferencia · canal interior ${fmt(across + p.tolerance)} mm`;
   renderFilaments();
   renderStatus();
 }
-const num = (id, min = 0) => Math.max(min, parseFloat($(id).value) || 0);
-$('setWidth').addEventListener('change', () => {
-  S.settings.widthMM = num('setWidth', 5);
-  rebuildBase(); rebuildRing(); refresh(); viewer.frame(); commit();
-});
-$('baseEnabled').addEventListener('change', (e) => { S.settings.base.enabled = e.target.checked; rebuildBase(); refresh(); commit(); });
-$('baseMargin').addEventListener('input', () => { S.settings.base.margin = num('baseMargin'); if (S.settings.base.enabled) rebuildBaseDebounced(); });
-$('baseMargin').addEventListener('change', () => { S.settings.base.margin = num('baseMargin'); rebuildBase(); refresh(); commit(); });
-$('baseThickness').addEventListener('input', () => { S.settings.base.thickness = num('baseThickness', 0.1); sync3D(); });
-$('baseThickness').addEventListener('change', () => { refresh(); commit(); });
-$('baseFilament').addEventListener('change', (e) => { S.settings.base.filament = Number(e.target.value); refresh(); commit(); });
-$('ringEnabled').addEventListener('change', (e) => { S.settings.ring.enabled = e.target.checked; rebuildRing(); refresh(); commit(); });
-for (const [id, k] of [['ringOuter', 'outer'], ['ringInner', 'inner'], ['ringThickness', 'thickness']]) {
-  $(id).addEventListener('change', () => { S.settings.ring[k] = num(id, k === 'inner' ? 0 : 0.2); rebuildRing(); refresh(); commit(); });
+
+function onSettingChanged(path) {
+  if (path === 'ring.pos' && S.settings.ring.pos === 'manual' && S.settings.ring.x == null && feat?.ring) Object.assign(S.settings.ring, { x: feat.ring.x, y: feat.ring.y });
+  if (path === 'widthMM' && S.source === 'text' && (S.text.thicken > 0 || S.text.outline)) { applyText(); return; }
+  syncSettingsInputs();
+  if (!S.result) return;
+  rebuildFeatures();
+  refresh();
+  if (path === 'widthMM') viewer.frame();
+  commit();
 }
-$('ringFilament').addEventListener('change', (e) => { S.settings.ring.filament = Number(e.target.value); refresh(); commit(); });
+document.querySelectorAll('[data-set]').forEach((el) => {
+  const path = el.dataset.set;
+  el.addEventListener('change', () => {
+    let v;
+    if (el.type === 'checkbox') v = el.checked;
+    else if (el.tagName === 'SELECT') v = /^-?\d+(\.\d+)?$/.test(el.value) ? Number(el.value) : el.value;
+    else {
+      v = parseNum(el.value);
+      if (!Number.isFinite(v)) { syncSettingsInputs(); return; }
+      if (!el.dataset.allowneg) v = Math.max(el.dataset.min ? parseFloat(el.dataset.min) : 0, v);
+      v = Math.round(v * 100) / 100;
+    }
+    setPath(S.settings, path, v);
+    onSettingChanged(path);
+  });
+  if (el.type === 'text') el.addEventListener('keydown', (e) => { if (e.key === 'Enter') el.blur(); });
+});
+document.querySelectorAll('[data-preset]').forEach((b) => b.addEventListener('click', () => {
+  mergeDeep(S.settings, JSON.parse(b.dataset.preset));
+  onSettingChanged('preset');
+}));
+$('micPreset').innerHTML = '<option value="">— elegir —</option>' + Object.entries(MIC_PRESETS).map(([k, p]) => `<option value="${k}">${escHtml(p.name)}</option>`).join('');
+$('micPreset').addEventListener('change', (e) => {
+  const p = MIC_PRESETS[e.target.value];
+  if (!p) return;
+  const set = S.settings;
+  mergeDeep(set, { magnets: p.magnets, tongue: p.tongue });
+  set.base.enabled = true;
+  if (set.base.shape !== 'contour') { set.base.plateW = p.plate; set.base.plateH = p.plate; }
+  set.widthMM = Math.round(p.plate * 0.78);
+  if (set.base.thickness < 3) set.base.thickness = 3;
+  onSettingChanged('widthMM');
+});
+$('cakePreset').innerHTML = '<option value="">— elegir —</option>' + Object.entries(CAKE_PRESETS).map(([k, p]) => `<option value="${k}">${escHtml(p.name)}</option>`).join('');
+$('cakePreset').addEventListener('change', (e) => {
+  const p = CAKE_PRESETS[e.target.value];
+  if (!p) return;
+  S.settings.widthMM = p.widthMM;
+  mergeDeep(S.settings.sticks, { ...p.sticks, enabled: true });
+  onSettingChanged('widthMM');
+});
 $('btnPlaceRing').onclick = () => {
   if (!S.result) return;
   view2d.placing = true;
   $('placeHint').hidden = false;
-  if (S.tab && $('views').classList.contains('mode-3d')) setViewMode('split');
+  if ($('views').classList.contains('mode-3d')) setViewMode('split');
 };
 function stopPlacing() { view2d.placing = false; $('placeHint').hidden = true; }
 
 // ---------------------------------------------------------------- status
 function modelBounds() {
-  const s = scale();
-  let [x0, y0, x1, y1] = S.result.fgBBox;
-  const grow = (x, y) => { x0 = Math.min(x0, x); y0 = Math.min(y0, y); x1 = Math.max(x1, x); y1 = Math.max(y1, y); };
-  if (baseShapes) for (const sh of baseShapes) for (const p of sh.outer) grow(p[0], p[1]);
-  const r = S.settings.ring;
-  if (r.enabled && r.x != null) { const ro = r.outer / 2 / s; grow(r.x - ro, r.y - ro); grow(r.x + ro, r.y + ro); }
-  return [x0, y0, x1, y1];
+  return feat?.bounds || S.result.fgBBox;
 }
 function renderStatus() {
-  if (!S.result) return;
+  if (!S.result) { $('stPieces').textContent = 'Sin diseño'; $('stSize').textContent = ''; return; }
   const s = scale();
   const [x0, y0, x1, y1] = modelBounds();
-  const zMax = Math.max(0, ...S.pieces.filter((p) => p.enabled).map((p) => p.height + p.elevation)) + baseZ();
+  const pieceTop = feat?.hidePieces ? 0 : Math.max(0, ...S.pieces.filter((p) => p.enabled).map((p) => p.height + p.elevation)) + baseZ();
+  const zMax = Math.max(pieceTop, feat?.zTop || 0);
   $('stPieces').textContent = `${S.result.pieces.length} piezas · ${S.filaments.length} filamentos`;
   $('stSelection').textContent = S.selection.size ? `${S.selection.size} seleccionadas` : '';
   $('stSize').textContent = `Tamaño: ${fmt((x1 - x0) * s)} × ${fmt((y1 - y0) * s)} × ${fmt(zMax)} mm`;
   const fb = S.result.fgBBox;
   $('setHeightOut').textContent = fmt((fb[3] - fb[1]) * s);
-}
-function renderHover(pid) {
+}function renderHover(pid) {
   if (pid < 0 || !S.result) { $('stHover').textContent = ''; return; }
   const p = S.result.pieces[pid], st = S.pieces[pid], s = scale();
   $('stHover').textContent = `Pieza ${pid + 1} · ${filament(st.filament).name} · altura ${fmt(st.height)} mm · ${fmt(p.area * s * s)} mm²`;
@@ -698,10 +784,18 @@ async function saveProject() {
 async function openProjectFile(file) {
   try {
     const j = JSON.parse(await file.text());
+    if (j.app === 'Relieve3D-Studio') { hideHome(); studio.openProject(j); return; }
     if (j.app !== 'Relieve3D') throw new Error('No es un proyecto de Relieve3D');
+    S.module = j.state.module || 'logo';
+    S.text = { ...DEFAULT_TEXT(), ...(j.state.text || {}) };
     S.proc = { ...DEFAULT_PROC, ...j.state.proc };
+    hideHome();
+    $('studio').hidden = true;
+    S.source = j.state.source || 'image';
+    applyModuleUI();
     syncProcInputs();
-    await loadImage(j.image.dataURL, j.image.name, j.state);
+    if (S.source === 'text') await ensureFont(S.text.font, S.text.weight);
+    await loadImage(j.image.dataURL, j.image.name, j.state, { source: S.source });
     toast('Proyecto abierto');
   } catch (err) {
     toast('No se pudo abrir el proyecto: ' + err.message, true);
@@ -713,29 +807,26 @@ const baseName = () => (S.image?.name || 'modelo').replace(/\.[^.]+$/, '');
 function exportParts() {
   const s = scale(), bz = baseZ();
   const byFil = new Map();
-  for (const p of S.result.pieces) {
-    const st = S.pieces[p.id], g = pieceGeoms.get(p.id);
-    if (!st.enabled || !g) continue;
-    if (!byFil.has(st.filament)) byFil.set(st.filament, []);
-    byFil.get(st.filament).push(toWorld(g, s, st.height, bz + st.elevation));
-  }
+  const add = (fid, g) => { if (!byFil.has(fid)) byFil.set(fid, []); byFil.get(fid).push(g); };
   const parts = [];
-  S.filaments.forEach((f, i) => {
-    if (byFil.has(f.id)) parts.push({ name: f.name, color: f.color, filamentIndex: i, filamentId: f.id, geometry: mergeToIndexed(byFil.get(f.id)) });
-  });
-  const set = S.settings;
-  if (set.base.enabled) {
-    const g = viewerExtraGeometry('base');
-    if (g) parts.push({ name: 'Base', color: filament(set.base.filament).color, filamentIndex: filamentIndex(set.base.filament), filamentId: set.base.filament, geometry: toWorld(g, s, set.base.thickness, 0) });
+  if (!feat?.hidePieces) {
+    for (const p of S.result.pieces) {
+      const st = S.pieces[p.id], g = pieceGeoms.get(p.id);
+      if (!st.enabled || !g) continue;
+      add(st.filament, toWorld(g, s, st.height, bz + st.elevation));
+    }
+    S.filaments.forEach((f, i) => {
+      if (byFil.has(f.id)) parts.push({ name: f.name, color: f.color, filamentIndex: i, filamentId: f.id, geometry: mergeToIndexed(byFil.get(f.id)) });
+    });
   }
-  if (set.ring.enabled) {
-    const g = viewerExtraGeometry('ring');
-    if (g) parts.push({ name: 'Argolla', color: filament(set.ring.filament).color, filamentIndex: filamentIndex(set.ring.filament), filamentId: set.ring.filament, geometry: toWorld(g, s, set.ring.thickness, 0) });
+  // accessories (base, ring, sleeve…): one part per layer/solid, never merged, so stacked layers stay manifold
+  for (const fp of featParts) {
+    const fid = filFor(fp.fil);
+    const geometry = mergeToIndexed([fp.solid ? toWorld(fp.geometry, s, 1, 0) : toWorld(fp.geometry, s, fp.height, fp.z)]);
+    parts.push({ name: fp.name || fp.key, color: filament(fid).color, filamentIndex: filamentIndex(fid), filamentId: fid, geometry });
   }
   return parts;
 }
-const viewerExtraGeometry = (name) => viewer.extras.get(name)?.geometry;
-
 async function doExport(kind) {
   if (!S.result) { toast('Primero carga una imagen.'); return; }
   showBusy('Generando archivo…');
@@ -745,13 +836,12 @@ async function doExport(kind) {
     let saved = null;
     if (kind === 'svg') {
       const layers = [];
-      const set = S.settings, s = scale();
-      if (set.base.enabled && baseShapes) layers.push({ name: 'Base', color: filament(set.base.filament).color, items: [baseShapes] });
-      for (const f of S.filaments) {
+      const s = scale();
+      for (const fp of featParts) layers.push({ name: fp.name, color: filament(filFor(fp.fil)).color, items: [fp.shapes] });
+      if (!feat?.hidePieces) for (const f of S.filaments) {
         const items = S.result.pieces.filter((p) => S.pieces[p.id].enabled && S.pieces[p.id].filament === f.id).map((p) => p.shapes);
         if (items.length) layers.push({ name: f.name, color: f.color, items });
       }
-      if (set.ring.enabled) layers.push({ name: 'Argolla', color: filament(set.ring.filament).color, items: [{ ring: { x: set.ring.x, y: set.ring.y, ro: set.ring.outer / 2 / s, ri: set.ring.inner / 2 / s } }] });
       const [x0, y0, x1, y1] = modelBounds();
       saved = await window.api.saveFile({ defaultPath: name + '.svg', filters: [{ name: 'SVG', extensions: ['svg'] }], data: svg(layers, [x0 - 2, y0 - 2, x1 + 2, y1 + 2], s) });
     } else {
@@ -839,18 +929,22 @@ $('selSameLevel').onclick = () => {
 // drag & drop
 const dz = $('dropZone');
 document.addEventListener('dragover', (e) => { e.preventDefault(); dz.classList.remove('hidden'); dz.classList.add('drag'); });
-document.addEventListener('dragleave', (e) => { if (e.relatedTarget === null) { dz.classList.remove('drag'); if (S.image) dz.classList.add('hidden'); } });
+document.addEventListener('dragleave', (e) => { if (e.relatedTarget === null) { dz.classList.remove('drag'); if (S.image || S.source === 'text' || !$('home').hidden || !$('studio').hidden) dz.classList.add('hidden'); } });
 document.addEventListener('drop', (e) => {
   e.preventDefault();
   dz.classList.remove('drag');
-  if (S.image) dz.classList.add('hidden');
+  if (S.image || S.source === 'text') dz.classList.add('hidden');
   const f = e.dataTransfer.files[0];
-  if (f) loadImageFile(f);
+  if (!f) return;
+  if (!$('studio').hidden) { studio.loadFile(f); return; }
+  if (/\.(r3d|r3s|json)$/i.test(f.name)) { openProjectFile(f); return; }
+  if (!$('home').hidden) { S.module = 'logo'; clearDesign(); hideHome(); applyModuleUI(); }
+  loadImageFile(f);
 });
 
 // keyboard
 window.addEventListener('keydown', (e) => {
-  if (isTyping(e)) return;
+  if (isTyping(e) || !$('home').hidden || !$('studio').hidden) return;
   const k = e.key.toLowerCase(), ctrl = e.ctrlKey || e.metaKey;
   if (ctrl && k === 'z' && !e.shiftKey) { e.preventDefault(); undo(); }
   else if (ctrl && (k === 'y' || (k === 'z' && e.shiftKey))) { e.preventDefault(); redo(); }
@@ -867,6 +961,192 @@ window.addEventListener('keydown', (e) => {
   else if ((k === '-' || k === '_') && S.selection.size) document.querySelector('[data-hstep="-0.2"]').click();
 });
 
+// ---------------------------------------------------------------- text source
+const textFields = {
+  txtText: 'text', txtFont: 'font', txtWeight: 'weight', txtItalic: 'italic', txtSpacing: 'spacing', txtLine: 'lineHeight',
+  txtAlign: 'align', txtFill: 'fill', txtThicken: 'thicken', txtOutline: 'outline', txtOutlineColor: 'outlineColor',
+  txtOutlineMM: 'outlineMM', txtBaseColor: 'baseColor',
+};
+function fontOptions(systemFonts = []) {
+  const cats = [...new Set(BUNDLED_FONTS.map((f) => f.cat))];
+  let html = cats.map((c) => `<optgroup label="${escHtml(c)}">${BUNDLED_FONTS.filter((f) => f.cat === c).map((f) => `<option value="${escHtml(f.family)}">${escHtml(f.family)}</option>`).join('')}</optgroup>`).join('');
+  if (systemFonts.length) html += `<optgroup label="Fuentes instaladas en el equipo (${systemFonts.length})">${systemFonts.map((f) => `<option value="${escHtml(f)}">${escHtml(f)}</option>`).join('')}</optgroup>`;
+  return html;
+}
+let systemFonts = [];
+$('txtFont').innerHTML = fontOptions();
+window.api?.listFonts?.().then((list) => {
+  systemFonts = list.filter((f) => !BUNDLED_FONTS.some((b) => b.family === f));
+  const v = $('txtFont').value;
+  $('txtFont').innerHTML = fontOptions(systemFonts);
+  $('txtFont').value = S.text.font || v;
+  studio.setSystemFonts(systemFonts);
+}).catch(() => {});
+
+function syncTextInputs() {
+  for (const [id, k] of Object.entries(textFields)) {
+    const el = $(id), v = S.text[k];
+    if (el === document.activeElement && el.type === 'text') continue;
+    if (el.type === 'checkbox') el.checked = !!v;
+    else if (el.tagName === 'SELECT') {
+      if (id === 'txtFont' && ![...el.options].some((o) => o.value === v)) el.insertAdjacentHTML('beforeend', `<option value="${escHtml(v)}">${escHtml(v)}</option>`);
+      el.value = String(v);
+    } else el.value = typeof v === 'number' ? fmt(v) : v;
+  }
+  document.querySelectorAll('[data-twhen]').forEach((el) => { el.hidden = !S.text[el.dataset.twhen]; });
+  $('fontPreview').style.fontFamily = `"${S.text.font}"`;
+  $('fontPreview').style.fontWeight = S.text.weight;
+  $('fontPreview').textContent = (S.text.text || 'Aa').split('\n')[0];
+  document.querySelectorAll('#sourceSeg .seg-btn').forEach((b) => b.classList.toggle('active', b.dataset.src === S.source));
+  $('textFields').hidden = S.source !== 'text';
+  $('procCard').hidden = S.source === 'text';
+}
+
+let textSeq = 0;
+async function applyText() {
+  const seq = ++textSeq;
+  await ensureFont(S.text.font, S.text.weight);
+  if (seq !== textSeq) return;
+  if (!String(S.text.text).trim()) { toast('Escribe un texto.'); return; }
+  const r = renderTextImage(S.text, S.settings.widthMM);
+  S.proc = { ...DEFAULT_PROC, colors: r.colors, removeBg: 'no', maxRes: 1600, detail: 0.6, minArea: 0 };
+  await loadImage(r.dataURL, 'texto.png', null, { keep: !!S.result, source: 'text' });
+}
+let textTimer;
+for (const [id, k] of Object.entries(textFields)) {
+  const el = $(id);
+  const read = () => {
+    let v = el.type === 'checkbox' ? el.checked : el.value;
+    if (['weight', 'spacing', 'lineHeight', 'thicken', 'outlineMM'].includes(k)) {
+      v = parseNum(v);
+      if (!Number.isFinite(v)) return false;
+      if (k !== 'spacing') v = Math.max(0, v);
+    }
+    S.text[k] = v;
+    return true;
+  };
+  const go = () => { if (read()) { syncTextInputs(); clearTimeout(textTimer); textTimer = setTimeout(applyText, k === 'text' ? 450 : 50); } };
+  if (id === 'txtText') el.addEventListener('input', go);
+  else el.addEventListener('change', go);
+  if (el.type === 'text') el.addEventListener('keydown', (e) => { if (e.key === 'Enter') el.blur(); });
+}
+$('sourceSeg').addEventListener('click', (e) => {
+  const b = e.target.closest('[data-src]');
+  if (!b) return;
+  if (b.dataset.src === 'image') $('fileImage').click();
+  else if (S.source !== 'text') { S.source = 'text'; syncTextInputs(); applyText(); }
+});
+
+// ---------------------------------------------------------------- modules & home
+const studio = new Studio($('studio'), {
+  toast,
+  showBusy,
+  hideBusy,
+  onBack: () => showHome(),
+  onSendTo3D: (payload) => sendStudioTo3D(payload),
+});
+
+function renderHome() {
+  const card = (m) => `<button class="home-card" data-mod="${m.id}"><span class="hc-icon">${m.icon}</span><span class="hc-title">${escHtml(m.title)}</span><span class="hc-desc">${escHtml(m.desc)}</span></button>`;
+  $('homeGrid3d').innerHTML = MODULES.filter((m) => m.group === '3d').map(card).join('');
+  $('homeGrid2d').innerHTML = MODULES.filter((m) => m.group === '2d').map(card).join('');
+}
+function showHome() {
+  $('studio').hidden = true;
+  $('home').hidden = false;
+  $('homeContinue').hidden = !S.result;
+  if (S.result) $('homeContinue').textContent = `↩ Continuar: ${moduleDef(S.module).title}`;
+}
+function hideHome() { $('home').hidden = true; }
+
+function applyModuleUI() {
+  const m = moduleDef(S.module);
+  $('moduleName').textContent = `· ${m.icon} ${m.title}`;
+  const all = $('showAllCards').checked;
+  document.querySelectorAll('[data-card]').forEach((el) => { el.hidden = !(all || m.cards.includes(el.dataset.card)); });
+  $('textCard').hidden = !m.cards.includes('text');
+  if (!S.result) $('dropZone').classList.toggle('hidden', S.source === 'text');
+  syncTextInputs();
+  setTimeout(() => { view2d.resize(); viewer.resize(); }, 0);
+}
+$('showAllCards').addEventListener('change', applyModuleUI);
+
+function clearDesign() {
+  viewer.clear();
+  pieceGeoms.clear();
+  featParts = []; feat = null;
+  Object.assign(S, { image: null, result: null, pieces: [], filaments: [], clusterFilament: [], groups: [] });
+  S.selection.clear();
+  S.settings = moduleSettings(S.module);
+  S.source = moduleDef(S.module).source;
+  S.proc = { ...DEFAULT_PROC };
+  view2d.result = null;
+  view2d.setUnderlays([]);
+  view2d.setBounds(null);
+  view2d.draw();
+  hist.stack = []; hist.idx = -1;
+  $('docName').textContent = '';
+  $('dropZone').classList.toggle('hidden', S.source === 'text');
+  renderWarnings();
+  refresh();
+  syncSettingsInputs();
+}
+
+async function enterModule(id) {
+  const m = moduleDef(id);
+  if (m.group === '2d') { hideHome(); studio.open(id); return; }
+  let keep = false;
+  if (S.result) {
+    if (S.module === id) { hideHome(); return; }
+    const r = await window.api.confirm({ message: `¿Quieres usar el diseño actual en «${m.title}»?`, buttons: ['Usar el diseño actual', 'Empezar uno nuevo', 'Cancelar'], cancelId: 2 });
+    if (r === 2) return;
+    keep = r === 0;
+  }
+  S.module = id;
+  hideHome();
+  if (keep) {
+    const old = S.settings;
+    S.settings = moduleSettings(id);
+    for (const k of ['base', 'ring', 'pencil']) S.settings[k].filament = old[k].filament ?? old.base.filament;
+    applyModuleUI();
+    if (S.source === 'text') { await applyText(); } else { rebuildFeatures(); refresh(); viewer.frame(); commit(); }
+    syncSettingsInputs();
+    return;
+  }
+  clearDesign();
+  applyModuleUI();
+  if (m.source === 'text') {
+    S.text = { ...DEFAULT_TEXT(), ...(m.text || {}) };
+    syncTextInputs();
+    await applyText();
+  }
+}
+
+async function sendStudioTo3D({ dataURL, colors, widthMM, name, module, outlined }) {
+  S.module = module || 'logo';
+  clearDesign();
+  S.source = 'image';
+  $('studio').hidden = true;
+  hideHome();
+  applyModuleUI();
+  S.proc = { ...DEFAULT_PROC, colors, removeBg: 'no', maxRes: 1600, detail: 0.6, minArea: 0 };
+  await loadImage(dataURL, name, null, { source: 'image' });
+  S.settings.widthMM = widthMM;
+  // the studio already drew the silhouette: the 3D base simply follows it
+  if (outlined && S.settings.base?.enabled) Object.assign(S.settings.base, { shape: 'contour', margin: 0 });
+  rebuildFeatures();
+  syncSettingsInputs();
+  refresh();
+  viewer.frame();
+  hist.stack = []; hist.idx = -1;
+  commit();
+}
+
+$('homeGrid3d').addEventListener('click', (e) => { const b = e.target.closest('[data-mod]'); if (b) enterModule(b.dataset.mod); });
+$('homeGrid2d').addEventListener('click', (e) => { const b = e.target.closest('[data-mod]'); if (b) enterModule(b.dataset.mod); });
+$('homeContinue').onclick = () => { if (S.result) hideHome(); };
+$('homeOpenProject').onclick = () => $('fileProject').click();
+$('btnHome').onclick = showHome;
 // test hook (used by automated screenshot runs)
 window.api?.onTestImage(({ name, bytes }) => loadImageFile(new File([bytes], name, { type: 'image/png' })));
 
@@ -884,8 +1164,12 @@ if (stUpdate) {
     else if (d.state === 'up-to-date' || d.state === 'error') stUpdate.hidden = true;
   });
 }
-window.__r3d = { S, setSelection, doExport, exportParts, undo, redo, commit, hist, setViewMode };
+window.__r3d = { S, setSelection, doExport, exportParts, undo, redo, commit, hist, setViewMode, enterModule, applyText, showHome, studio, getFeat: () => feat, onSettingChanged, placeRing, loadImageFile };
 
 syncProcInputs();
 updateUndoButtons();
 renderGroups();
+renderHome();
+syncSettingsInputs();
+syncTextInputs();
+window.api?.appVersion?.().then((v) => { $('homeVersion').textContent = 'Versión ' + v; }).catch(() => {});

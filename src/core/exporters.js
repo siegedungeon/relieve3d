@@ -62,7 +62,7 @@ export function threeMF(parts, modelName = 'Relieve3D') {
   const out = [];
   out.push('<?xml version="1.0" encoding="UTF-8"?>\n');
   out.push('<model unit="millimeter" xml:lang="en-US" xmlns="http://schemas.microsoft.com/3dmanufacturing/core/2015/02">\n');
-  out.push(`<metadata name="Title">${esc(modelName)}</metadata>\n<metadata name="Application">Relieve3D</metadata>\n`);
+  out.push(`<metadata name="Title">${esc(modelName)}</metadata>\n<metadata name="Application">Relieve3D</metadata>\n<metadata name="Designer">Relieve3D</metadata>\n`);
   out.push('<resources>\n<basematerials id="1">\n');
   for (let i = 0; i < colors.length; i++) out.push(`<base name="Filamento ${i + 1}" displaycolor="${colors[i].toUpperCase()}FF"/>\n`);
   out.push('</basematerials>\n');

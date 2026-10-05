@@ -17,7 +17,8 @@
 </head>
 <body>
   <header class="topbar">
-    <div class="brand"><span class="logo">◆</span> Relieve3D <span id="docName" class="doc-name"></span></div>
+    <button id="btnHome" class="btn" title="Volver a la pantalla de inicio">⌂ Inicio</button>
+    <div class="brand"><span class="logo">◆</span> Relieve3D <span id="moduleName" class="module-name"></span> <span id="docName" class="doc-name"></span></div>
     <div class="tb-group">
       <button id="btnOpenImage" class="btn" title="Abrir imagen (Ctrl+O)">🖼️ Abrir imagen</button>
       <button id="btnOpenProject" class="btn" title="Abrir proyecto">📂 Abrir proyecto</button>
@@ -48,7 +49,30 @@
   <main class="layout">
     <!-- LEFT PANEL -->
     <aside class="panel left">
-      <section class="card">
+      <section class="card" id="textCard" hidden>
+        <div class="seg src-seg" id="sourceSeg">
+          <button class="seg-btn active" data-src="text">✍️ Texto</button>
+          <button class="seg-btn" data-src="image">🖼️ Imagen</button>
+        </div>
+        <div id="textFields">
+          <textarea id="txtText" rows="2" placeholder="Escribe el nombre…"></textarea>
+          <label class="row">Fuente <select id="txtFont"></select></label>
+          <div class="font-preview" id="fontPreview">Sofía</div>
+          <label class="row">Grosor letra <select id="txtWeight"><option value="400">Normal</option><option value="600">Semi</option><option value="700" selected>Negrita</option><option value="900">Extra</option></select></label>
+          <label class="row">Cursiva <input type="checkbox" id="txtItalic" /></label>
+          <label class="row">Espaciado (%) <input inputmode="decimal" type="text" id="txtSpacing" /></label>
+          <label class="row">Interlineado <input inputmode="decimal" type="text" id="txtLine" /></label>
+          <label class="row">Alineación <select id="txtAlign"><option value="center">Centro</option><option value="left">Izquierda</option><option value="right">Derecha</option></select></label>
+          <label class="row">Color letras <input type="color" id="txtFill" /></label>
+          <label class="row">Engrosar letras (mm) <input inputmode="decimal" type="text" id="txtThicken" /></label>
+          <label class="row">Bordeado de color <input type="checkbox" id="txtOutline" /></label>
+          <label class="row" data-twhen="outline">Color bordeado <input type="color" id="txtOutlineColor" /></label>
+          <label class="row" data-twhen="outline">Grosor bordeado (mm) <input inputmode="decimal" type="text" id="txtOutlineMM" /></label>
+          <label class="row">Color base / silueta <input type="color" id="txtBaseColor" /></label>
+          <p class="muted small">El ancho total se ajusta en «Tamaño». La silueta exterior se configura en «Base / silueta».</p>
+        </div>
+      </section>
+      <section class="card" id="procCard">
         <h3>Vectorización</h3>
         <label class="row">Colores
           <span class="inline">
@@ -136,6 +160,7 @@
 
     <!-- RIGHT PANEL -->
     <aside class="panel right">
+      <section class="card warn" id="featWarn" hidden></section>
       <section class="card" id="selCard">
         <h3>Selección <span id="selCount" class="badge">0</span></h3>
         <div id="selEmpty" class="muted">Selecciona piezas en el lienzo, en el 3D o desde los grupos.</div>
@@ -174,33 +199,160 @@
 
       <section class="card">
         <h3>Tamaño</h3>
-        <label class="row">Ancho del diseño (mm) <input type="number" id="setWidth" step="1" min="5" value="60" /></label>
+        <label class="row">Ancho del diseño (mm) <input inputmode="decimal" type="text" data-set="widthMM" data-min="5" /></label>
         <label class="row">Alto resultante (mm) <output id="setHeightOut"></output></label>
       </section>
 
-      <section class="card">
-        <h3><label class="chk"><input type="checkbox" id="baseEnabled" /> Base / contorno</label></h3>
-        <label class="row">Margen (mm) <input type="number" id="baseMargin" step="0.5" min="0" value="2" /></label>
-        <label class="row">Grosor (mm) <input type="number" id="baseThickness" step="0.1" min="0.2" value="1.2" /></label>
-        <label class="row">Filamento <select id="baseFilament"></select></label>
-        <p class="muted small">Las piezas se colocan encima de la base.</p>
+      <section class="card" data-card="mic">
+        <h3>🎤 Micrófono</h3>
+        <label class="row">Modelo <select id="micPreset"></select></label>
+        <p class="muted small">Ajusta automáticamente el tamaño de la placa y el sistema de sujeción (imán o lengüeta para el clip). Luego puedes afinar cada medida abajo.</p>
       </section>
 
-      <section class="card">
-        <h3><label class="chk"><input type="checkbox" id="ringEnabled" /> Argolla de llavero</label></h3>
-        <label class="row">Diámetro exterior (mm) <input type="number" id="ringOuter" step="0.5" min="2" value="8" /></label>
-        <label class="row">Diámetro del agujero (mm) <input type="number" id="ringInner" step="0.5" min="0" value="4" /></label>
-        <label class="row">Grosor (mm) <input type="number" id="ringThickness" step="0.1" min="0.4" value="2" /></label>
-        <label class="row">Filamento <select id="ringFilament"></select></label>
-        <button id="btnPlaceRing" class="btn wide">📍 Colocar en el lienzo</button>
+      <section class="card" data-card="base">
+        <h3><label class="chk"><input type="checkbox" data-set="base.enabled" /> Base / silueta</label></h3>
+        <label class="row">Forma <select data-set="base.shape">
+          <option value="contour">Silueta (sigue el diseño)</option><option value="circle">Círculo</option><option value="rect">Rectángulo</option>
+          <option value="star">Estrella</option><option value="heart">Corazón</option><option value="hexagon">Hexágono</option><option value="octagon">Octágono</option>
+          <option value="shield">Escudo</option><option value="badge">Insignia</option><option value="cloud">Nube</option><option value="speech">Globo de diálogo</option>
+        </select></label>
+        <label class="row" data-when="base.shape!=contour">Ancho placa (mm) <input inputmode="decimal" type="text" data-set="base.plateW" data-min="5" /></label>
+        <label class="row" data-when="base.shape!=contour">Alto placa (mm) <input inputmode="decimal" type="text" data-set="base.plateH" data-min="5" /></label>
+        <label class="row" data-when="base.shape=rect">Radio esquinas (mm) <input inputmode="decimal" type="text" data-set="base.corner" /></label>
+        <label class="row" data-when="base.shape=star">Puntas <input inputmode="decimal" type="text" data-set="base.points" data-min="3" /></label>
+        <label class="row" data-when="base.shape=star">Profundidad puntas <input inputmode="decimal" type="text" data-set="base.inner" data-min="0.1" /></label>
+        <label class="row" data-when="base.shape=star|hexagon|octagon">Redondeo (mm) <input inputmode="decimal" type="text" data-set="base.round" /></label>
+        <label class="row">Margen silueta (mm) <input inputmode="decimal" type="text" data-set="base.margin" /></label>
+        <label class="row">Grosor (mm) <input inputmode="decimal" type="text" data-set="base.thickness" data-min="0.4" /></label>
+        <label class="row">Filamento <select data-set="base.filament" class="fil-select"></select></label>
+        <label class="row" data-when="base.shape=contour">Unir letras sueltas <input type="checkbox" data-set="base.weld" /></label>
+        <p class="muted small">Las piezas de color se imprimen encima de la base.</p>
       </section>
+
+      <section class="card" data-card="ring">
+        <h3><label class="chk"><input type="checkbox" data-set="ring.enabled" /> Argolla de llavero</label></h3>
+        <label class="row">Posición <select data-set="ring.pos">
+          <option value="top">Arriba</option><option value="left">Izquierda</option><option value="right">Derecha</option>
+          <option value="topleft">Arriba izquierda</option><option value="topright">Arriba derecha</option><option value="bottom">Abajo</option><option value="manual">Manual (arrastrada)</option>
+        </select></label>
+        <label class="row">Diámetro exterior (mm) <input inputmode="decimal" type="text" data-set="ring.outer" data-min="3" /></label>
+        <label class="row">Agujero (mm) <input inputmode="decimal" type="text" data-set="ring.inner" data-min="1" /></label>
+        <label class="row">Grosor (mm) <input inputmode="decimal" type="text" data-set="ring.thickness" data-min="0.8" /></label>
+        <label class="row" data-when="base.enabled=false">Filamento <select data-set="ring.filament" class="fil-select"></select></label>
+        <div class="quick"><span class="muted">Agujero:</span>
+          <button class="chip" data-preset='{"ring":{"inner":4,"outer":8}}'>4 mm</button>
+          <button class="chip" data-preset='{"ring":{"inner":4.5,"outer":9}}'>4.5 mm</button>
+          <button class="chip" data-preset='{"ring":{"inner":5,"outer":10}}'>5 mm</button>
+          <button class="chip" data-preset='{"ring":{"inner":6,"outer":12}}'>6 mm</button>
+        </div>
+        <button id="btnPlaceRing" class="btn wide">📍 Colocar con un clic</button>
+        <p class="muted small">Tip: arrastra el círculo azul en el lienzo para moverla. La argolla se une a la base con un cuello reforzado.</p>
+      </section>
+
+      <section class="card" data-card="pencil">
+        <h3><label class="chk"><input type="checkbox" data-set="pencil.enabled" /> Funda para lápiz / pitillo</label></h3>
+        <label class="row">Tipo <select data-set="pencil.type"><option value="hex">Hexagonal</option><option value="round">Redondo</option><option value="triangle">Triangular</option></select></label>
+        <label class="row">Medir por <select data-set="pencil.measure"><option value="diameter">Diámetro / ancho</option><option value="circumference">Circunferencia</option></select></label>
+        <label class="row"><span id="pencilValueLabel">Calibre (mm)</span> <input inputmode="decimal" type="text" data-set="pencil.value" data-min="2" /></label>
+        <div class="quick"><span class="muted">Calibre:</span>
+          <button class="chip" data-preset='{"pencil":{"measure":"diameter","value":7}}'>Normal 7</button>
+          <button class="chip" data-preset='{"pencil":{"measure":"diameter","value":8}}'>8</button>
+          <button class="chip" data-preset='{"pencil":{"measure":"diameter","value":10}}'>Jumbo 10</button>
+        </div>
+        <div class="muted small" id="pencilInfo"></div>
+        <label class="row">Holgura (mm) <input inputmode="decimal" type="text" data-set="pencil.tolerance" /></label>
+        <label class="row">Pared (mm) <input inputmode="decimal" type="text" data-set="pencil.wall" data-min="0.8" /></label>
+        <label class="row">Montaje <select data-set="pencil.mount"><option value="side">Acostado bajo el nombre</option><option value="tip">En la punta (vertical)</option></select></label>
+        <label class="row">Largo funda (mm, 0 = auto) <input inputmode="decimal" type="text" data-set="pencil.length" /></label>
+        <label class="row" data-when="pencil.mount=side">Extremos <select data-set="pencil.ends"><option value="closed-right">Cerrado a la derecha</option><option value="closed-left">Cerrado a la izquierda</option><option value="open">Abierto a ambos lados</option></select></label>
+        <label class="row">Desplazar (mm) <input inputmode="decimal" type="text" data-set="pencil.offset" data-allowneg="1" /></label>
+        <label class="row">Filamento <select data-set="pencil.filament" class="fil-select"></select></label>
+      </section>
+
+      <section class="card" data-card="sticks">
+        <h3><label class="chk"><input type="checkbox" data-set="sticks.enabled" /> Palitos (cake topper)</label></h3>
+        <label class="row">Tamaño de torta <select id="cakePreset"></select></label>
+        <label class="row">Cantidad <input inputmode="decimal" type="text" data-set="sticks.count" data-min="1" /></label>
+        <label class="row">Largo (mm) <input inputmode="decimal" type="text" data-set="sticks.length" data-min="5" /></label>
+        <label class="row">Ancho (mm) <input inputmode="decimal" type="text" data-set="sticks.width" data-min="2" /></label>
+        <label class="row">Grosor (mm) <input inputmode="decimal" type="text" data-set="sticks.thickness" data-min="1" /></label>
+        <label class="row">Punta afilada <input type="checkbox" data-set="sticks.tip" /></label>
+        <label class="row">Barra de unión <input type="checkbox" data-set="sticks.bar" /></label>
+        <label class="row" data-when="sticks.bar=true">Alto barra (mm) <input inputmode="decimal" type="text" data-set="sticks.barHeight" data-min="1" /></label>
+      </section>
+
+      <section class="card" data-card="magnets">
+        <h3><label class="chk"><input type="checkbox" data-set="magnets.enabled" /> Bolsillo para imán</label></h3>
+        <label class="row">Cantidad <select data-set="magnets.count"><option value="1">1</option><option value="2">2</option><option value="4">4</option></select></label>
+        <label class="row">Diámetro imán (mm) <input inputmode="decimal" type="text" data-set="magnets.diameter" data-min="2" /></label>
+        <label class="row">Alto imán (mm) <input inputmode="decimal" type="text" data-set="magnets.depth" data-min="0.5" /></label>
+        <label class="row" data-when="magnets.count=2|4">Separación (mm) <input inputmode="decimal" type="text" data-set="magnets.spacing" /></label>
+        <label class="row">Holgura (mm) <input inputmode="decimal" type="text" data-set="magnets.clearance" /></label>
+        <div class="quick"><span class="muted">Imán:</span>
+          <button class="chip" data-preset='{"magnets":{"diameter":10,"depth":2}}'>10×2</button>
+          <button class="chip" data-preset='{"magnets":{"diameter":8,"depth":3}}'>8×3</button>
+          <button class="chip" data-preset='{"magnets":{"diameter":6,"depth":2}}'>6×2</button>
+          <button class="chip" data-preset='{"magnets":{"diameter":12,"depth":3}}'>12×3</button>
+        </div>
+        <p class="muted small">El bolsillo queda abierto por debajo: pega el imán con una gota de pegamento.</p>
+      </section>
+
+      <section class="card" data-card="tongue">
+        <h3><label class="chk"><input type="checkbox" data-set="tongue.enabled" /> Lengüeta para clip</label></h3>
+        <label class="row">Ancho (mm) <input inputmode="decimal" type="text" data-set="tongue.width" data-min="3" /></label>
+        <label class="row">Largo (mm) <input inputmode="decimal" type="text" data-set="tongue.length" data-min="3" /></label>
+        <label class="row">Grosor (mm) <input inputmode="decimal" type="text" data-set="tongue.thickness" data-min="0.8" /></label>
+        <p class="muted small">Se mete en el clip del micrófono por la parte inferior del logo.</p>
+      </section>
+
+      <section class="card" data-card="holes">
+        <h3><label class="chk"><input type="checkbox" data-set="holes.enabled" /> Agujeros de montaje</label></h3>
+        <label class="row">Cantidad <select data-set="holes.count"><option value="1">1</option><option value="2">2</option><option value="4">4</option></select></label>
+        <label class="row">Diámetro (mm) <input inputmode="decimal" type="text" data-set="holes.diameter" data-min="1" /></label>
+        <label class="row">Distancia al borde (mm) <input inputmode="decimal" type="text" data-set="holes.inset" /></label>
+      </section>
+
+      <section class="card" data-card="cutter">
+        <h3><label class="chk"><input type="checkbox" data-set="cutter.enabled" /> Cortador de galletas</label></h3>
+        <label class="row">Pared del filo (mm) <input inputmode="decimal" type="text" data-set="cutter.wall" data-min="0.4" /></label>
+        <label class="row">Alto (mm) <input inputmode="decimal" type="text" data-set="cutter.height" data-min="3" /></label>
+        <label class="row">Ancho pestaña (mm) <input inputmode="decimal" type="text" data-set="cutter.flange" /></label>
+        <label class="row">Grosor pestaña (mm) <input inputmode="decimal" type="text" data-set="cutter.flangeT" data-min="0.4" /></label>
+        <label class="row">Desplazar contorno (mm) <input inputmode="decimal" type="text" data-set="cutter.offset" /></label>
+      </section>
+
+      <label class="chk show-all"><input type="checkbox" id="showAllCards" /> Mostrar todas las opciones</label>
     </aside>
   </main>
+
+  <!-- HOME -->
+  <div id="home" class="home">
+    <div class="home-inner">
+      <div class="home-head">
+        <div class="home-logo">◆</div>
+        <div>
+          <h1>Relieve3D</h1>
+          <p class="muted">¿Qué quieres crear hoy?</p>
+        </div>
+        <div class="spacer"></div>
+        <button class="btn" id="homeOpenProject">📂 Abrir proyecto</button>
+        <button class="btn" id="homeContinue" hidden>↩ Continuar diseño actual</button>
+      </div>
+      <h2 class="home-group">Modelos 3D para imprimir <small>exporta 3MF multicolor para Bambu Lab · STL</small></h2>
+      <div class="home-grid" id="homeGrid3d"></div>
+      <h2 class="home-group">Diseño 2D <small>preparación de logos · corte láser · SVG para Corel</small></h2>
+      <div class="home-grid" id="homeGrid2d"></div>
+      <div class="home-foot muted small" id="homeVersion"></div>
+    </div>
+  </div>
+
+  <!-- STUDIO 2D -->
+  <div id="studio" class="studio" hidden></div>
 
   <div id="busy" class="busy" hidden><div class="spinner"></div><span id="busyText">Procesando…</span></div>
   <div id="toast" class="toast" hidden></div>
   <input type="file" id="fileImage" accept="image/*" hidden />
-  <input type="file" id="fileProject" accept=".r3d,.json" hidden />
+  <input type="file" id="fileProject" accept=".r3d,.r3s,.json" hidden />
 
   <script type="module" src="app.js"></script>
 </body>
