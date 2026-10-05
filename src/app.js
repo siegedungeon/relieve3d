@@ -6,6 +6,15 @@ import { View2D, isTyping } from './view2d.js';
 
 const $ = (id) => document.getElementById(id);
 const fmt = (v) => String(Math.round(v * 100) / 100);
+const parseNum = (s) => parseFloat(String(s).trim().replace(',', '.'));
+
+// Al entrar a un campo numérico se selecciona todo el valor para reemplazarlo directamente (p. ej. escribir "5").
+const isNumField = (t) => t?.tagName === 'INPUT' && (t.type === 'number' || t.inputMode === 'decimal');
+document.addEventListener('mousedown', (e) => {
+  const t = e.target;
+  if (isNumField(t) && document.activeElement !== t) { e.preventDefault(); t.focus(); t.select(); }
+});
+document.addEventListener('focusin', (e) => { if (isNumField(e.target)) e.target.select(); });
 const nextFrame = () => new Promise((r) => requestAnimationFrame(() => setTimeout(r, 0)));
 const escHtml = (s) => String(s).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
 const textOn = (hex) => {
@@ -405,7 +414,7 @@ function renderGroups() {
       ${sw}
       <span class="name" title="${escHtml(row.name)}">${escHtml(row.name)}</span>
       <span class="cnt">${row.ids.length}</span>
-      <input class="h" type="number" step="0.1" min="0.1" title="Altura (mm) para todo el grupo" value="${hs.length === 1 ? hs[0] : ''}" placeholder="—" />
+      <span class="h-wrap"><input class="h" type="text" inputmode="decimal" title="Altura (mm) para todo el grupo · Enter para aplicar" value="${hs.length === 1 ? fmt(hs[0]) : ''}" data-orig="${hs.length === 1 ? fmt(hs[0]) : ''}" placeholder="—" /><span class="unit">mm</span></span>
       <button class="eye" title="Incluir / excluir del modelo">${enabled ? '👁' : '◌'}</button>
       ${row.custom ? '<button class="x" title="Eliminar grupo">✕</button>' : ''}
     </div>`;
@@ -435,10 +444,15 @@ $('groupList').addEventListener('click', (e) => {
 $('groupList').addEventListener('change', (e) => {
   if (!e.target.classList.contains('h')) return;
   const row = e.target.closest('.grow-row');
-  const v = parseFloat(e.target.value);
-  if (!(v > 0)) return;
-  setPropFor(rowIds.get(row.dataset.key) || [], 'height', v);
+  const v = parseNum(e.target.value);
+  if (!(v > 0)) { e.target.value = e.target.dataset.orig; return; }
+  setPropFor(rowIds.get(row.dataset.key) || [], 'height', Math.round(v * 100) / 100);
   commit();
+});
+$('groupList').addEventListener('keydown', (e) => {
+  if (!e.target.classList.contains('h')) return;
+  if (e.key === 'Enter') e.target.blur();
+  else if (e.key === 'Escape') { e.target.value = e.target.dataset.orig; e.target.blur(); }
 });
 $('groupList').addEventListener('dblclick', (e) => {
   const row = e.target.closest('.grow-row');

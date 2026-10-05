@@ -140,19 +140,19 @@
         <h3>Selección <span id="selCount" class="badge">0</span></h3>
         <div id="selEmpty" class="muted">Selecciona piezas en el lienzo, en el 3D o desde los grupos.</div>
         <div id="selProps" hidden>
-          <label class="row">Altura (mm)
+          <div class="row">Altura (mm)
             <span class="inline">
-              <button class="btn mini" data-hstep="-0.2">−</button>
+              <button class="btn mini" data-hstep="-0.2" title="Bajar 0.2 mm">−</button>
               <input type="number" id="selHeight" step="0.1" min="0.1" />
-              <button class="btn mini" data-hstep="0.2">＋</button>
+              <button class="btn mini" data-hstep="0.2" title="Subir 0.2 mm">＋</button>
             </span>
-          </label>
+          </div>
           <input type="range" id="selHeightRange" min="0.2" max="10" step="0.1" />
           <label class="row">Elevación (mm) <input type="number" id="selElev" step="0.1" min="0" /></label>
           <label class="row">Filamento <select id="selFilament"></select></label>
           <label class="row">Incluir en el modelo <input type="checkbox" id="selEnabled" /></label>
           <div class="quick">
-            <span class="muted">Altura rápida:</span>
+            <span class="muted">Altura rápida (mm):</span>
             <button class="chip" data-hset="0.6">0.6</button>
             <button class="chip" data-hset="1">1</button>
             <button class="chip" data-hset="1.6">1.6</button>

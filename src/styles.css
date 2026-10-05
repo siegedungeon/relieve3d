@@ -79,7 +79,11 @@ input, select { font: inherit; }
 .grow-row .name { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .grow-row .name input { width: 100%; font: inherit; border: 1px solid var(--sel); border-radius: 4px; padding: 1px 4px; }
 .grow-row .cnt { color: var(--muted); font-size: 11px; }
-.grow-row input.h { width: 52px; padding: 2px 4px; border: 1px solid var(--border); border-radius: 6px; }
+.grow-row .h-wrap { display: inline-flex; align-items: center; gap: 3px; flex: none; }
+.grow-row input.h { width: 56px; padding: 2px 6px; border: 1px solid var(--border); border-radius: 6px; text-align: right; font: inherit; }
+.grow-row input.h:focus { outline: 2px solid var(--sel); outline-offset: -1px; }
+.grow-row .unit { color: var(--muted); font-size: 11px; }
+input, textarea { user-select: text; }
 .grow-row .x, .grow-row .eye { border: 0; background: transparent; color: var(--muted); padding: 0 4px; }
 .grow-row .x:hover { color: #dc2626; }
 .grow-row.off { opacity: .45; }
