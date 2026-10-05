@@ -1,0 +1,207 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8" />
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; worker-src 'self' blob:" />
+  <title>Relieve3D</title>
+  <link rel="stylesheet" href="styles.css" />
+  <script type="importmap">
+    {
+      "imports": {
+        "three": "../node_modules/three/build/three.module.js",
+        "three/addons/": "./vendor/three-addons/",
+        "fflate": "../node_modules/fflate/esm/browser.js"
+      }
+    }
+  </script>
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand"><span class="logo">◆</span> Relieve3D <span id="docName" class="doc-name"></span></div>
+    <div class="tb-group">
+      <button id="btnOpenImage" class="btn" title="Abrir imagen (Ctrl+O)">🖼️ Abrir imagen</button>
+      <button id="btnOpenProject" class="btn" title="Abrir proyecto">📂 Abrir proyecto</button>
+      <button id="btnSaveProject" class="btn" title="Guardar proyecto (Ctrl+S)">💾 Guardar</button>
+    </div>
+    <div class="tb-group">
+      <button id="btnUndo" class="btn icon" title="Deshacer (Ctrl+Z)">↶</button>
+      <button id="btnRedo" class="btn icon" title="Rehacer (Ctrl+Y)">↷</button>
+    </div>
+    <div class="tb-group seg" id="viewMode">
+      <button data-mode="2d" class="seg-btn">2D</button>
+      <button data-mode="split" class="seg-btn active">2D + 3D</button>
+      <button data-mode="3d" class="seg-btn">3D</button>
+    </div>
+    <div class="spacer"></div>
+    <div class="dropdown">
+      <button id="btnExport" class="btn primary">⬇ Exportar ▾</button>
+      <div class="menu" id="exportMenu">
+        <button data-exp="3mf">3MF multicolor <small>Bambu / Orca / Prusa</small></button>
+        <button data-exp="stl-folder">STL por color <small>un archivo por filamento</small></button>
+        <button data-exp="stl-one">STL único <small>todo en un archivo</small></button>
+        <button data-exp="obj">OBJ + MTL <small>con colores</small></button>
+        <button data-exp="svg">SVG vectorial <small>Corel / Illustrator / Inkscape</small></button>
+      </div>
+    </div>
+  </header>
+
+  <main class="layout">
+    <!-- LEFT PANEL -->
+    <aside class="panel left">
+      <section class="card">
+        <h3>Vectorización</h3>
+        <label class="row">Colores
+          <span class="inline">
+            <input type="number" id="procColors" min="2" max="16" value="4" />
+            <label class="chk"><input type="checkbox" id="procColorsAuto" checked /> Auto</label>
+          </span>
+        </label>
+        <label class="row">Detalle <input type="range" id="procDetail" min="0.2" max="3" step="0.1" value="0.8" /><output id="procDetailOut"></output></label>
+        <label class="row">Suavizado <input type="range" id="procSmooth" min="0" max="3" step="1" value="1" /><output id="procSmoothOut"></output></label>
+        <label class="row">Limpiar motas <input type="range" id="procMinArea" min="0" max="400" step="5" value="0" /><output id="procMinAreaOut"></output></label>
+        <label class="row">Quitar fondo
+          <select id="procBg"><option value="auto">Auto</option><option value="yes">Sí</option><option value="no">No</option></select>
+        </label>
+        <label class="row">Tolerancia fondo <input type="range" id="procTol" min="5" max="150" step="1" value="40" /><output id="procTolOut"></output></label>
+        <label class="row">Resolución
+          <select id="procRes"><option value="600">Rápida (600px)</option><option value="1000" selected>Normal (1000px)</option><option value="1600">Alta (1600px)</option><option value="2400">Máxima (2400px)</option></select>
+        </label>
+        <button id="btnReprocess" class="btn wide">↻ Aplicar vectorización</button>
+      </section>
+
+      <section class="card grow">
+        <div class="tabs" id="groupTabs">
+          <button data-tab="color" class="tab active">Por color</button>
+          <button data-tab="level" class="tab">Por nivel</button>
+          <button data-tab="custom" class="tab">Mis grupos</button>
+          <button data-tab="pieces" class="tab">Piezas</button>
+        </div>
+        <div id="groupList" class="group-list"></div>
+        <button id="btnCreateGroup" class="btn wide" title="Ctrl+G">＋ Crear grupo con la selección</button>
+      </section>
+    </aside>
+
+    <!-- CENTER -->
+    <section class="center">
+      <div class="views mode-split" id="views">
+        <div class="view" id="view2dWrap">
+          <canvas id="canvas2d"></canvas>
+          <div class="floating-tools">
+            <button class="tool active" data-tool="select" title="Seleccionar (V) — clic, Shift+clic, arrastrar para rectángulo">⬚</button>
+            <button class="tool" data-tool="pan" title="Mover vista (H / barra espaciadora / botón derecho)">✋</button>
+            <hr />
+            <button class="tool" id="btnZoomIn" title="Acercar">＋</button>
+            <button class="tool" id="btnZoomOut" title="Alejar">－</button>
+            <button class="tool" id="btnFit" title="Ajustar a la vista (F)">⤢</button>
+            <hr />
+            <button class="tool toggle" id="btnShowOriginal" title="Ver imagen original encima">👁</button>
+            <button class="tool toggle active" id="btnShowEdges" title="Mostrar bordes de piezas">▦</button>
+          </div>
+          <div class="sel-bar">
+            <button class="chip" id="selAll">Todo</button>
+            <button class="chip" id="selNone">Ninguno</button>
+            <button class="chip" id="selInvert">Invertir</button>
+            <button class="chip" id="selSameColor">Mismo color</button>
+            <button class="chip" id="selSameLevel">Mismo nivel</button>
+          </div>
+          <div class="hint" id="placeHint" hidden>Haz clic donde quieras la argolla · Esc para cancelar</div>
+        </div>
+        <div class="view dark" id="view3dWrap">
+          <div id="view3d"></div>
+          <div class="floating-tools right">
+            <button class="tool" id="btn3dFit" title="Encuadrar">⤢</button>
+            <button class="tool" id="btn3dTop" title="Vista superior">⊤</button>
+            <button class="tool toggle" id="btn3dExplode" title="Vista explosionada por altura">⇕</button>
+          </div>
+          <div class="view-label">Vista previa 3D · arrastra para girar · rueda para zoom · clic para seleccionar</div>
+        </div>
+      </div>
+      <div class="statusbar">
+        <span id="stPieces">Sin imagen</span>
+        <span id="stSelection"></span>
+        <span id="stSize"></span>
+        <span class="spacer"></span>
+        <span id="stUpdate" class="update-badge" hidden></span>
+        <span id="stHover"></span>
+      </div>
+      <div id="dropZone" class="dropzone">
+        <div class="dz-inner">
+          <div class="dz-icon">🖼️</div>
+          <h2>Arrastra aquí una imagen</h2>
+          <p>PNG, JPG, WEBP, BMP… (ideal: logo con colores planos y fondo transparente)</p>
+          <button class="btn primary" id="btnOpenImage2">Abrir imagen</button>
+        </div>
+      </div>
+    </section>
+
+    <!-- RIGHT PANEL -->
+    <aside class="panel right">
+      <section class="card" id="selCard">
+        <h3>Selección <span id="selCount" class="badge">0</span></h3>
+        <div id="selEmpty" class="muted">Selecciona piezas en el lienzo, en el 3D o desde los grupos.</div>
+        <div id="selProps" hidden>
+          <label class="row">Altura (mm)
+            <span class="inline">
+              <button class="btn mini" data-hstep="-0.2">−</button>
+              <input type="number" id="selHeight" step="0.1" min="0.1" />
+              <button class="btn mini" data-hstep="0.2">＋</button>
+            </span>
+          </label>
+          <input type="range" id="selHeightRange" min="0.2" max="10" step="0.1" />
+          <label class="row">Elevación (mm) <input type="number" id="selElev" step="0.1" min="0" /></label>
+          <label class="row">Filamento <select id="selFilament"></select></label>
+          <label class="row">Incluir en el modelo <input type="checkbox" id="selEnabled" /></label>
+          <div class="quick">
+            <span class="muted">Altura rápida:</span>
+            <button class="chip" data-hset="0.6">0.6</button>
+            <button class="chip" data-hset="1">1</button>
+            <button class="chip" data-hset="1.6">1.6</button>
+            <button class="chip" data-hset="2">2</button>
+            <button class="chip" data-hset="2.6">2.6</button>
+            <button class="chip" data-hset="3">3</button>
+            <button class="chip" data-hset="4">4</button>
+          </div>
+        </div>
+      </section>
+
+      <section class="card">
+        <h3>Filamentos</h3>
+        <div id="filamentList"></div>
+        <button id="btnAddFilament" class="btn wide">＋ Añadir filamento</button>
+        <h4>Asignación de colores detectados</h4>
+        <div id="colorMatch" class="color-match"></div>
+      </section>
+
+      <section class="card">
+        <h3>Tamaño</h3>
+        <label class="row">Ancho del diseño (mm) <input type="number" id="setWidth" step="1" min="5" value="60" /></label>
+        <label class="row">Alto resultante (mm) <output id="setHeightOut"></output></label>
+      </section>
+
+      <section class="card">
+        <h3><label class="chk"><input type="checkbox" id="baseEnabled" /> Base / contorno</label></h3>
+        <label class="row">Margen (mm) <input type="number" id="baseMargin" step="0.5" min="0" value="2" /></label>
+        <label class="row">Grosor (mm) <input type="number" id="baseThickness" step="0.1" min="0.2" value="1.2" /></label>
+        <label class="row">Filamento <select id="baseFilament"></select></label>
+        <p class="muted small">Las piezas se colocan encima de la base.</p>
+      </section>
+
+      <section class="card">
+        <h3><label class="chk"><input type="checkbox" id="ringEnabled" /> Argolla de llavero</label></h3>
+        <label class="row">Diámetro exterior (mm) <input type="number" id="ringOuter" step="0.5" min="2" value="8" /></label>
+        <label class="row">Diámetro del agujero (mm) <input type="number" id="ringInner" step="0.5" min="0" value="4" /></label>
+        <label class="row">Grosor (mm) <input type="number" id="ringThickness" step="0.1" min="0.4" value="2" /></label>
+        <label class="row">Filamento <select id="ringFilament"></select></label>
+        <button id="btnPlaceRing" class="btn wide">📍 Colocar en el lienzo</button>
+      </section>
+    </aside>
+  </main>
+
+  <div id="busy" class="busy" hidden><div class="spinner"></div><span id="busyText">Procesando…</span></div>
+  <div id="toast" class="toast" hidden></div>
+  <input type="file" id="fileImage" accept="image/*" hidden />
+  <input type="file" id="fileProject" accept=".r3d,.json" hidden />
+
+  <script type="module" src="app.js"></script>
+</body>
+</html>

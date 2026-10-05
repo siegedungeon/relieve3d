@@ -1,0 +1,33 @@
+name: Release
+
+# Publica un instalador nuevo en GitHub Releases cada vez que se sube un tag
+# con formato vX.Y.Z (por ejemplo: v1.1.0). electron-updater en los clientes
+# instalados revisa ese feed y se actualiza solo.
+on:
+  push:
+    tags:
+      - 'v*.*.*'
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Run tests
+        run: npm test
+
+      - name: Build and publish release
+        run: npx electron-builder --win nsis --publish always
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}

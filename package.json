@@ -1,0 +1,64 @@
+{
+  "name": "relieve3d",
+  "version": "1.0.0",
+  "description": "Convierte imágenes en modelos 3D por capas de color (llaveros, letreros, relieves) con vista previa 3D.",
+  "main": "main.js",
+  "scripts": {
+    "postinstall": "node scripts/vendor.mjs",
+    "prestart": "node scripts/vendor.mjs",
+    "start": "electron .",
+    "test": "node test/pipeline.test.mjs && node test/watertight.test.mjs",
+    "predist": "node scripts/vendor.mjs",
+    "dist": "electron-builder --win nsis"
+  },
+  "author": "pabon",
+  "license": "UNLICENSED",
+  "type": "commonjs",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/siegedungeon/relieve3d.git"
+  },
+  "dependencies": {
+    "electron-updater": "^6.8.9",
+    "fflate": "^0.8.3",
+    "three": "^0.186.1"
+  },
+  "devDependencies": {
+    "electron": "^44.5.1",
+    "electron-builder": "^26.15.3",
+    "pngjs": "^7.0.0"
+  },
+  "build": {
+    "appId": "com.relieve3d.app",
+    "productName": "Relieve3D",
+    "files": [
+      "main.js",
+      "preload.js",
+      "src/**/*",
+      "!test/**"
+    ],
+    "directories": {
+      "output": "dist"
+    },
+    "publish": {
+      "provider": "github",
+      "owner": "siegedungeon",
+      "repo": "relieve3d"
+    },
+    "win": {
+      "target": "nsis"
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true,
+      "shortcutName": "Relieve3D"
+    },
+    "fileAssociations": [
+      {
+        "ext": "r3d",
+        "name": "Proyecto Relieve3D"
+      }
+    ]
+  }
+}
