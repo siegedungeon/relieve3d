@@ -4,14 +4,21 @@
 import * as THREE from 'three';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 import {
-  edt, dilate, fillHoles, union, subtract, countOn, fillPolygon, fillCircle, fillCapsule, shapePolygon, traceMask, maskBBox, connectIslands,
+  edt, dilate, erode, removeSmall, fillHoles, union, subtract, countOn, fillPolygon, fillCircle, fillCapsule, shapePolygon, traceMask, maskBBox, connectIslands,
 } from './raster.js';
 import { DEFAULT_BODY, buildParametricBody, hull2D } from './micbody.js';
 
 export const DEFAULT_SETTINGS = () => ({
   widthMM: 60,
   base: { enabled: false, margin: 2, thickness: 1.2, filament: null, weld: true, shape: 'contour', plateW: 40, plateH: 40, corner: 4, points: 5, inner: 0.5, round: 0 },
-  ring: { enabled: false, pos: 'top', x: null, y: null, outer: 8, inner: 4, thickness: 2, filament: null },
+  // style 'round' = round hole; 'slot' = elongated slot for lanyards / straps (inner = slot height, slotW = slot length)
+  ring: { enabled: false, pos: 'top', x: null, y: null, outer: 8, inner: 4, thickness: 2, filament: null, style: 'round', slotW: 12, snap: true },
+  rim: { enabled: false, width: 1.2, height: 0.8, filament: null },          // raised border along the base edge
+  accent: { enabled: false, width: 1.5, height: 0.6, filament: null },       // coloured outline layer under the design
+  bevel: { enabled: false, size: 0.6 },                                      // stepped chamfer on the top edge of the base
+  nfc: { enabled: false, diameter: 25.5, depth: 1, floor: 0.6 },             // hidden pocket for an NFC tag (print pauses to insert it)
+  back: { enabled: false, text: '', font: 'Poppins Black', heightMM: 5, depth: 0.6 }, // text engraved on the back
+  kc: { tier: '' },
   holes: { enabled: false, count: 2, diameter: 4, inset: 4 },
   magnets: { enabled: false, count: 1, diameter: 10, depth: 2, spacing: 20, clearance: 0.2 },
   tongue: { enabled: false, width: 14, length: 18, thickness: 2 },
@@ -134,7 +141,13 @@ export function buildFeatures(result, settings, opts) {
   const mm = (v) => v / s;
   const warnings = [];
   const layers = [], solids = [];
-  const fb = result.fgBBox;
+  // only the pieces included in the model shape the base (excluded slogans etc. don't leave an empty silhouette)
+  const en = opts.enabled && opts.enabled.some((v) => !v) && opts.enabled.some((v) => v) ? opts.enabled : null;
+  let fb = result.fgBBox;
+  if (en) {
+    fb = [Infinity, Infinity, -Infinity, -Infinity];
+    for (const p of result.pieces) if (en[p.id]) { fb = [Math.min(fb[0], p.bbox[0]), Math.min(fb[1], p.bbox[1]), Math.max(fb[2], p.bbox[2]), Math.max(fb[3], p.bbox[3])]; }
+  }
   const B = set.base, cut = set.cutter.enabled, pen = set.pencil.enabled;
 
   // ---- region of interest (image px)
@@ -145,7 +158,14 @@ export function buildFeatures(result, settings, opts) {
     y0 = Math.min(y0, gy - mm(B.plateH) / 2); y1 = Math.max(y1, gy + mm(B.plateH) / 2);
   }
   let pad = mm((B.enabled ? B.margin : 0) + 3);
-  if (set.ring.enabled) pad += mm(set.ring.outer * 1.6 + 3);
+  if (set.ring.enabled) {
+    const Rg = set.ring, span = Math.max(Rg.outer, Rg.style === 'slot' ? Rg.slotW + Rg.outer - Rg.inner : 0);
+    pad += mm(span * 1.6 + 3);
+    if (Rg.pos === 'manual' && Rg.x != null) {
+      x0 = Math.min(x0, Rg.x - mm(span)); x1 = Math.max(x1, Rg.x + mm(span));
+      y0 = Math.min(y0, Rg.y - mm(span)); y1 = Math.max(y1, Rg.y + mm(span));
+    }
+  }
   if (cut) pad += mm(set.cutter.offset + set.cutter.wall + set.cutter.flange + 2);
   let padB = pad, padX = pad;
   if (set.tongue.enabled) padB += mm(set.tongue.length + 3);
@@ -176,12 +196,33 @@ export function buildFeatures(result, settings, opts) {
     if (iy < 0 || iy >= H) continue;
     for (let x = 0; x < GW; x++) {
       const ix = Math.floor(ox + (x + 0.5) * k);
-      if (ix >= 0 && ix < W && comp[iy * W + ix] >= 0) fg[y * GW + x] = 1;
+      if (ix >= 0 && ix < W && comp[iy * W + ix] >= 0 && (!en || en[comp[iy * W + ix]])) fg[y * GW + x] = 1;
     }
   }
   const gcx = gx((fb[0] + fb[2]) / 2), gcy = gy((fb[1] + fb[3]) / 2);
 
-  let pencilInfo = null, tongue = null, ringInfo = null, pieceZ = 0, magnetMarks = null;
+  let pencilInfo = null, tongue = null, ringInfo = null, pieceZ = 0, magnetMarks = null, ringRef = null;
+  const pauses = [];
+  const fmt1 = (v) => (Math.round(v * 10) / 10).toString();
+  // back text mask {data (w*h 0/1 or RGBA), w, h, mmW, mmH} → grid mask, mirrored (read from below), centred on the base
+  const backMaskGrid = (bm, depth) => {
+    if (!base || !bm?.data || !bm.w || !bm.h) return null;
+    const bb = maskBBox(base, GW, GH), ccx = (bb[0] + bb[2]) / 2, ccy = (bb[1] + bb[3]) / 2, g1 = gmm(1);
+    const rgba = bm.data.length >= bm.w * bm.h * 4;
+    const safe = erode(base, GW, GH, gmm(1.2));
+    const m = new Uint8Array(N);
+    let n = 0, lost = 0;
+    for (let y = 0; y < GH; y++) for (let x = 0; x < GW; x++) {
+      const u = 0.5 - (x + 0.5 - ccx) / g1 / bm.mmW, v = 0.5 + (y + 0.5 - ccy) / g1 / bm.mmH;
+      if (u < 0 || u >= 1 || v < 0 || v >= 1) continue;
+      const j = Math.floor(v * bm.h) * bm.w + Math.floor(u * bm.w);
+      if (!(rgba ? bm.data[j * 4 + 3] > 127 : bm.data[j])) continue;
+      if (safe[y * GW + x]) { m[y * GW + x] = 1; n++; } else lost++;
+    }
+    if (lost > n * 0.03) warnings.push('El texto posterior no cabe completo en la base: redúcelo.');
+    if (depth > B.thickness - 0.6) warnings.push('El grabado posterior es muy profundo para el grosor de la base.');
+    return n ? m : null;
+  };
   // ---- cookie cutter: replaces everything else
   if (cut) {
     const C = set.cutter;
@@ -295,12 +336,18 @@ export function buildFeatures(result, settings, opts) {
 
   if (base) base = union(base, extraBody);
 
-  // ---- keyring tab
+  // ---- keyring tab (round hole or lanyard slot)
   ringInfo = null;
   if (set.ring.enabled) {
-    const Rg = set.ring, ro = gmm(Rg.outer / 2), ri = gmm(Math.min(Rg.inner, Rg.outer - 0.8) / 2);
+    const Rg = set.ring, slot = Rg.style === 'slot';
+    const hr = gmm(Math.min(Rg.inner, Rg.outer - 0.8) / 2);                     // hole radius / half slot height
+    const wall = Math.max(gmm(0.8), gmm(Rg.outer / 2) - hr);
+    const ro = hr + wall;
+    const half = slot ? Math.max(0, gmm(Math.max(Rg.slotW, Rg.inner)) / 2 - hr) : 0; // half distance between slot centres
     const ref = base || union(dilate(fg, GW, GH, gmm(0.5)), extraBody);
-    let P;
+    ringRef = trace(ref);
+    const off = hr + Math.max(gmm(1.2), wall * 0.6);
+    let P, U = null;
     if (Rg.pos === 'manual' && Rg.x != null) P = [gx(Rg.x), gy(Rg.y)];
     else {
       const dirs = { top: [0, -1], left: [-1, 0], right: [1, 0], bottom: [0, 1], topleft: [-Math.SQRT1_2, -Math.SQRT1_2], topright: [Math.SQRT1_2, -Math.SQRT1_2] };
@@ -312,27 +359,38 @@ export function buildFeatures(result, settings, opts) {
         const sc = px * d[0] + py * d[1] - 0.35 * Math.abs(px * d[1] - py * d[0]);
         if (sc > best) { best = sc; Q = [x + 0.5, y + 0.5]; }
       }
-      const off = ri + Math.max(gmm(1.2), (ro - ri) * 0.6);
       P = [Q[0] + d[0] * off, Q[1] + d[1] * off];
+      U = [-d[0], -d[1]];
     }
-    const ringM = new Uint8Array(N);
-    fillCircle(ringM, GW, GH, P[0], P[1], ro);
     const { dist, index } = edt(ref, GW, GH, true);
     const pi = Math.min(GH - 1, Math.max(0, Math.floor(P[1]))) * GW + Math.min(GW - 1, Math.max(0, Math.floor(P[0])));
+    let Qn = null;
     if (index[pi] >= 0 && dist[pi] > 0) {
-      const qx = (index[pi] % GW) + 0.5, qy = ((index[pi] / GW) | 0) + 0.5;
-      const L = Math.hypot(qx - P[0], qy - P[1]) || 1, ux = (qx - P[0]) / L, uy = (qy - P[1]) / L;
-      fillCapsule(ringM, GW, GH, P[0], P[1], qx + ux * gmm(2), qy + uy * gmm(2), ro * 0.8);
+      Qn = [(index[pi] % GW) + 0.5, ((index[pi] / GW) | 0) + 0.5];
+      const L = Math.hypot(Qn[0] - P[0], Qn[1] - P[1]) || 1;
+      U = [(Qn[0] - P[0]) / L, (Qn[1] - P[1]) / L];
+    }
+    U = U || [0, 1];
+    const T = [-U[1], U[0]];                                                      // slot runs along the edge
+    const A = [P[0] - T[0] * half, P[1] - T[1] * half], Bp = [P[0] + T[0] * half, P[1] + T[1] * half];
+    const ringM = new Uint8Array(N);
+    fillCapsule(ringM, GW, GH, A[0], A[1], Bp[0], Bp[1], ro);
+    if (Qn) {
+      const ext = gmm(2), nr = ro * 0.8;
+      for (const f of slot ? [-0.75, 0, 0.75] : [0]) {
+        const sx = P[0] + T[0] * half * f, sy = P[1] + T[1] * half * f;
+        fillCapsule(ringM, GW, GH, sx, sy, Qn[0] + T[0] * half * f + U[0] * ext, Qn[1] + T[1] * half * f + U[1] * ext, nr);
+      }
     }
     const hole = new Uint8Array(N);
-    fillCircle(hole, GW, GH, P[0], P[1], ri);
+    fillCapsule(hole, GW, GH, A[0], A[1], Bp[0], Bp[1], hr);
     let overlap = 0;
     for (let i = 0; i < N; i++) if (hole[i] && fg[i]) overlap++;
     if (overlap > 0) warnings.push('El agujero de la argolla toca el diseño: muévela un poco hacia afuera.');
     if (base) base = subtract(union(base, ringM), hole);
     else layers.push({ key: 'ring', name: 'Argolla', fil: 'ring', shapes: trace(subtract(ringM, hole)), z: 0, height: Rg.thickness });
     const [ix, iy] = toImg(P);
-    ringInfo = { x: ix, y: iy, ro: ro * k, ri: ri * k };
+    ringInfo = { x: ix, y: iy, ro: ro * k, ri: hr * k, half: half * k, tx: T[0], ty: T[1], slot, off: off * k };
   }
 
   // ---- mounting holes (signs)
@@ -357,10 +415,12 @@ export function buildFeatures(result, settings, opts) {
     base = subtract(base, hm);
   }
 
-  // ---- base layers (with optional magnet pockets in the bottom)
+  // ---- base layers: the base is cut into z-bands (magnet pockets / NFC pocket / back engraving / bevel), then rim & accent on top
   pieceZ = 0; magnetMarks = null;
   if (base) {
     let T = B.thickness;
+    const cuts = [];
+    const marks = [];
     if (set.magnets.enabled) {
       const M = set.magnets;
       if (T < M.depth + 0.6) { T = M.depth + 0.6; warnings.push(`Base engrosada a ${T.toFixed(1)} mm para cubrir el imán.`); }
@@ -374,13 +434,88 @@ export function buildFeatures(result, settings, opts) {
       if (lost > 0) warnings.push('Un imán queda fuera de la base: reduce la separación o el diámetro.');
       const inside = edt(Uint8Array.from(base, (v) => (v ? 0 : 1)), GW, GH);
       for (let i = 0; i < N; i++) if (mag[i] && inside[i] < gmm(0.8)) { warnings.push('Pared muy delgada alrededor del imán.'); break; }
-      layers.push({ key: 'baseLow', name: 'Base (bolsillo imán)', fil: 'base', shapes: trace(subtract(base, mag)), z: 0, height: M.depth });
-      layers.push({ key: 'base', name: 'Base', fil: 'base', shapes: trace(base), z: M.depth, height: T - M.depth });
-      magnetMarks = pos.map((p) => ({ c: toImg(p), r: r * k }));
-    } else {
-      layers.push({ key: 'base', name: 'Base', fil: 'base', shapes: trace(base), z: 0, height: T });
+      cuts.push({ z0: 0, z1: M.depth, mask: mag, label: 'bolsillo imán', key: 'baseLow' });
+      marks.push(...pos.map((p) => ({ c: toImg(p), r: r * k })));
     }
+    let backDepth = 0;
+    if (set.back.enabled && opts.backMask) {
+      const bm = backMaskGrid(opts.backMask, set.back.depth);
+      if (bm) { cuts.push({ z0: 0, z1: set.back.depth, mask: bm, label: 'texto posterior', key: 'baseBack' }); backDepth = set.back.depth; }
+    }
+    if (set.nfc.enabled) {
+      const Nf = set.nfc, lh = 0.2;
+      const snap = (z) => Math.round(Math.ceil(z / lh - 1e-6) * lh * 100) / 100;
+      const floor = snap(Math.max(Nf.floor, backDepth ? backDepth + 0.4 : 0, set.magnets.enabled ? set.magnets.depth + 0.4 : 0, lh));
+      const z1 = snap(floor + Nf.depth);
+      if (T < z1 + 0.8) { T = Math.round((z1 + 0.8) * 100) / 100; warnings.push(`Base engrosada a ${fmt1(T)} mm para tapar el chip NFC.`); }
+      const r = gmm(Nf.diameter / 2);
+      const inside = edt(Uint8Array.from(base, (v) => (v ? 0 : 1)), GW, GH);
+      const bb = maskBBox(base, GW, GH), ccx = (bb[0] + bb[2]) / 2, ccy = (bb[1] + bb[3]) / 2;
+      let best = -Infinity, C = [ccx, ccy];
+      for (let y = 0; y < GH; y++) for (let x = 0; x < GW; x++) {
+        const v = inside[y * GW + x];
+        if (!v) continue;
+        const sc = Math.min(v, r + gmm(2)) - 0.02 * Math.hypot(x + 0.5 - ccx, y + 0.5 - ccy);
+        if (sc > best) { best = sc; C = [x + 0.5, y + 0.5]; }
+      }
+      if (inside[Math.floor(C[1]) * GW + Math.floor(C[0])] < r + gmm(1)) warnings.push(`El chip NFC de ${fmt1(Nf.diameter)} mm no cabe bien en la base: agranda el llavero o usa un chip más pequeño.`);
+      const pocket = new Uint8Array(N);
+      fillCircle(pocket, GW, GH, C[0], C[1], r);
+      cuts.push({ z0: floor, z1, mask: pocket, label: 'chip NFC', key: 'baseNfc' });
+      pauses.push({ z: z1, msg: 'Inserta el chip NFC en el bolsillo y continúa' });
+      marks.push({ c: toImg(C), r: r * k, nfc: true });
+    }
+    const bev = set.bevel.enabled ? Math.min(set.bevel.size, T * 0.4) : 0;
+    const top = bev > 0 ? erode(base, GW, GH, gmm(bev)) : base;
+    const zs = [...new Set([0, T, ...(bev ? [T - bev] : []), ...cuts.flatMap((c) => [c.z0, c.z1])].map((z) => Math.round(z * 1000) / 1000))]
+      .filter((z) => z >= 0 && z <= T).sort((a, b) => a - b);
+    const bands = [];
+    for (let i = 0; i + 1 < zs.length; i++) {
+      const za = zs[i], zb = zs[i + 1], mid = (za + zb) / 2;
+      const act = cuts.filter((c) => c.z0 < mid && c.z1 > mid), isTop = bev > 0 && mid > T - bev;
+      const sig = (isTop ? 'T' : 'B') + act.map((c) => c.key).join(',');
+      const prev = bands[bands.length - 1];
+      if (prev && prev.sig === sig) { prev.z1 = zb; continue; }
+      let m = isTop ? top : base;
+      for (const c of act) m = subtract(m, c.mask);
+      bands.push({ sig, z0: za, z1: zb, mask: m, act, isTop });
+    }
+    // main 'base' layer = thickest uncut band (keeps the full outline incl. ring hole)
+    const thick = (b) => b.z1 - b.z0;
+    const plain = bands.filter((b) => !b.act.length && !b.isTop);
+    const main = (plain.length ? plain : bands).reduce((a, b) => (thick(b) > thick(a) ? b : a));
+    const used = new Set(['base']);
+    bands.forEach((b, i) => {
+      const label = [...b.act.map((c) => c.label), ...(b.isTop ? ['bisel'] : [])].join(' + ');
+      let key = b === main ? 'base' : b.act[0]?.key || (b.isTop ? 'baseTop' : 'base' + i);
+      if (b !== main && used.has(key)) key = key + i;
+      used.add(key);
+      layers.push({ key, name: label ? `Base (${label})` : 'Base', fil: 'base', shapes: trace(b.mask), z: b.z0, height: thick(b) });
+    });
+    magnetMarks = marks.length ? marks : null;
     pieceZ = T;
+
+    // accent outline: a coloured band around the design, the design sits on it
+    let accentMask = null;
+    if (set.accent.enabled && set.accent.width > 0) {
+      const A = set.accent;
+      accentMask = dilate(fg, GW, GH, gmm(A.width));
+      for (let i = 0; i < N; i++) if (!top[i]) accentMask[i] = 0;
+      accentMask = removeSmall(accentMask, GW, GH, gmm(0.8) ** 2);
+      if (countOn(accentMask)) {
+        layers.push({ key: 'accent', name: 'Contorno de acento', fil: 'accent', shapes: trace(accentMask), z: T, height: A.height });
+        pieceZ = T + A.height;
+      }
+    }
+    // raised rim along the outer edge (and around the ring hole)
+    if (set.rim.enabled && set.rim.width > 0) {
+      const Ri = set.rim;
+      let rim = subtract(top, erode(top, GW, GH, gmm(Ri.width)));
+      rim = subtract(rim, dilate(accentMask || fg, GW, GH, gmm(0.6)));
+      rim = removeSmall(rim, GW, GH, gmm(Ri.width) ** 2 * 3);
+      if (countOn(rim)) layers.push({ key: 'rim', name: 'Borde elevado', fil: 'rim', shapes: trace(rim), z: T, height: Ri.height });
+      else warnings.push('El borde elevado no tiene espacio: aumenta el margen de la silueta.');
+    }
   } else if (countOn(extraBody)) {
     layers.push({ key: 'extra', name: extraThickness.name || 'Unión', fil: 'base', shapes: trace(extraBody), z: 0, height: extraThickness.v || 2 });
   }
@@ -417,6 +552,7 @@ export function buildFeatures(result, settings, opts) {
     for (const L of layers) L.z += r.top;
     for (const so of solids) so.geometry.translate(0, 0, r.top);
     pieceZ += r.top;
+    for (const p of pauses) p.z += r.top;
     solids.unshift({ key: 'micbody', name: 'Cuerpo micrófono', fil: 'micBody', geometry: toGeo(r.body), footprint: [{ outer, holes: [] }] });
     if (r.rings) {
       let a0 = Infinity, a1 = -Infinity, b0 = Infinity, b1 = -Infinity;
@@ -446,6 +582,7 @@ export function buildFeatures(result, settings, opts) {
     return {
       layers, solids, bounds: [bx0, by0, bx1, by1], ring: ringInfo, warnings: [...new Set(warnings)], hidePieces: cut,
       pieceZ: cut ? 0 : pieceZ, zTop, magnets: magnetMarks, pencilAcross: pencilAcrossMM || null, body: bodyInfo,
-    };
+            pauses: pauses.map((p) => ({ ...p, z: Math.round(p.z * 100) / 100 })), ringRef,
+          };
   }
 }

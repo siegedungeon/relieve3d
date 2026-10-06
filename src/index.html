@@ -10,7 +10,8 @@
       "imports": {
         "three": "../node_modules/three/build/three.module.js",
         "three/addons/": "./vendor/three-addons/",
-        "fflate": "../node_modules/fflate/esm/browser.js"
+        "fflate": "../node_modules/fflate/esm/browser.js",
+        "qrcode-generator": "../node_modules/qrcode-generator/dist/qrcode.mjs"
       }
     }
   </script>
@@ -70,6 +71,23 @@
           <label class="row" data-twhen="outline">Grosor bordeado (mm) <input inputmode="decimal" type="text" id="txtOutlineMM" /></label>
           <label class="row">Color base / silueta <input type="color" id="txtBaseColor" /></label>
           <p class="muted small">El ancho total se ajusta en «Tamaño». La silueta exterior se configura en «Base / silueta».</p>
+        </div>
+      </section>
+      <section class="card" id="elemCard" hidden>
+        <h3>🧩 Partes del logo</h3>
+        <p class="muted small">Marca qué partes salen en el llavero (p. ej. solo el ícono, sin eslogan). Pasa el mouse para verlas resaltadas.</p>
+        <div id="elemList" class="elem-list"></div>
+        <label class="row">Agrupar partes <input type="range" id="elemGap" min="0.005" max="0.08" step="0.005" value="0.025" /></label>
+        <div class="quick">
+          <button class="chip" data-elpreset="all">Todo</button>
+          <button class="chip" data-elpreset="icon">Solo ícono</button>
+          <button class="chip" data-elpreset="noslogan">Sin eslogan</button>
+          <button class="chip" data-elpreset="text">Solo texto</button>
+        </div>
+        <h4>Alternativas de ubicación</h4>
+        <div id="elemAlts" class="elem-alts"></div>
+        <div class="row-buttons">
+          <button class="btn mini" id="btnElemRestore" hidden>↺ Volver al logo original</button>
         </div>
       </section>
       <section class="card" id="procCard">
@@ -203,6 +221,20 @@
         <label class="row">Alto resultante (mm) <output id="setHeightOut"></output></label>
       </section>
 
+      <section class="card" data-card="kctier">
+        <h3>💎 Línea de producto</h3>
+        <div class="tier-grid" id="tierGrid">
+          <button class="tier" data-tier="basic"><b>Sencillo</b><span>2 colores · delgado</span><small>Base 1.8 mm, relieve 0.8 mm. El más económico.</small></button>
+          <button class="tier" data-tier="medium"><b>Medio</b><span>3 colores · borde</span><small>Base 2.6 mm, relieve 1.2 mm y borde elevado de color.</small></button>
+          <button class="tier" data-tier="premium"><b>Premium</b><span>4 colores · relieve escalonado</span><small>Base 3.4 mm biselada, contorno metálico y alturas por nivel.</small></button>
+        </div>
+        <div class="row-buttons">
+          <button class="btn mini" id="btnProposal" title="Imagen PNG con las 3 versiones para enviar al cliente">🖼️ Hoja de propuesta (3 versiones)</button>
+          <button class="btn mini" id="btnBambuColors" title="Cambia cada color por el PLA Basic de Bambu Lab más parecido">🎨 Ajustar a colores Bambu</button>
+        </div>
+        <p class="muted small" id="tierInfo">Elige una versión: ajusta grosores, colores y acabados automáticamente. Luego puedes afinar todo a mano.</p>
+      </section>
+
       <section class="card" data-card="micbody">
         <h3><label class="chk"><input type="checkbox" data-set="micBody.enabled" /> 🎤 Cuerpo del micrófono</label></h3>
         <div data-when="micBody.enabled=true">
@@ -287,22 +319,76 @@
 
       <section class="card" data-card="ring">
         <h3><label class="chk"><input type="checkbox" data-set="ring.enabled" /> Argolla de llavero</label></h3>
+        <label class="row">Tipo <select data-set="ring.style"><option value="round">Argolla redonda</option><option value="slot">Ranura para cordón / lanyard</option></select></label>
         <label class="row">Posición <select data-set="ring.pos">
           <option value="top">Arriba</option><option value="left">Izquierda</option><option value="right">Derecha</option>
           <option value="topleft">Arriba izquierda</option><option value="topright">Arriba derecha</option><option value="bottom">Abajo</option><option value="manual">Manual (arrastrada)</option>
         </select></label>
         <label class="row">Diámetro exterior (mm) <input inputmode="decimal" type="text" data-set="ring.outer" data-min="3" /></label>
-        <label class="row">Agujero (mm) <input inputmode="decimal" type="text" data-set="ring.inner" data-min="1" /></label>
+        <label class="row"><span data-when="ring.style=round">Agujero (mm)</span><span data-when="ring.style=slot">Alto ranura (mm)</span> <input inputmode="decimal" type="text" data-set="ring.inner" data-min="1" /></label>
+        <label class="row" data-when="ring.style=slot">Largo ranura (mm) <input inputmode="decimal" type="text" data-set="ring.slotW" data-min="4" /></label>
         <label class="row">Grosor (mm) <input inputmode="decimal" type="text" data-set="ring.thickness" data-min="0.8" /></label>
+        <label class="row">Pegar al borde <input type="checkbox" data-set="ring.snap" /></label>
         <label class="row" data-when="base.enabled=false">Filamento <select data-set="ring.filament" class="fil-select"></select></label>
         <div class="quick"><span class="muted">Agujero:</span>
-          <button class="chip" data-preset='{"ring":{"inner":4,"outer":8}}'>4 mm</button>
-          <button class="chip" data-preset='{"ring":{"inner":4.5,"outer":9}}'>4.5 mm</button>
-          <button class="chip" data-preset='{"ring":{"inner":5,"outer":10}}'>5 mm</button>
-          <button class="chip" data-preset='{"ring":{"inner":6,"outer":12}}'>6 mm</button>
+          <button class="chip" data-preset='{"ring":{"style":"round","inner":4,"outer":8}}'>4 mm</button>
+          <button class="chip" data-preset='{"ring":{"style":"round","inner":4.5,"outer":9}}'>4.5 mm</button>
+          <button class="chip" data-preset='{"ring":{"style":"round","inner":5,"outer":10}}'>5 mm</button>
+          <button class="chip" data-preset='{"ring":{"style":"round","inner":6,"outer":12}}'>6 mm</button>
+          <button class="chip" data-preset='{"ring":{"style":"slot","inner":3.5,"outer":8,"slotW":13}}'>Lanyard</button>
         </div>
-        <button id="btnPlaceRing" class="btn wide">📍 Colocar con un clic</button>
-        <p class="muted small">Tip: arrastra el círculo azul en el lienzo para moverla. La argolla se une a la base con un cuello reforzado.</p>
+        <button id="btnPlaceRing" class="btn wide">📍 Ubicar con el mouse</button>
+        <p class="muted small">Mueve el mouse sobre el diseño: verás la argolla en vivo pegada al borde más cercano. Clic para fijarla, Alt para ubicarla libre, Esc para cancelar. También puedes arrastrarla.</p>
+      </section>
+
+      <section class="card" data-card="kcextras">
+        <h3>✨ Acabados premium</h3>
+        <h4><label class="chk"><input type="checkbox" data-set="rim.enabled" /> Borde elevado</label></h4>
+        <div data-when="rim.enabled=true">
+          <label class="row">Ancho (mm) <input inputmode="decimal" type="text" data-set="rim.width" data-min="0.4" /></label>
+          <label class="row">Alto (mm) <input inputmode="decimal" type="text" data-set="rim.height" data-min="0.2" /></label>
+          <label class="row">Filamento <select data-set="rim.filament" class="fil-select"></select></label>
+        </div>
+        <h4><label class="chk"><input type="checkbox" data-set="accent.enabled" /> Contorno de acento (metálico)</label></h4>
+        <div data-when="accent.enabled=true">
+          <label class="row">Ancho (mm) <input inputmode="decimal" type="text" data-set="accent.width" data-min="0.4" /></label>
+          <label class="row">Alto (mm) <input inputmode="decimal" type="text" data-set="accent.height" data-min="0.2" /></label>
+          <label class="row">Filamento <select data-set="accent.filament" class="fil-select"></select></label>
+        </div>
+        <h4><label class="chk"><input type="checkbox" data-set="bevel.enabled" /> Canto biselado</label></h4>
+        <label class="row" data-when="bevel.enabled=true">Bisel (mm) <input inputmode="decimal" type="text" data-set="bevel.size" data-min="0.2" /></label>
+        <h4><label class="chk"><input type="checkbox" data-set="nfc.enabled" /> Chip NFC oculto</label></h4>
+        <div data-when="nfc.enabled=true">
+          <label class="row">Diámetro chip (mm) <input inputmode="decimal" type="text" data-set="nfc.diameter" data-min="8" /></label>
+          <label class="row">Grosor bolsillo (mm) <input inputmode="decimal" type="text" data-set="nfc.depth" data-min="0.4" /></label>
+          <div class="quick"><span class="muted">Sticker:</span>
+            <button class="chip" data-preset='{"nfc":{"diameter":25.5,"depth":1}}'>NTAG 25 mm</button>
+            <button class="chip" data-preset='{"nfc":{"diameter":20.5,"depth":1}}'>20 mm</button>
+            <button class="chip" data-preset='{"nfc":{"diameter":30.5,"depth":1}}'>30 mm</button>
+          </div>
+          <p class="muted small">El 3MF incluye una pausa automática en Bambu Studio: cuando la impresora se detenga, pon el chip en el bolsillo y continúa. Programa el chip con tu link (web, WhatsApp, Instagram, vCard) desde el celular.</p>
+        </div>
+        <h4><label class="chk"><input type="checkbox" data-set="back.enabled" /> Texto grabado atrás</label></h4>
+        <div data-when="back.enabled=true">
+          <label class="row">Texto <input type="text" data-set="back.text" data-str="1" id="backText" placeholder="Nombre, cargo, web…" /></label>
+          <label class="row">Fuente <select id="backFont"></select></label>
+          <label class="row">Alto letra (mm) <input inputmode="decimal" type="text" data-set="back.heightMM" data-min="2" /></label>
+          <label class="row">Profundidad (mm) <input inputmode="decimal" type="text" data-set="back.depth" data-min="0.2" /></label>
+          <p class="muted small">Se lee al voltear el llavero (ya va en espejo). Ideal para el nombre del empleado o la web de la marca.</p>
+        </div>
+      </section>
+
+      <section class="card" data-card="brand">
+        <h3>🏢 Marca / empresas</h3>
+        <h4>Código QR en el frente</h4>
+        <label class="row">Enlace / texto <input type="text" id="qrText" placeholder="https://… · wa.me/57… · @instagram" /></label>
+        <label class="row">Ubicación <select id="qrPos"><option value="below">Debajo del logo</option><option value="right">A la derecha</option></select></label>
+        <div class="row-buttons"><button class="btn mini" id="btnAddQR">＋ Agregar QR</button></div>
+        <h4>Nombres en lote (personalizado por empleado)</h4>
+        <textarea id="batchNames" rows="4" placeholder="Un nombre por línea&#10;Ana Gómez&#10;Carlos Ruiz"></textarea>
+        <label class="row">Nombre en <select id="batchWhere"><option value="back">Grabado atrás</option><option value="front">Al frente, debajo del logo</option></select></label>
+        <div class="row-buttons"><button class="btn mini" id="btnBatch">⬇ Exportar un 3MF por nombre</button></div>
+        <p class="muted small" id="gramsInfo"></p>
       </section>
 
       <section class="card" data-card="pencil">

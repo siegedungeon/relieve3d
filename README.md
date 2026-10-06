@@ -33,7 +33,7 @@ Al abrir aparece una **pantalla de inicio** para elegir qué crear (botón **Ini
 
 | Módulo | Qué hace |
 |---|---|
-| Llavero | Nombre o logo con silueta y argolla reforzada que se arrastra a cualquier posición |
+| Llavero | Módulo completo para marcas y merchandising (ver abajo) |
 | Marcador de lápiz | Nombre con funda para lápiz redondo, hexagonal o triangular (calibre, largo, ancho del nombre, borde/silueta, fuentes del equipo) |
 | Logo para micrófono | **Cuerpo completo** del mic flag (cuadrado, estrella, corazón, círculo, hexágono) con bordes redondeados, hueco inferior para el micrófono + ranura del clip (DJI, Hollyland, chinos verticales), aros laterales opcionales y el logo encima. El logo/cuerpo se mueve con el asa ✥ morada, se rota y el botón **Centrar hueco** ajusta el hueco para paredes uniformes. También puedes **cargar tu propio cuerpo STL** (queda guardado en la biblioteca) |
 | Logo / figura en relieve | Cualquier imagen a modelo multicolor por capas |
@@ -49,6 +49,18 @@ Los módulos de texto usan las fuentes más populares y las instaladas en el equ
 **Diseño 2D**:
 - **Preparar logo**: vectoriza, quita fondo, reduce a 3–4 colores, engrosa colores finos, reorganiza elementos (mover/escalar/rotar/ocultar), añade borde y silueta de separación. Exporta SVG/PNG, guarda el proyecto `.r3s` para revisión del cliente o **Pasa a 3D** (llavero, micrófono, imán…).
 - **Cake topper láser**: letras engrosadas y soldadas en **una sola pieza** (sin letras sueltas ni huecos pequeños), puentes automáticos, palitos según tamaño de torta, doble capa opcional. Exporta **SVG de corte** para CorelDRAW.
+
+### Módulo Llavero (marcas y empresas)
+
+- **Partes del logo**: detecta automáticamente ícono, nombre, eslogan y detalles. Marca cuáles salen (p. ej. solo el ícono, sin eslogan), cambia el tamaño de cada parte (%) y elige entre **alternativas de ubicación** con miniatura: como el logo, sin eslogan, solo ícono, solo nombre, ícono arriba + nombre, ícono + nombre en fila. «Volver al logo original» deshace la recomposición.
+- **3 versiones de producto** con un clic:
+  - **Sencillo**: 2 colores, base 1.8 mm, relieve 0.8 mm (el más económico).
+  - **Medio**: 3 colores, base 2.6 mm, relieve 1.2 mm y borde elevado de color.
+  - **Premium**: 4 colores, base 3.4 mm biselada, contorno metálico (dorado/plata) y alturas escalonadas por nivel.
+  Los colores se reducen desde los originales del logo y se nombran con el PLA Basic de Bambu Lab más parecido («🎨 Ajustar a colores Bambu» cambia el tono exacto).
+- **Argolla**: «📍 Ubicar con el mouse» muestra la argolla en vivo pegada al borde más cercano mientras mueves el mouse; clic para fijarla, **Alt** para ubicarla libre, también se puede arrastrar. Estilo redondo o **ranura para cordón/lanyard**.
+- **Acabados**: borde elevado, contorno de acento, canto biselado, **chip NFC oculto** (bolsillo + pausa automática en el 3MF para insertar el chip en Bambu Studio) y **texto grabado atrás** (nombre del empleado, web).
+- **Marca / empresas**: **código QR** en el frente (avisa si queda muy pequeño para escanear), **nombres en lote** (un 3MF por empleado, atrás o al frente), **peso estimado en gramos** para cotizar y **hoja de propuesta PNG** con las 3 versiones lado a lado para enviar al cliente.
 
 ## Flujo de trabajo (modelos 3D)
 

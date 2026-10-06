@@ -1,10 +1,10 @@
 // Module catalogue: each module is a preset of settings + which option cards are shown.
 export const MODULES = [
   {
-    id: 'keychain', group: '3d', icon: '🔑', title: 'Llavero', source: 'text',
-    desc: 'Nombre o logo con silueta y argolla reforzada que puedes arrastrar.',
-    cards: ['text', 'base', 'ring'],
-    patch: { widthMM: 55, base: { enabled: true, margin: 2.5, thickness: 2 }, ring: { enabled: true, pos: 'left', outer: 9, inner: 4.5, thickness: 2 } },
+    id: 'keychain', group: '3d', icon: '🔑', title: 'Llavero', source: 'image',
+    desc: 'Logo o nombre en 3 versiones (Sencillo, Medio, Premium), partes del logo a elección, argolla donde quieras, NFC, QR y lotes para empresas.',
+    cards: ['text', 'elements', 'kctier', 'base', 'ring', 'kcextras', 'brand'],
+    patch: { widthMM: 50, base: { enabled: true, margin: 3, thickness: 2.6 }, ring: { enabled: true, pos: 'left', outer: 9, inner: 4.5, thickness: 2.6 } },
   },
   {
     id: 'pencil', group: '3d', icon: '✏️', title: 'Marcador de lápiz', source: 'text',

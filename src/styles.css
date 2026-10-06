@@ -206,3 +206,26 @@ textarea { width: 100%; font: inherit; font-size: 14px; padding: 6px 8px; border
 .st-pal .num { display: none; }
 .st-hint { animation: r3dFade .6s 6s forwards; }
 @keyframes r3dFade { to { opacity: 0; } }
+
+/* keychain: tiers, logo parts, layout alternatives */
+.tier-grid { display: grid; grid-template-columns: 1fr; gap: 6px; }
+.tier { display: flex; flex-direction: column; align-items: flex-start; gap: 1px; text-align: left; border: 1px solid var(--border); background: #fff; border-radius: var(--radius); padding: 8px 10px; cursor: pointer; }
+.tier b { font-size: 14px; }
+.tier span { font-size: 12px; color: var(--sel); }
+.tier small { font-size: 11px; color: var(--muted); }
+.tier:hover { border-color: var(--sel); }
+.tier.active { border-color: var(--accent); box-shadow: 0 0 0 2px rgba(22, 163, 74, .25); background: #f0fdf4; }
+.tier[data-tier="premium"] b::after { content: " ★"; color: #c9a227; }
+#tierInfo .sw, .sw { display: inline-block; width: 12px; height: 12px; border-radius: 3px; border: 1px solid #0003; vertical-align: middle; margin-left: 2px; }
+.elem-list { display: flex; flex-direction: column; gap: 4px; margin: 6px 0; }
+.elem-row { display: flex; align-items: center; justify-content: space-between; gap: 6px; padding: 3px 4px; border-radius: 8px; }
+.elem-row:hover { background: #eef2ff; }
+.elem-row .chk { display: flex; align-items: center; gap: 6px; }
+.elem-thumb { width: 64px; height: 40px; background: repeating-conic-gradient(#f1f1f1 0 25%, #fff 0 50%) 0 0 / 10px 10px; border-radius: 6px; border: 1px solid var(--border); }
+.elem-scale { width: 44px; text-align: right; }
+.elem-alts { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; margin: 6px 0; }
+.elem-alt { display: flex; flex-direction: column; align-items: center; gap: 2px; border: 1px solid var(--border); background: #fff; border-radius: var(--radius); padding: 4px; font-size: 11px; cursor: pointer; }
+.elem-alt canvas { width: 100%; height: auto; background: repeating-conic-gradient(#f4f4f4 0 25%, #fff 0 50%) 0 0 / 10px 10px; border-radius: 6px; }
+.elem-alt:hover { border-color: var(--sel); }
+.elem-alt.active { border-color: var(--accent); box-shadow: 0 0 0 2px rgba(22, 163, 74, .25); }
+#batchNames { width: 100%; box-sizing: border-box; resize: vertical; font: inherit; font-size: 12px; border: 1px solid var(--border); border-radius: 8px; padding: 6px; }

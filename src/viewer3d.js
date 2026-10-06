@@ -30,6 +30,7 @@ export class Viewer3D {
 
     const grid = new THREE.GridHelper(256, 32, 0x5b616c, 0x3d4149);
     grid.position.y = -0.02;
+    this.grid = grid;
     this.scene.add(grid);
 
     // Model lives in Z-up space; rotate so it lies on the XZ grid.
@@ -134,6 +135,38 @@ export class Viewer3D {
     if (height != null) m.scale.z = height;
     if (z != null) m.position.z = z;
     this.requestRender();
+  }
+
+  // Immediate render → PNG data URL (used for the 3-tier proposal sheet)
+  snapshot() {
+    this.controls.update();
+    this.renderer.render(this.scene, this.camera);
+    return this.renderer.domElement.toDataURL('image/png');
+  }
+
+  // Off-screen style "product photo": fixed size, light background, no grid; the live view is restored afterwards.
+  productShot(w = 800, h = 600, bg = 0xf3f4f6) {
+    const old = { size: this.renderer.getSize(new THREE.Vector2()), aspect: this.camera.aspect, pos: this.camera.position.clone(), target: this.controls.target.clone(), bg: this.scene.background, grid: this.grid.visible };
+    this.renderer.setSize(w, h, false);
+    this.camera.aspect = w / h;
+    this.scene.background = new THREE.Color(bg);
+    this.grid.visible = false;
+    this.frame();
+    const p = this.camera.position.clone().sub(this.controls.target).multiplyScalar(0.82);
+    this.camera.position.copy(this.controls.target).add(p);
+    this.camera.updateProjectionMatrix();
+    this.renderer.render(this.scene, this.camera);
+    const url = this.renderer.domElement.toDataURL('image/png');
+    this.scene.background = old.bg;
+    this.grid.visible = old.grid;
+    this.renderer.setSize(old.size.x, old.size.y, false);
+    this.camera.aspect = old.aspect;
+    this.camera.position.copy(old.pos);
+    this.controls.target.copy(old.target);
+    this.camera.updateProjectionMatrix();
+    this.controls.update();
+    this.requestRender();
+    return url;
   }
 
   frame(top = false) {

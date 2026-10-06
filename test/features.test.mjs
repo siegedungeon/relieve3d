@@ -69,10 +69,21 @@ const cases = {
   micBody: S({ base: { enabled: true, thickness: 2 }, micBody: { enabled: true } }),
   micStar3D: S({ base: { enabled: true }, micBody: { enabled: true, ...BODY_PRESETS.star, ox: 3, oy: -4, rot: 15 } }),
   micHeart3D: S({ micBody: { enabled: true, ...BODY_PRESETS.heart }, magnets: { enabled: true }, tongue: { enabled: true } }),
+  rimAccent: S({ base: { enabled: true, margin: 4, thickness: 2.4 }, rim: { enabled: true }, accent: { enabled: true }, ring: { enabled: true } }),
+  bevel: S({ base: { enabled: true, shape: 'rect', plateW: 70, plateH: 50, thickness: 3.2 }, bevel: { enabled: true, size: 0.8 } }),
+  nfc: S({ base: { enabled: true, shape: 'circle', plateW: 45, plateH: 45, thickness: 2 }, nfc: { enabled: true, diameter: 25.5 }, bevel: { enabled: true } }),
+  slotRing: S({ base: { enabled: true, margin: 3 }, ring: { enabled: true, style: 'slot', pos: 'top', slotW: 14, inner: 4, outer: 9 } }),
+  nfcMagnet: S({ base: { enabled: true, shape: 'rect', plateW: 60, plateH: 45, thickness: 2 }, nfc: { enabled: true, diameter: 20 }, magnets: { enabled: true, count: 2, spacing: 40, diameter: 6, depth: 1 } }),
 };
+// synthetic back-text mask: a block "T"
+const bw = 40, bh = 20, bdata = new Uint8Array(bw * bh);
+for (let y = 0; y < bh; y++) for (let x = 0; x < bw; x++) if (y < 6 || (x > 15 && x < 25)) bdata[y * bw + x] = 1;
+const backMask = { data: bdata, w: bw, h: bh, mmW: 20, mmH: 10 };
+cases.back = S({ base: { enabled: true, shape: 'rect', plateW: 60, plateH: 40, thickness: 2.4 }, back: { enabled: true, depth: 0.6 } });
+const caseOpts = { back: { backMask } };
 for (const [name, set] of Object.entries(cases)) {
   const t0 = Date.now();
-  const f = buildFeatures(r, set, { scale, center, detail: 0.8, smooth: 1 });
+  const f = buildFeatures(r, set, { scale, center, detail: 0.8, smooth: 1, ...(caseOpts[name] || {}) });
   let bad = 0, n = 0;
   for (const L of f.layers) {
     assert(L.shapes.length, `${name}: layer ${L.key} has shapes`);
@@ -101,4 +112,30 @@ for (const [name, set] of Object.entries(cases)) {
   assert(!h.layers.some((l) => l.key === 'tongue' || l.key === 'baseLow'), 'no magnets/tongue with body');
 }
 assert(Math.abs(pencilAcross({ type: 'round', measure: 'circumference', value: Math.PI * 7 }) - 7) < 1e-9);
+// keychain extras
+{
+  const f = buildFeatures(r, cases.rimAccent, { scale, center });
+  assert(f.layers.some((l) => l.key === 'rim' && l.fil === 'rim'), 'rim layer');
+  assert(f.layers.some((l) => l.key === 'accent'), 'accent layer');
+  assert(Math.abs(f.pieceZ - 3.0) < 1e-6, 'pieces sit on accent');
+  assert(f.ringRef && f.ringRef.length, 'ring snap reference');
+  const n = buildFeatures(r, cases.nfc, { scale, center });
+  assert.strictEqual(n.pauses.length, 1, 'nfc pause');
+  const pz = n.pauses[0].z, base = n.layers.filter((l) => l.fil === 'base');
+  assert(base.some((l) => l.key === 'baseNfc' && Math.abs(l.z + l.height - pz) < 1e-6), 'pause at pocket top');
+  assert(n.pieceZ >= pz + 0.8 - 1e-6, 'pocket covered');
+  assert(base.some((l) => l.key === 'baseTop'), 'bevel band');
+  const tops = base.reduce((a, l) => Math.max(a, l.z + l.height), 0);
+  assert(Math.abs(tops - n.pieceZ) < 1e-6, 'base stack continuous');
+  const s = buildFeatures(r, cases.slotRing, { scale, center });
+  assert(s.ring.slot && s.ring.half > 0, 'slot ring');
+  const b = buildFeatures(r, cases.back, { scale, center, backMask });
+  assert(b.layers.some((l) => l.key === 'baseBack'), 'back engraving band');
+  // enabled subset: only the biggest piece shapes the base
+  const en = r.pieces.map((p) => (p.bbox[0] + p.bbox[2]) / 2 < center[0]);
+  const e = buildFeatures(r, cases.keychain, { scale, center, enabled: en });
+  const full = buildFeatures(r, cases.keychain, { scale, center });
+  const area = (F) => F.layers.find((l) => l.key === 'base').shapes.reduce((a, sh) => a + Math.abs(sh.outer.reduce((s2, p, i, A) => s2 + p[0] * A[(i + 1) % A.length][1] - A[(i + 1) % A.length][0] * p[1], 0)) / 2, 0);
+  assert(area(e) < area(full), 'excluded pieces shrink the base');
+}
 console.log('features OK');

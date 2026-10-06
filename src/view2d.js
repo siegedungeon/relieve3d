@@ -103,7 +103,7 @@ export class View2D {
       if (e.button !== 0) return;
       if (this.placing) {
         const [x, y] = this.toImage(sx, sy);
-        this.cb.onPlace(x, y);
+        this.cb.onPlace(x, y, { free: e.altKey });
         return;
       }
       const body = this.cb.getDrawData?.()?.body;
@@ -138,7 +138,7 @@ export class View2D {
       if (drag?.type === 'ring') {
         const [x, y] = this.toImage(sx, sy);
         drag.pos = [x + drag.dx, y + drag.dy];
-        this.cb.onRingMove?.(...drag.pos);
+        this.cb.onRingMove?.(...drag.pos, { free: e.altKey });
         this.draw();
         return;
       }
@@ -148,6 +148,12 @@ export class View2D {
         return;
       }
       const [x, y] = this.toImage(sx, sy);
+      if (this.placing && !drag) {
+        this.cb.onRingMove?.(x, y, { hover: true, free: e.altKey });
+        c.style.cursor = 'crosshair';
+        this.draw();
+        return;
+      }
       const h = this.pieceAt(x, y);
       if (h !== this.hover) { this.hover = h; this.cb.onHover(h); this.draw(); }
       const bd = this.cb.getDrawData?.()?.body;
@@ -177,7 +183,10 @@ export class View2D {
       this.draw();
     });
 
-    c.addEventListener('pointerleave', () => { if (this.hover !== -1) { this.hover = -1; this.cb.onHover(-1); this.draw(); } });
+    c.addEventListener('pointerleave', () => {
+      if (this.placing) { this.cb.onRingMove?.(null, null, { hover: true }); this.draw(); }
+      if (this.hover !== -1) { this.hover = -1; this.cb.onHover(-1); this.draw(); }
+    });
 
     window.addEventListener('keydown', (e) => {
       if (e.code === 'Space' && !isTyping(e)) { this.space = true; e.preventDefault(); }
@@ -296,11 +305,41 @@ export class View2D {
     ctx.stroke();
   }
 
-  // ring handle: the ring itself is part of the underlays; draw a draggable marker on top
+  // ring handle: the ring itself is part of the underlays; draw a draggable marker on top.
+  // ring.ghost: live preview while placing / dragging (full tab + hole + neck towards the body)
   drawRing(ctx, ring, px) {
+    const tx = ring.tx ?? 1, ty = ring.ty ?? 0, h = ring.half || 0;
+    const capsule = (r) => {
+      const ax = ring.x - tx * h, ay = ring.y - ty * h, bx = ring.x + tx * h, by = ring.y + ty * h, a = Math.atan2(ty, tx);
+      ctx.moveTo(bx + Math.cos(a - Math.PI / 2) * r, by + Math.sin(a - Math.PI / 2) * r);
+      ctx.arc(bx, by, r, a - Math.PI / 2, a + Math.PI / 2);
+      ctx.arc(ax, ay, r, a + Math.PI / 2, a + Math.PI * 1.5);
+      ctx.closePath();
+    };
+    if (ring.ghost) {
+      const g = ring.ghost;
+      ctx.save();
+      ctx.globalAlpha = 0.55;
+      ctx.fillStyle = g.color || '#93c5fd';
+      ctx.strokeStyle = g.color || '#93c5fd';
+      if (g.qx != null) {
+        ctx.lineCap = 'round';
+        ctx.lineWidth = ring.ro * 1.6;
+        ctx.beginPath(); ctx.moveTo(ring.x, ring.y); ctx.lineTo(g.qx, g.qy); ctx.stroke();
+      }
+      ctx.beginPath(); capsule(ring.ro); ctx.fill();
+      ctx.globalAlpha = 1;
+      ctx.globalCompositeOperation = 'destination-out';
+      ctx.beginPath(); capsule(ring.ri); ctx.fill();
+      ctx.restore();
+      if (g.snapped && g.qx != null) {
+        ctx.beginPath(); ctx.arc(g.qx, g.qy, 3 * px, 0, Math.PI * 2);
+        ctx.fillStyle = '#16a34a'; ctx.fill();
+      }
+    }
     ctx.beginPath();
-    ctx.arc(ring.x, ring.y, ring.ro, 0, Math.PI * 2);
-    ctx.strokeStyle = '#2563eb';
+    capsule(ring.ro);
+    ctx.strokeStyle = ring.ghost ? '#16a34a' : '#2563eb';
     ctx.lineWidth = 1.5 * px;
     ctx.setLineDash([4 * px, 3 * px]);
     ctx.stroke();
