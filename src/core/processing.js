@@ -38,6 +38,7 @@ export function computeForeground(img, o) {
   let rr = 0, gg = 0, bb = 0;
   for (const i of corners) { rr += data[i * 4]; gg += data[i * 4 + 1]; bb += data[i * 4 + 2]; }
   rr /= corners.length; gg /= corners.length; bb /= corners.length;
+  fg.bg = [rr, gg, bb];
   const tol2 = o.tolerance * o.tolerance;
   const near = (i) => {
     const dr = data[i * 4] - rr, dg = data[i * 4 + 1] - gg, db = data[i * 4 + 2] - bb;
@@ -57,6 +58,79 @@ export function computeForeground(img, o) {
     if (y < H - 1) push(i + W);
   }
   return fg;
+}
+
+// ---------- resampling ----------
+// Bicubic (Catmull-Rom) resize on premultiplied RGBA. Upscaling small logos before segmentation puts the
+// colour boundaries at sub-pixel positions, which removes the stair-steps of low-resolution images.
+export function resizeBicubic(img, W2, H2) {
+  const { data: s, width: W, height: H } = img;
+  const pm = new Float32Array(W * H * 4);
+  for (let i = 0; i < W * H; i++) {
+    const a = s[i * 4 + 3] / 255;
+    pm[i * 4] = s[i * 4] * a; pm[i * 4 + 1] = s[i * 4 + 1] * a; pm[i * 4 + 2] = s[i * 4 + 2] * a; pm[i * 4 + 3] = s[i * 4 + 3];
+  }
+  const cub = (t) => { t = Math.abs(t); return t < 1 ? 1.5 * t * t * t - 2.5 * t * t + 1 : t < 2 ? -0.5 * t * t * t + 2.5 * t * t - 4 * t + 2 : 0; };
+  const taps = (n, n2) => {
+    const sc = n / n2, idx = new Int32Array(n2 * 4), w = new Float32Array(n2 * 4);
+    for (let o = 0; o < n2; o++) {
+      const c = (o + 0.5) * sc - 0.5, f = Math.floor(c);
+      let sum = 0;
+      for (let k = 0; k < 4; k++) { const q = f - 1 + k; idx[o * 4 + k] = Math.min(n - 1, Math.max(0, q)); sum += (w[o * 4 + k] = cub(c - q)); }
+      for (let k = 0; k < 4; k++) w[o * 4 + k] /= sum;
+    }
+    return { idx, w };
+  };
+  const tx = taps(W, W2), ty = taps(H, H2);
+  const tmp = new Float32Array(W2 * H * 4);
+  for (let y = 0; y < H; y++) for (let x = 0; x < W2; x++) {
+    const o = (y * W2 + x) * 4;
+    for (let k = 0; k < 4; k++) {
+      const j = (y * W + tx.idx[x * 4 + k]) * 4, wk = tx.w[x * 4 + k];
+      tmp[o] += pm[j] * wk; tmp[o + 1] += pm[j + 1] * wk; tmp[o + 2] += pm[j + 2] * wk; tmp[o + 3] += pm[j + 3] * wk;
+    }
+  }
+  const out = new Uint8ClampedArray(W2 * H2 * 4);
+  for (let y = 0; y < H2; y++) for (let x = 0; x < W2; x++) {
+    let r = 0, g = 0, b = 0, a = 0;
+    for (let k = 0; k < 4; k++) {
+      const j = (ty.idx[y * 4 + k] * W2 + x) * 4, wk = ty.w[y * 4 + k];
+      r += tmp[j] * wk; g += tmp[j + 1] * wk; b += tmp[j + 2] * wk; a += tmp[j + 3] * wk;
+    }
+    const o = (y * W2 + x) * 4;
+    a = Math.min(255, Math.max(0, a));
+    const ia = a > 0.5 ? 255 / a : 0;
+    out[o] = r * ia; out[o + 1] = g * ia; out[o + 2] = b * ia; out[o + 3] = a;
+  }
+  return { data: out, width: W2, height: H2 };
+}
+
+// ---------- colour space ----------
+const SRGB = new Float32Array(256);
+for (let i = 0; i < 256; i++) { const c = i / 255; SRGB[i] = c <= 0.04045 ? c / 12.92 : ((c + 0.055) / 1.055) ** 2.4; }
+const labF = (t) => (t > 0.008856 ? Math.cbrt(t) : 7.787 * t + 16 / 116);
+function toLab(r, g, b, out, o) {
+  const R = SRGB[r], G = SRGB[g], B = SRGB[b];
+  const x = labF((R * 0.4124 + G * 0.3576 + B * 0.1805) / 0.95047);
+  const y = labF(R * 0.2126 + G * 0.7152 + B * 0.0722);
+  const z = labF((R * 0.0193 + G * 0.1192 + B * 0.9505) / 1.08883);
+  out[o] = 116 * y - 16; out[o + 1] = 500 * (x - y); out[o + 2] = 200 * (y - z);
+}
+
+// Pixels inside flat colour areas (not on an anti-aliased edge). Used to pick clean palette colours.
+function flatMask(img, fg) {
+  const { data, width: W, height: H } = img;
+  const flat = new Uint8Array(W * H);
+  for (let y = 1; y < H - 1; y++) for (let x = 1; x < W - 1; x++) {
+    const i = y * W + x;
+    if (!fg[i]) continue;
+    let ok = 1;
+    for (const j of [i - 1, i + 1, i - W, i + W]) {
+      if (!fg[j] || Math.abs(data[i * 4] - data[j * 4]) + Math.abs(data[i * 4 + 1] - data[j * 4 + 1]) + Math.abs(data[i * 4 + 2] - data[j * 4 + 2]) > 30) { ok = 0; break; }
+    }
+    flat[i] = ok;
+  }
+  return flat;
 }
 
 // ---------- color estimation & k-means ----------
@@ -88,17 +162,17 @@ export function estimateColorCount(img, fg) {
   return Math.max(2, Math.min(12, picked.length));
 }
 
-export function kmeans(img, fg, k, seed = 12345) {
-  const { data } = img;
+// k-means++ on a packed 3-channel buffer (RGB or Lab), sampling pixels where mask != 0.
+function kmeansVec(v, mask, k, seed = 12345) {
   const rnd = mulberry32(seed);
   let count = 0;
-  for (let i = 0; i < fg.length; i++) if (fg[i]) count++;
-  const step = Math.max(1, Math.floor(count / 40000));
+  for (let i = 0; i < mask.length; i++) if (mask[i]) count++;
+  const step = Math.max(1, Math.floor(count / 60000));
   const s = [];
   let c = 0;
-  for (let i = 0; i < fg.length; i++) {
-    if (!fg[i]) continue;
-    if (c++ % step === 0) s.push(data[i * 4], data[i * 4 + 1], data[i * 4 + 2]);
+  for (let i = 0; i < mask.length; i++) {
+    if (!mask[i]) continue;
+    if (c++ % step === 0) s.push(v[i * 3], v[i * 3 + 1], v[i * 3 + 2]);
   }
   const m = s.length / 3;
   if (m === 0) return [];
@@ -121,7 +195,7 @@ export function kmeans(img, fg, k, seed = 12345) {
     centers.push([s[idx * 3], s[idx * 3 + 1], s[idx * 3 + 2]]);
   }
   const assign = new Int32Array(m);
-  for (let it = 0; it < 25; it++) {
+  for (let it = 0; it < 30; it++) {
     const acc = centers.map(() => [0, 0, 0, 0]);
     let moved = 0;
     for (let i = 0; i < m; i++) {
@@ -147,21 +221,85 @@ export function kmeans(img, fg, k, seed = 12345) {
   return centers;
 }
 
-function assignLabels(img, fg, centers) {
-  const { data } = img;
-  const labels = new Int32Array(fg.length).fill(-1);
+export function kmeans(img, fg, k, seed = 12345) {
+  const { data } = img, v = new Float32Array(fg.length * 3);
+  for (let i = 0; i < fg.length; i++) { v[i * 3] = data[i * 4]; v[i * 3 + 1] = data[i * 4 + 1]; v[i * 3 + 2] = data[i * 4 + 2]; }
+  return kmeansVec(v, fg, k, seed);
+}
+
+// Nearest-centre labelling in Lab. Anti-aliased edge pixels that are a blend of two palette colours are given to the
+// nearer of those two instead of a third colour that merely sits "between" them (removes orange halos between red
+// and yellow, grey fringes around black text, …).
+function assignLabels(lab, fg, flat, centers, haloMin = 36, only = null) {
+  const n = centers.length, labels = only ? only.labels : new Int32Array(fg.length).fill(-1);
+  const pairs = [];
+  for (let a = 0; a < n; a++) for (let b = a + 1; b < n; b++) {
+    const ca = centers[a], cb = centers[b], d = [cb[0] - ca[0], cb[1] - ca[1], cb[2] - ca[2]];
+    const L2 = d[0] * d[0] + d[1] * d[1] + d[2] * d[2];
+    if (L2 > 1e-6) pairs.push({ a, b, ca, d, L2 });
+  }
   for (let i = 0; i < fg.length; i++) {
-    if (!fg[i]) continue;
-    const r = data[i * 4], g = data[i * 4 + 1], b = data[i * 4 + 2];
+    if (!fg[i] || (only && (flat[i] || labels[i] < 0))) continue;
+    const L = lab[i * 3], A = lab[i * 3 + 1], B = lab[i * 3 + 2];
     let best = 0, bd = Infinity;
-    for (let j = 0; j < centers.length; j++) {
+    for (let j = 0; j < n; j++) {
       const c = centers[j];
-      const d = (r - c[0]) ** 2 + (g - c[1]) ** 2 + (b - c[2]) ** 2;
+      const d = (L - c[0]) ** 2 + (A - c[1]) ** 2 + (B - c[2]) ** 2;
       if (d < bd) { bd = d; best = j; }
+    }
+    if (!flat[i] && n > 2 && bd > haloMin) {
+      let pb = null, pd = bd * 0.2, pt = 0;
+      for (const p of pairs) {
+        if (p.a === best || p.b === best) continue;
+        const ux = L - p.ca[0], uy = A - p.ca[1], uz = B - p.ca[2];
+        const t = (ux * p.d[0] + uy * p.d[1] + uz * p.d[2]) / p.L2;
+        if (t <= 0.1 || t >= 0.9) continue;
+        const ex = ux - t * p.d[0], ey = uy - t * p.d[1], ez = uz - t * p.d[2];
+        const d = ex * ex + ey * ey + ez * ez;
+        if (d < pd) { pd = d; pb = p; pt = t; }
+      }
+      if (pb) best = pt < 0.5 ? pb.a : pb.b;
     }
     labels[i] = best;
   }
   return labels;
+}
+
+// The background flood fill keeps every anti-aliased edge pixel, which fattens the design by ~half a pixel.
+// Edge pixels that are closer to the background colour than to their own palette colour go back to the background.
+function clusterMeans(v, labels, flat, n) {
+  const f = Array.from({ length: n }, () => [0, 0, 0, 0]), a = Array.from({ length: n }, () => [0, 0, 0, 0]);
+  for (let i = 0; i < labels.length; i++) {
+    const l = labels[i];
+    if (l < 0) continue;
+    const t = flat[i] ? f[l] : a[l];
+    t[0] += v[i * 3]; t[1] += v[i * 3 + 1]; t[2] += v[i * 3 + 2]; t[3]++;
+  }
+  return f.map((q, l) => { const s = q[3] >= 4 ? q : a[l]; return [s[0] / Math.max(1, s[3]), s[1] / Math.max(1, s[3]), s[2] / Math.max(1, s[3])]; });
+}
+
+function peelBackground(labels, lab, centers, bg, W, H) {
+  const bl = bg;
+  const N = W * H, stack = new Int32Array(N), queued = new Uint8Array(N);
+  let sp = 0;
+  const isBg = (j) => labels[j] < 0;
+  const consider = (i) => { if (labels[i] >= 0 && !queued[i]) { queued[i] = 1; stack[sp++] = i; } };
+  for (let i = 0; i < N; i++) {
+    if (labels[i] < 0) continue;
+    const x = i % W, y = (i / W) | 0;
+    if (x === 0 || y === 0 || x === W - 1 || y === H - 1 || isBg(i - 1) || isBg(i + 1) || isBg(i - W) || isBg(i + W)) consider(i);
+  }
+  while (sp) {
+    const i = stack[--sp], c = centers[labels[i]];
+    const L = lab[i * 3], A = lab[i * 3 + 1], B = lab[i * 3 + 2];
+    const db = (L - bl[0]) ** 2 + (A - bl[1]) ** 2 + (B - bl[2]) ** 2;
+    const dc = (L - c[0]) ** 2 + (A - c[1]) ** 2 + (B - c[2]) ** 2;
+    if (db >= dc) continue;
+    labels[i] = -1;
+    const x = i % W, y = (i / W) | 0;
+    if (x > 0) consider(i - 1); if (x < W - 1) consider(i + 1);
+    if (y > 0) consider(i - W); if (y < H - 1) consider(i + W);
+  }
 }
 
 function modeFilter(labels, W, H, k) {
@@ -177,7 +315,7 @@ function modeFilter(labels, W, H, k) {
         const l = labels[i + dy * W + dx];
         if (l >= 0) { const c = ++counts[l]; if (c > bestC) { bestC = c; bestL = l; } }
       }
-      if (bestC >= 5) out[i] = bestL;
+      if (bestC >= 5 && counts[labels[i]] <= 2) out[i] = bestL;
     }
   }
   return out;
@@ -344,6 +482,68 @@ function rdpClosed(pts, eps) {
   return a.slice(0, -1).concat(b.slice(0, -1));
 }
 
+function rdpClosedIdx(pts, eps) {
+  const n = pts.length;
+  if (n < 4) return pts.map((_, i) => i);
+  let far = 0, fd = -1;
+  for (let i = 1; i < n; i++) {
+    const d = (pts[i][0] - pts[0][0]) ** 2 + (pts[i][1] - pts[0][1]) ** 2;
+    if (d > fd) { fd = d; far = i; }
+  }
+  const keep = new Uint8Array(n + 1);
+  keep[0] = keep[far] = keep[n] = 1;
+  const P = (i) => pts[i % n];
+  const stack = [[0, far], [far, n]];
+  while (stack.length) {
+    const [a, b] = stack.pop();
+    const A = P(a), dx = P(b)[0] - A[0], dy = P(b)[1] - A[1], len = Math.hypot(dx, dy);
+    let maxD = -1, id = -1;
+    for (let i = a + 1; i < b; i++) {
+      const q = P(i);
+      const d = len > 1e-9 ? Math.abs(dy * (q[0] - A[0]) - dx * (q[1] - A[1])) / len : Math.hypot(q[0] - A[0], q[1] - A[1]);
+      if (d > maxD) { maxD = d; id = i; }
+    }
+    if (maxD > eps) { keep[id] = 1; stack.push([a, id], [id, b]); }
+  }
+  const out = [];
+  for (let i = 0; i < n; i++) if (keep[i]) out.push(i);
+  return out;
+}
+
+// Total-least-squares line through pts[a..b] (closed indexing): { cx, cy, dx, dy } or null.
+function fitLine(pts, a, b) {
+  const n = pts.length;
+  let m = 0, sx = 0, sy = 0;
+  for (let i = a; i <= b; i++) { const q = pts[i % n]; sx += q[0]; sy += q[1]; m++; }
+  if (m < 3) return null;
+  const cx = sx / m, cy = sy / m;
+  let xx = 0, xy = 0, yy = 0;
+  for (let i = a; i <= b; i++) { const q = pts[i % n], u = q[0] - cx, v = q[1] - cy; xx += u * u; xy += u * v; yy += v * v; }
+  const th = 0.5 * Math.atan2(2 * xy, xx - yy);
+  return { cx, cy, dx: Math.cos(th), dy: Math.sin(th) };
+}
+const projOn = (L, p) => { const t = (p[0] - L.cx) * L.dx + (p[1] - L.cy) * L.dy; return [L.cx + t * L.dx, L.cy + t * L.dy]; };
+
+// Moves each simplified vertex onto the least-squares lines of its two neighbouring spans, so long straight edges
+// follow the average of the (stair-stepped) pixel boundary instead of its extreme points.
+function fitVertices(dense, idx) {
+  const n = dense.length, m = idx.length;
+  const lines = idx.map((a, j) => { let b = idx[(j + 1) % m]; if (b <= a) b += n; return b - a >= 4 ? fitLine(dense, a, b) : null; });
+  return idx.map((i, j) => {
+    const p = dense[i], L1 = lines[(j - 1 + m) % m], L2 = lines[j];
+    if (!L1 && !L2) return p;
+    if (!L1 || !L2) return projOn(L1 || L2, p);
+    const cr = L1.dx * L2.dy - L1.dy * L2.dx;
+    if (Math.abs(cr) > 0.17) {
+      const t = ((L2.cx - L1.cx) * L2.dy - (L2.cy - L1.cy) * L2.dx) / cr;
+      const q = [L1.cx + t * L1.dx, L1.cy + t * L1.dy];
+      if (Math.hypot(q[0] - p[0], q[1] - p[1]) < 1.5) return q;
+    }
+    const a = projOn(L1, p), b = projOn(L2, p);
+    return [(a[0] + b[0]) / 2, (a[1] + b[1]) / 2];
+  });
+}
+
 function chaikin(pts, iterations) {
   let p = pts;
   for (let it = 0; it < iterations; it++) {
@@ -358,7 +558,79 @@ function chaikin(pts, iterations) {
   return p;
 }
 
-export function simplifyLoop(loop, eps, smooth) {
+// Finds sharp corners on a closed polyline (indices). A real corner turns by the same angle whether measured with
+// chords of k or 2k steps; a tight curve (round letter ends) turns about twice as much at 2k, so it is not a corner.
+function findCorners(p, k, maxAngleDeg = 128) {
+  const n = p.length, minTurn = Math.PI - (maxAngleDeg * Math.PI) / 180;
+  if (n < 4 * k + 3) return [];
+  const turnAt = (i, kk) => {
+    const a = p[(i - kk + n) % n], b = p[i], c = p[(i + kk) % n];
+    const ux = b[0] - a[0], uy = b[1] - a[1], vx = c[0] - b[0], vy = c[1] - b[1];
+    return Math.abs(Math.atan2(ux * vy - uy * vx, ux * vx + uy * vy));
+  };
+  const sharp = new Float32Array(n);
+  for (let i = 0; i < n; i++) {
+    const t1 = turnAt(i, k);
+    sharp[i] = t1 > minTurn && turnAt(i, 2 * k) < t1 * 1.45 ? t1 : -2;
+  }
+  const out = [];
+  for (let i = 0; i < n; i++) {
+    if (sharp[i] <= -2) continue;
+    let isMax = true;
+    for (let j = 1; j <= k && isMax; j++) {
+      if (sharp[(i - j + n) % n] > sharp[i] || sharp[(i + j) % n] >= sharp[i]) isMax = false;
+    }
+    if (isMax) out.push(i);
+  }
+  return out;
+}
+
+function gaussKernel(sigma) {
+  const r = Math.max(1, Math.ceil(sigma * 3)), w = [];
+  let s = 0;
+  for (let i = -r; i <= r; i++) { const v = Math.exp(-(i * i) / (2 * sigma * sigma)); w.push(v); s += v; }
+  return { r, w: w.map((v) => v / s) };
+}
+
+// Gaussian smoothing of a closed polyline that keeps the detected corners fixed (sharp letter corners stay sharp,
+// curves and stair-stepped diagonals become clean).
+export function smoothLoop(p, sigma) {
+  const n = p.length;
+  if (n < 5 || !(sigma > 0)) return p;
+  const { r, w } = gaussKernel(sigma);
+  const corners = findCorners(p, Math.max(3, Math.round(sigma * 2.2)));
+  if (!corners.length) {
+    return p.map((_, i) => {
+      let x = 0, y = 0;
+      for (let j = -r; j <= r; j++) { const q = p[((i + j) % n + n) % n]; x += q[0] * w[j + r]; y += q[1] * w[j + r]; }
+      return [x, y];
+    });
+  }
+  const out = p.map((q) => q.slice());
+  for (let c = 0; c < corners.length; c++) {
+    const s = corners[c], e = corners[(c + 1) % corners.length];
+    const len = ((e - s + n) % n) || n;
+    if (len < 3) continue;
+    const seg = [];
+    for (let j = 0; j <= len; j++) seg.push(p[(s + j) % n]);
+    const m = seg.length - 1, A = seg[0], B = seg[m];
+    // odd reflection about the fixed end points keeps straight edges straight right up to the corner
+    const at = (j) => {
+      if (j < 0) { const q = seg[Math.min(m, -j)]; return [2 * A[0] - q[0], 2 * A[1] - q[1]]; }
+      if (j > m) { const q = seg[Math.max(0, 2 * m - j)]; return [2 * B[0] - q[0], 2 * B[1] - q[1]]; }
+      return seg[j];
+    };
+    for (let j = 1; j < m; j++) {
+      let x = 0, y = 0;
+      for (let t = -r; t <= r; t++) { const q = at(j + t); x += q[0] * w[t + r]; y += q[1] * w[t + r]; }
+      out[(s + j) % n] = [x, y];
+    }
+  }
+  return out;
+}
+
+// scale: working px per source px (smoothing and tolerance are expressed in source pixels)
+export function simplifyLoop(loop, eps, smooth, scale = 1) {
   const n = loop.length;
   if (n < 3) return null;
   const mids = new Array(n);
@@ -366,15 +638,16 @@ export function simplifyLoop(loop, eps, smooth) {
     const a = loop[i], b = loop[(i + 1) % n];
     mids[i] = [(a[0] + b[0]) / 2, (a[1] + b[1]) / 2];
   }
-  let p = rdpClosed(mids, eps);
-  if (p.length < 3) return null;
-  if (smooth > 0) p = chaikin(p, smooth);
+  const dense = smooth > 0 ? smoothLoop(mids, (0.5 + 0.7 * smooth) * scale) : mids;
+  const idx = rdpClosedIdx(dense, (smooth > 0 ? eps * 0.35 : eps) * scale);
+  if (idx.length < 3) return null;
+  let p = smooth > 0 ? fitVertices(dense, idx) : idx.map((i) => dense[i]);
   p = p.map((q) => [Math.round(q[0] * 1000) / 1000, Math.round(q[1] * 1000) / 1000]);
   return p;
 }
 
 // Groups raw loops into shapes {outer, holes} and simplifies them.
-export function buildShapes(rawLoops, eps, smooth) {
+export function buildShapes(rawLoops, eps, smooth, scale = 1) {
   const outers = [], holes = [];
   for (const l of rawLoops) {
     const a = signedArea(l);
@@ -391,11 +664,11 @@ export function buildShapes(rawLoops, eps, smooth) {
   }
   const result = [];
   for (const s of shapes) {
-    const outer = simplifyLoop(s.outer.raw, eps, smooth);
+    const outer = simplifyLoop(s.outer.raw, eps, smooth, scale);
     if (!outer || Math.abs(signedArea(outer)) < 0.5) continue;
     const hs = [];
     for (const h of s.holes) {
-      const hp = simplifyLoop(h.raw, eps, smooth);
+      const hp = simplifyLoop(h.raw, eps, smooth, scale);
       if (hp && Math.abs(signedArea(hp)) >= 0.5) hs.push(hp);
     }
     result.push({ outer, holes: hs });
@@ -406,6 +679,10 @@ export function buildShapes(rawLoops, eps, smooth) {
 // ---------- main pipeline ----------
 export function processImage(img, opts = {}) {
   const o = { ...DEFAULT_PROC, ...opts };
+  // small images are upsampled to the working resolution so edges are located with sub-pixel precision
+  const up = o.upscale === false ? 1 : Math.max(Math.min(4, (o.maxRes || 1000) / Math.max(img.width, img.height)), Math.min(2, Math.sqrt(4e6 / (img.width * img.height))));
+  if (up >= 1.2) img = resizeBicubic(img, Math.round(img.width * up), Math.round(img.height * up));
+  const sc = up >= 1.2 ? up : 1;
   const { width: W, height: H } = img;
   const N = W * H;
   const fg = computeForeground(img, o);
@@ -413,12 +690,31 @@ export function processImage(img, opts = {}) {
   for (let i = 0; i < N; i++) fgCount += fg[i];
   if (!fgCount) throw new Error('No se encontró contenido en la imagen (¿todo es fondo?).');
 
-  const k = o.colors > 0 ? o.colors : estimateColorCount(img, fg);
-  const centers = kmeans(img, fg, k);
-  let labels = assignLabels(img, fg, centers);
+  const flat = flatMask(img, fg);
+  let flatCount = 0;
+  for (let i = 0; i < N; i++) flatCount += flat[i];
+  const sample = flatCount > Math.max(500, fgCount * 0.15) ? flat : fg;
+  const lab = new Float32Array(N * 3);
+  for (let i = 0; i < N; i++) if (fg[i]) toLab(img.data[i * 4], img.data[i * 4 + 1], img.data[i * 4 + 2], lab, i * 3);
+
+  const k = o.colors > 0 ? o.colors : estimateColorCount(img, sample);
+  let centers = kmeansVec(lab, sample, k);
+  // auto mode: drop near-duplicate clusters (ΔE < 8) that only come from semi-transparent/noisy pixels
+  if (!(o.colors > 0) && centers.length > 1) {
+    const keep = [];
+    for (const c of centers) if (!keep.some((q) => (q[0] - c[0]) ** 2 + (q[1] - c[1]) ** 2 + (q[2] - c[2]) ** 2 < 64)) keep.push(c);
+    centers = keep;
+  }
+  let labels = assignLabels(lab, fg, flat, centers);
+  // edge pixels are blends in sRGB, so their split between two colours (and the background) is decided in RGB
+  const rgb = new Float32Array(N * 3);
+  for (let i = 0; i < N; i++) { rgb[i * 3] = img.data[i * 4]; rgb[i * 3 + 1] = img.data[i * 4 + 1]; rgb[i * 3 + 2] = img.data[i * 4 + 2]; }
+  const rgbC = clusterMeans(rgb, labels, flat, centers.length);
+  assignLabels(rgb, fg, flat, rgbC, 400, { labels });
+  if (fg.bg) peelBackground(labels, rgb, rgbC, fg.bg, W, H);
   labels = modeFilter(labels, W, H, centers.length);
 
-  const minArea = o.minArea > 0 ? o.minArea : Math.max(12, Math.round(fgCount * 0.00015));
+  const minArea = o.minArea > 0 ? o.minArea * sc * sc : Math.max(12, Math.round(fgCount * 0.00015));
   let comp, comps;
   for (let iter = 0; ; iter++) {
     ({ comp, comps } = labelComponents(labels, W, H));
@@ -430,8 +726,17 @@ export function processImage(img, opts = {}) {
   for (const c of comps) clusterArea[c.label] += c.area;
   const order = clusterArea.map((a, i) => i).filter((i) => clusterArea[i] > 0).sort((a, b) => clusterArea[b] - clusterArea[a]);
   const remap = new Map(order.map((old, idx) => [old, idx]));
+  // palette colour = mean RGB of the clean (flat) pixels of each cluster
+  const accF = centers.map(() => [0, 0, 0, 0]), accA = centers.map(() => [0, 0, 0, 0]);
+  for (let i = 0; i < N; i++) {
+    const l = labels[i];
+    if (l < 0) continue;
+    const t = flat[i] ? accF[l] : accA[l];
+    t[0] += img.data[i * 4]; t[1] += img.data[i * 4 + 1]; t[2] += img.data[i * 4 + 2]; t[3]++;
+  }
   const palette = order.map((i) => {
-    const [r, g, b] = centers[i].map((v) => Math.round(v));
+    const a = accF[i][3] >= 4 ? accF[i] : accA[i];
+    const [r, g, b] = [0, 1, 2].map((c) => Math.round(a[c] / Math.max(1, a[3])));
     return { r, g, b, hex: rgbToHex(r, g, b), area: clusterArea[i] };
   });
 
@@ -488,11 +793,11 @@ export function processImage(img, opts = {}) {
       depth: Math.max(0, depth[id]),
       level: level[id],
       neighbors: [...adj[id]],
-      shapes: buildShapes(raw, o.detail, o.smooth),
+      shapes: buildShapes(raw, o.detail, o.smooth, sc),
     };
   });
 
-  return { width: W, height: H, comp, palette, pieces, fgBBox: [fx0, fy0, fx1 + 1, fy1 + 1], options: o };
+  return { width: W, height: H, upscale: sc, comp, palette, pieces, fgBBox: [fx0, fy0, fx1 + 1, fy1 + 1], options: o };
 }
 
 // Solid silhouette of all pieces, dilated by marginPx (for base plate).
