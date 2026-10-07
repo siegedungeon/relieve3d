@@ -111,6 +111,16 @@ for (const [name, set] of Object.entries(cases)) {
   const h = buildFeatures(r, cases.micHeart3D, { scale, center });
   assert(!h.layers.some((l) => l.key === 'tongue' || l.key === 'baseLow'), 'no magnets/tongue with body');
 }
+// cookie cutter: stamp printed beside the cutter, not taller than the blade
+{
+  const f = buildFeatures(r, cases.cutter, { scale, center });
+  const wall = f.layers.find((l) => l.key === 'cutterWall'), sb = f.layers.find((l) => l.key === 'stampBase');
+  assert(wall && sb, 'cutter wall + stamp base');
+  const xs = (L) => L.shapes.flatMap((s) => s.outer.map((p) => p[0]));
+  assert(Math.min(...xs(sb)) > Math.max(...xs(wall)), 'stamp beside the cutter');
+  const off = buildFeatures(r, S({ cutter: { enabled: true, stamp: false } }), { scale, center });
+  assert(!off.layers.some((l) => l.key.startsWith('stamp')), 'stamp can be disabled');
+}
 assert(Math.abs(pencilAcross({ type: 'round', measure: 'circumference', value: Math.PI * 7 }) - 7) < 1e-9);
 // keychain extras
 {

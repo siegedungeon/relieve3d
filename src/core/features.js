@@ -24,7 +24,9 @@ export const DEFAULT_SETTINGS = () => ({
   tongue: { enabled: false, width: 14, length: 18, thickness: 2 },
   sticks: { enabled: false, count: 2, length: 70, width: 5, tip: true, bar: false, barHeight: 4, thickness: 3 },
   pencil: { enabled: false, type: 'hex', measure: 'diameter', value: 7, tolerance: 0.4, wall: 1.6, mount: 'side', length: 0, ends: 'closed-right', offset: 0, filament: null },
-  cutter: { enabled: false, wall: 1, height: 14, flange: 4, flangeT: 1.6, offset: 0 },
+  cutter: { enabled: false, wall: 1, height: 14, flange: 4, flangeT: 1.6, offset: 0,
+    // embosser that fits inside the cutter and prints the design onto the dough (printed beside the cutter, relief up)
+    mirror: true, stamp: true, stampClear: 0.6, stampBase: 3, stampRelief: 2.5, stampBold: 0.2, stampSource: 'auto' },
   micBody: DEFAULT_BODY(),
 });
 
@@ -225,14 +227,75 @@ export function buildFeatures(result, settings, opts) {
   };
   // ---- cookie cutter: replaces everything else
   if (cut) {
-    const C = set.cutter;
+    const C = { ...DEFAULT_SETTINGS().cutter, ...set.cutter };
+    // palette cluster of every grid cell (for the stamp relief)
+    let cl = new Int16Array(N).fill(-1);
+    for (let y = 0; y < GH; y++) {
+      const iy = Math.floor(oy + (y + 0.5) * k);
+      if (iy < 0 || iy >= H) continue;
+      for (let x = 0; x < GW; x++) {
+        const i = y * GW + x;
+        if (!fg[i]) continue;
+        const c = comp[iy * W + Math.floor(ox + (x + 0.5) * k)];
+        if (c >= 0) cl[i] = result.pieces[c].cluster;
+      }
+    }
+    // cutter and stamp are flipped over to use them: print them mirrored so the cookie reads the right way round
+    if (C.mirror) {
+      const s2 = gx(fb[0]) + gx(fb[2]) - 1;
+      const flip = (m, empty) => { const o = new m.constructor(N).fill(empty); for (let y = 0; y < GH; y++) for (let x = 0; x < GW; x++) { const xm = Math.round(s2 - x); if (xm >= 0 && xm < GW) o[y * GW + xm] = m[y * GW + x]; } return o; };
+      fg.set(flip(fg, 0)); cl = flip(cl, -1);
+    }
     const inner = fillHoles(dilate(fg, GW, GH, gmm(C.offset)), GW, GH);
     const wall = subtract(dilate(inner, GW, GH, gmm(C.wall)), inner);
     const flange = subtract(dilate(inner, GW, GH, gmm(C.wall + C.flange)), inner);
     layers.push({ key: 'cutterFlange', name: 'Pestaña', fil: 'base', shapes: trace(flange), z: 0, height: C.flangeT });
     layers.push({ key: 'cutterWall', name: 'Filo cortador', fil: 'base', shapes: trace(wall), z: 0, height: C.height });
     if (C.wall < 0.8) warnings.push('Pared del cortador muy delgada (< 0.8 mm).');
+    if (C.stamp) buildStamp(C, inner, flange, cl);
     return finish();
+  }
+
+  // Embosser: plate = cutter opening minus clearance; relief = design details (mirrored so the cookie reads right).
+  function buildStamp(C, inner, flange, cl) {
+    const plate = removeSmall(erode(inner, GW, GH, gmm(Math.max(0.1, C.stampClear))), GW, GH, 4);
+    if (!countOn(plate)) { warnings.push('El sello no cabe: reduce la holgura.'); return; }
+    const area = new Map();
+    for (let i = 0; i < N; i++) if (cl[i] >= 0) area.set(cl[i], (area.get(cl[i]) || 0) + 1);
+    // auto: drop the dominant colour (the "paper") and the colour of the outer rim (sticker border)
+    const edge = subtract(fg, erode(fg, GW, GH, gmm(0.8))), rimVotes = new Map();
+    for (let i = 0; i < N; i++) if (edge[i] && cl[i] >= 0) rimVotes.set(cl[i], (rimVotes.get(cl[i]) || 0) + 1);
+    const byArea = [...area.keys()].sort((a, b) => area.get(b) - area.get(a));
+    const rim = [...rimVotes.keys()].sort((a, b) => rimVotes.get(b) - rimVotes.get(a))[0];
+    let keep = byArea.filter((c) => c !== byArea[0] && c !== rim);
+    if (!keep.length) keep = byArea.slice(1);
+    const keepSet = new Set(keep);
+    let relief = new Uint8Array(N);
+    const src = C.stampSource;
+    if (src !== 'lines') for (let i = 0; i < N; i++) if (keepSet.has(cl[i])) relief[i] = 1;
+    if (src === 'lines' || src === 'both' || !keep.length) {
+      // borders between colours (and the design outline) as raised lines
+      const ln = new Uint8Array(N);
+      for (let y = 1; y < GH - 1; y++) for (let x = 1; x < GW - 1; x++) {
+        const i = y * GW + x;
+        if (cl[i] >= 0 && (cl[i - 1] !== cl[i] || cl[i + 1] !== cl[i] || cl[i - GW] !== cl[i] || cl[i + GW] !== cl[i])) ln[i] = 1;
+      }
+      relief = union(relief, dilate(ln, GW, GH, gmm(0.35)));
+    }
+    if (C.stampBold > 0) relief = dilate(relief, GW, GH, gmm(C.stampBold));
+    // keep the relief off the very edge of the stamp so the plate rim stays clean
+    const safe = erode(plate, GW, GH, gmm(0.8));
+    for (let i = 0; i < N; i++) relief[i] = relief[i] && safe[i] ? 1 : 0;
+    relief = removeSmall(relief, GW, GH, Math.max(4, gmm(0.6) ** 2));
+    if (!countOn(relief)) warnings.push('El sello no tiene detalles en relieve: prueba "Relieve: bordes entre colores".');
+    const pm = plate, rm = relief;
+    // printed next to the cutter
+    const fb2 = maskBBox(flange, GW, GH), pb = maskBBox(pm, GW, GH);
+    const dx = (fb2[2] - pb[0]) * k + mm(8);
+    const shift = (shapes) => shapes.map((sh) => ({ outer: sh.outer.map(([x, y]) => [x + dx, y]), holes: sh.holes.map((h) => h.map(([x, y]) => [x + dx, y])) }));
+    layers.push({ key: 'stampBase', name: 'Sello (base)', fil: 'base', shapes: shift(trace(pm)), z: 0, height: C.stampBase });
+    if (countOn(rm)) layers.push({ key: 'stampRelief', name: 'Sello (relieve)', fil: 'base', shapes: shift(trace(rm)), z: C.stampBase, height: C.stampRelief });
+    if (C.stampRelief + C.stampBase > C.height - 1) warnings.push('El sello es más alto que el filo: baja el relieve o la base del sello.');
   }
 
   // ---- base body

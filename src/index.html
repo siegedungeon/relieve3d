@@ -462,6 +462,15 @@
         <label class="row">Ancho pestaña (mm) <input inputmode="decimal" type="text" data-set="cutter.flange" /></label>
         <label class="row">Grosor pestaña (mm) <input inputmode="decimal" type="text" data-set="cutter.flangeT" data-min="0.4" /></label>
         <label class="row">Desplazar contorno (mm) <input inputmode="decimal" type="text" data-set="cutter.offset" /></label>
+        <label class="chk" title="El cortador y el sello se voltean al usarlos: se imprimen en espejo para que la galleta quede al derecho"><input type="checkbox" data-set="cutter.mirror" /> Espejar (la galleta sale al derecho)</label>
+        <h4><label class="chk"><input type="checkbox" data-set="cutter.stamp" /> Sello / marcador interior</label></h4>
+        <div data-when="cutter.stamp=true">
+          <label class="row">Relieve <select data-set="cutter.stampSource"><option value="auto">Detalles del diseño</option><option value="lines">Bordes entre colores</option><option value="both">Detalles + bordes</option></select></label>
+          <label class="row">Holgura con el filo (mm) <input inputmode="decimal" type="text" data-set="cutter.stampClear" data-min="0.1" /></label>
+          <label class="row">Grosor base sello (mm) <input inputmode="decimal" type="text" data-set="cutter.stampBase" data-min="1" /></label>
+          <label class="row">Alto del relieve (mm) <input inputmode="decimal" type="text" data-set="cutter.stampRelief" data-min="0.4" /></label>
+          <label class="row">Engrosar relieve (mm) <input inputmode="decimal" type="text" data-set="cutter.stampBold" /></label>
+        </div>
       </section>
 
       <label class="chk show-all"><input type="checkbox" id="showAllCards" /> Mostrar todas las opciones</label>

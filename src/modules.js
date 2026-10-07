@@ -58,7 +58,7 @@ export const MODULES = [
   },
   {
     id: 'cutter', group: '3d', icon: '🍪', title: 'Cortador de galletas', source: 'image',
-    desc: 'Filo con pestaña a partir de la silueta del diseño.',
+    desc: 'Filo con pestaña a partir de la silueta del diseño + sello interior con el diseño en relieve.',
     cards: ['cutter'],
     patch: { widthMM: 70, cutter: { enabled: true } },
   },

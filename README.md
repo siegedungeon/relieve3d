@@ -42,7 +42,7 @@ Al abrir aparece una **pantalla de inicio** para elegir qué crear (botón **Ini
 | Topper de pitillo / Stanley | Figura con funda que encaja en el pitillo |
 | Placa para mascota | Nombre + teléfono con argolla para collar |
 | Letrero / placa | Placa con agujeros o imanes |
-| Cortador de galletas | Filo y pestaña a partir de la silueta |
+| Cortador de galletas | Filo y pestaña a partir de la silueta + sello/marcador interior con el diseño en relieve (impreso al lado, holgura 0,6 mm, espejado para que la galleta salga al derecho) |
 
 Los módulos de texto usan las fuentes más populares y las instaladas en el equipo, con contorno/bordeado opcional.
 
