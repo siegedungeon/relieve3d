@@ -5,6 +5,7 @@ import { edt, dilate, close, fillHoles, fillSmallHoles, components, connectIslan
 import { renderTextImage, ensureFont, BUNDLED_FONTS } from './core/text.js';
 import { CAKE_PRESETS } from './modules.js';
 import { imageReady } from './core/imageload.js';
+import { thickenLabels, strokeWidth } from './core/thicken.js';
 
 const BORDER = 200, SIL = 201, STICK = 202;   // special labels in the composite raster
 const fmt = (v) => String(Math.round(v * 100) / 100);
@@ -20,8 +21,10 @@ export const STUDIO_DEFAULTS = (mode) => ({
   source: null,                    // { kind: 'image'|'text', dataURL, name }
   quant: { colors: 4, removeBg: 'auto', tolerance: 40, minArea: 0 },
   palette: [],                     // [{ hex, out, mode: 'keep'|'transparent'|'merge', mergeTo, thicken }]
-  elements: [],                    // [{ id, kind: 'image'|'text', group, text, font, weight, color, x, y, scale, rot, hidden }]
+  elements: [],                    // [{ id, kind: 'image'|'text', group, text, font, weight, color, x, y, scale, rot, hidden, thicken, spread, keepHoles }]
   groupGap: 1.5,                   // mm: parts closer than this form one element
+  autoLayout: true,                // move the other elements away when one is thickened
+  strokeTarget: 1.2,               // mm: target stroke for "Ajustar trazo"
   widthMM: mode === 'cakelaser' ? 140 : 60,
   thicken: 0,
   border: { enabled: mode !== 'cakelaser', color: '#6d28d9', mm: 1.2, fillHoles: false },
@@ -180,6 +183,7 @@ export class Studio {
         <section class="card grow">
           <h3>Elementos <small class="muted">reorganiza las partes</small></h3>
           <label class="row">Agrupar partes a menos de (mm) <input ${N} data-s="groupGap" /></label>
+          <label class="row">Reacomodar al engrosar <input type="checkbox" data-s="autoLayout" /></label>
           <div data-r="elements" class="st-elements"></div>
           <button class="btn wide" data-a="addText">＋ Añadir texto</button>
           <div data-r="elProps" class="st-props" hidden>
@@ -191,6 +195,15 @@ export class Studio {
             </div>
             <label class="row">Escala (%) <input ${N} data-e="scale" /></label>
             <label class="row">Rotación (°) <input ${N} data-e="rot" data-allowneg="1" /></label>
+            <div class="st-thick">
+              <h4>Engrosar este elemento</h4>
+              <label class="row">Engrosar (mm) <input ${N} data-e="thicken" /></label>
+              <label class="row">Al engrosar <select data-e="spread"><option value="auto">Automático</option><option value="letters">Separar letras y líneas</option><option value="none">Crecer en su lugar</option></select></label>
+              <label class="row">Conservar huecos (o, a, e…) <input type="checkbox" data-e="keepHoles" /></label>
+              <div class="muted small" data-r="strokeInfo"></div>
+              <label class="row">Trazo deseado (mm) <input ${N} data-s="strokeTarget" data-min="0.2" /></label>
+              <button class="btn wide" data-a="fitStroke">✚ Ajustar al trazo deseado</button>
+            </div>
             <div class="quick">
               <button class="chip" data-a="front">⬆ Al frente</button>
               <button class="chip" data-a="back">⬇ Atrás</button>
@@ -244,6 +257,7 @@ export class Studio {
       else if (a === 'front' || a === 'back') this.reorder(a === 'front' ? 1 : -1);
       else if (a === 'center') this.centerSel();
       else if (a === 'del') this.deleteSel();
+      else if (a === 'fitStroke') this.fitStroke();
       else if (exp) { r.querySelectorAll('.menu').forEach((m) => m.classList.remove('open')); this.export(exp); }
       else if (to3d) { r.querySelectorAll('.menu').forEach((m) => m.classList.remove('open')); this.sendTo3D(to3d); }
       else if (src) this.setSource(src);
@@ -293,18 +307,19 @@ export class Studio {
       const e = this.selEl();
       if (!e) return;
       const k = el.dataset.e;
-      let v = el.value;
-      if (k === 'scale' || k === 'rot') { v = parseNum(v); if (!Number.isFinite(v)) return; if (k === 'scale') v = Math.max(5, v) / 100; }
+      let v = el.type === 'checkbox' ? el.checked : el.value;
+      if (k === 'scale' || k === 'rot' || k === 'thicken') { v = parseNum(v); if (!Number.isFinite(v)) return; if (k === 'scale') v = Math.max(5, v) / 100; if (k === 'thicken') v = Math.max(0, Math.min(10, v)); }
       e[k] = v;
       clearTimeout(et); et = setTimeout(() => this.changed(), el.tagName === 'TEXTAREA' ? 350 : 0);
     }));
     r.querySelectorAll('input[type="text"]').forEach((el) => el.addEventListener('keydown', (e) => { if (e.key === 'Enter') el.blur(); }));
     this.$('palette').addEventListener('change', (e) => {
       const i = +e.target.closest('[data-pal]').dataset.pal, p = this.st.palette[i];
+      const wasT = p.mode === 'transparent';
       if (e.target.type === 'color') p.out = e.target.value;
       else if (e.target.dataset.pm === 'mode') { const v = e.target.value; if (v.startsWith('m')) { p.mode = 'merge'; p.mergeTo = +v.slice(1); } else p.mode = v; }
       else if (e.target.dataset.pm === 'thicken') { const v = parseNum(e.target.value); p.thicken = Number.isFinite(v) ? Math.max(0, v) : 0; }
-      this.changed();
+      this.changed(wasT !== (p.mode === 'transparent') ? 'regroup' : null);
     });
     window.addEventListener('keydown', (e) => {
       if (this.root.hidden) return;
@@ -415,7 +430,9 @@ export class Studio {
     const r = this.result;
     if (!r) return;
     const W = r.width, H = r.height, L = this.sourceLabels();
-    const fg = Uint8Array.from(L, (v) => (v >= 0 ? 1 : 0));
+    // colours set to "Quitar" don't hold parts together (e.g. a white sticker base behind the logo)
+    const P = this.st.palette;
+    const fg = Uint8Array.from(L, (v) => (v >= 0 && P[v]?.mode !== 'transparent' ? 1 : 0));
     const ppm = this.ppmSource();
     const gapPx = Math.max(1, (this.st.groupGap * ppm) / 2);
     const grown = dilate(fg, W, H, gapPx);
@@ -439,11 +456,16 @@ export class Studio {
       return { id: gi, minX, minY, maxX: maxX + 1, maxY: maxY + 1, canvas: cv };
     }).filter(Boolean);
     const texts = this.st.elements.filter((e) => e.kind === 'text');
-    const old = new Map(this.st.elements.filter((e) => e.kind === 'image').map((e) => [e.group, e]));
+    const olds = this.st.elements.filter((e) => e.kind === 'image');
+    const used = new Set();
     let nid = Math.max(0, ...this.st.elements.map((e) => e.id)) + 1;
     const imgs = this.groups.map((g) => {
-      const o = !resetElements && old.get(g.id);
-      return o ? { ...o, w: g.maxX - g.minX, h: g.maxY - g.minY } : { id: nid++, kind: 'image', group: g.id, x: g.minX, y: g.minY, w: g.maxX - g.minX, h: g.maxY - g.minY, scale: 1, rot: 0, hidden: false };
+      const w = g.maxX - g.minX, h = g.maxY - g.minY;
+      // keep an existing element only if it is the same part (same place & size in the source)
+      const o = !resetElements && olds.find((e) => !used.has(e) && Math.abs(e.w - w) <= 2 && Math.abs(e.h - h) <= 2
+        && (e.srcX == null ? e.group === g.id : Math.abs(e.srcX - g.minX) <= 2 && Math.abs(e.srcY - g.minY) <= 2));
+      if (o) { used.add(o); return { ...o, group: g.id, w, h, srcX: g.minX, srcY: g.minY }; }
+      return { id: nid++, kind: 'image', group: g.id, x: g.minX, y: g.minY, w, h, srcX: g.minX, srcY: g.minY, scale: 1, rot: 0, hidden: false };
     });
     this.st.elements = [...imgs, ...texts];
     if (this.sel != null && !this.st.elements.some((e) => e.id === this.sel)) this.sel = null;
@@ -453,7 +475,7 @@ export class Studio {
   ppmSource() {
     const r = this.result;
     if (!r) return 10;
-    const b = this.layoutBBox() || r.fgBBox;
+    const b = this.layoutBBox('base') || r.fgBBox;
     return Math.max(0.5, (b[2] - b[0]) / Math.max(1, this.st.widthMM));
   }
   ppm() { return this.ppmSource(); }
@@ -488,24 +510,110 @@ export class Studio {
     return cv;
   }
 
-  // transformed bbox (source px) of an element
-  elQuad(e) {
-    const cx = e.x + e.w / 2, cy = e.y + e.h / 2, a = (e.rot * Math.PI) / 180, s = e.scale;
+  // transformed bbox (source px) of an element.
+  // which: 'base' = untouched element, 'grown' = after thickening, default = after thickening + auto-layout shift
+  elQuad(e, which) {
+    const r = which === 'base' ? null : this.elRender(e);
+    const [sx, sy] = which ? [0, 0] : this.shiftOf(e);
+    const cx = e.x + e.w / 2 + sx, cy = e.y + e.h / 2 + sy, a = (e.rot * Math.PI) / 180, s = e.scale;
     const co = Math.cos(a) * s, si = Math.sin(a) * s;
-    return [[-e.w / 2, -e.h / 2], [e.w / 2, -e.h / 2], [e.w / 2, e.h / 2], [-e.w / 2, e.h / 2]].map(([u, v]) => [cx + u * co - v * si, cy + u * si + v * co]);
+    const u0 = (r ? r.x0 : 0) - e.w / 2, v0 = (r ? r.y0 : 0) - e.h / 2, u1 = u0 + (r ? r.w : e.w), v1 = v0 + (r ? r.h : e.h);
+    return [[u0, v0], [u1, v0], [u1, v1], [u0, v1]].map(([u, v]) => [cx + u * co - v * si, cy + u * si + v * co]);
   }
-  layoutBBox() {
+  layoutBBox(which) {
     let b = null;
     for (const e of this.st.elements) {
       if (e.hidden || !e.w) continue;
-      for (const [x, y] of this.elQuad(e)) b = b ? [Math.min(b[0], x), Math.min(b[1], y), Math.max(b[2], x), Math.max(b[3], y)] : [x, y, x, y];
+      for (const [x, y] of this.elQuad(e, which)) b = b ? [Math.min(b[0], x), Math.min(b[1], y), Math.max(b[2], x), Math.max(b[3], y)] : [x, y, x, y];
     }
     return b;
+  }
+  shiftOf(e) { return this._shift?.get(e.id) || [0, 0]; }
+
+  // label raster (palette index, -1 empty) of a palette-encoded canvas
+  canvasLabels(cv) {
+    const d = cv.getContext('2d', { willReadFrequently: true }).getImageData(0, 0, cv.width, cv.height).data;
+    const L = new Int16Array(cv.width * cv.height).fill(-1);
+    for (let i = 0; i < L.length; i++) if (d[i * 4 + 3] >= 128) L[i] = Math.round(d[i * 4] / 20) - 1;
+    return L;
+  }
+
+  // Element as drawn: { canvas, x0, y0, w, h } in element units (the untouched element spans 0..e.w × 0..e.h).
+  elRender(e) {
+    const src = this.elementCanvas(e);
+    if (!src || (e.kind === 'text' && !src.ready)) return null;
+    if (!(e.thicken > 0) || !src.width) return { canvas: src, x0: 0, y0: 0, w: e.w, h: e.h };
+    const k = e.w / src.width;                                 // element units per canvas px
+    const rpx = (e.thicken * this.ppmSource()) / (e.scale * k);
+    const key = [rpx.toFixed(2), e.spread || 'auto', e.keepHoles !== false, e.kind === 'text'].join('|');
+    this._thk = this._thk || new WeakMap();
+    const c = this._thk.get(src);
+    if (c && c.key === key) return { ...c.r, x0: c.r.x0 * k, y0: c.r.y0 * k, w: c.r.w * k, h: c.r.h * k };
+    const mode = e.spread === 'letters' || e.spread === 'none' ? e.spread : e.kind === 'text' ? 'letters' : 'auto';
+    const t = thickenLabels(this.canvasLabels(src), src.width, src.height, rpx, { mode, keepHoles: e.keepHoles !== false });
+    const cv = document.createElement('canvas'); cv.width = t.W; cv.height = t.H;
+    const cx = cv.getContext('2d'), im = cx.createImageData(t.W, t.H);
+    for (let i = 0; i < t.L.length; i++) if (t.L[i] >= 0) { im.data[i * 4] = (t.L[i] + 1) * 20; im.data[i * 4 + 3] = 255; }
+    cx.putImageData(im, 0, 0);
+    const r = { canvas: cv, x0: -t.ox, y0: -t.oy, w: t.W, h: t.H, spread: t.spread };
+    this._thk.set(src, { key, r });
+    return { ...r, x0: r.x0 * k, y0: r.y0 * k, w: r.w * k, h: r.h * k };
+  }
+
+  // Stroke width (mm) of the thinnest typical parts of the untouched element.
+  strokeMM(e) {
+    const src = this.elementCanvas(e);
+    if (!src || !src.width || (e.kind === 'text' && !src.ready)) return 0;
+    this._stroke = this._stroke || new WeakMap();
+    if (!this._stroke.has(src)) this._stroke.set(src, strokeWidth(this.canvasLabels(src), src.width, src.height));
+    return (this._stroke.get(src) * (e.w / src.width) * e.scale) / this.ppmSource();
+  }
+  fitStroke() {
+    const e = this.selEl();
+    if (!e) return;
+    const s = this.strokeMM(e);
+    if (!(s > 0)) return;
+    e.thicken = Math.max(0, Math.round(((this.st.strokeTarget || 1.2) - s) * 50) / 100);
+    if (!e.thicken) this.cb.toast(`El trazo ya mide ${fmt(s)} mm (≥ ${fmt(this.st.strokeTarget)} mm).`);
+    this.changed();
+  }
+
+  // Auto-layout: when elements grow, the ones below / to the right move so the original gaps are kept.
+  computeShifts() {
+    const sh = new Map();
+    this._shift = sh;
+    const els = this.st.elements.filter((e) => !e.hidden && e.w);
+    if (this.st.autoLayout === false || !els.some((e) => e.thicken > 0)) return;
+    const box = (q) => [Math.min(...q.map((p) => p[0])), Math.min(...q.map((p) => p[1])), Math.max(...q.map((p) => p[0])), Math.max(...q.map((p) => p[1]))];
+    const B = els.map((e) => box(this.elQuad(e, 'base'))), G = els.map((e) => box(this.elQuad(e, 'grown')));
+    const n = els.length, d = [new Float64Array(n), new Float64Array(n)];
+    const ov = (a0, a1, b0, b1) => Math.min(a1, b1) - Math.max(a0, b0);
+    for (const ax of [1, 0]) {                       // vertical first (stacked lines), then horizontal
+      const o = 1 - ax, ord = [...Array(n).keys()].sort((a, b) => B[a][ax] - B[b][ax]);
+      for (const j of ord) for (const i of ord) {
+        if (i === j || !(B[i][ax] < B[j][ax])) continue;
+        const tol = 0.25 * Math.min(B[i][ax + 2] - B[i][ax], B[j][ax + 2] - B[j][ax]);
+        if (B[i][ax + 2] > B[j][ax] + tol || ov(B[i][o], B[i][o + 2], B[j][o], B[j][o + 2]) <= 0) continue;
+        // use up to half of the free space that was already there before pushing
+        const gap = Math.max(0, B[j][ax] - B[i][ax + 2]) / 2;
+        d[ax][j] = Math.max(d[ax][j], d[ax][i] + (G[i][ax + 2] - B[i][ax + 2]) + (B[j][ax] - G[j][ax]) - gap);
+      }
+    }
+    // keep the whole design centred where it was
+    let u = null, g = null;
+    els.forEach((e, i) => {
+      const b = B[i], q = [G[i][0] + d[0][i], G[i][1] + d[1][i], G[i][2] + d[0][i], G[i][3] + d[1][i]];
+      u = u ? [Math.min(u[0], b[0]), Math.min(u[1], b[1]), Math.max(u[2], b[2]), Math.max(u[3], b[3])] : b.slice();
+      g = g ? [Math.min(g[0], q[0]), Math.min(g[1], q[1]), Math.max(g[2], q[2]), Math.max(g[3], q[3])] : q;
+    });
+    const cx = (g[0] + g[2] - u[0] - u[2]) / 2, cy = (g[1] + g[3] - u[1] - u[3]) / 2;
+    els.forEach((e, i) => { const x = d[0][i] - cx, y = d[1][i] - cy; if (Math.abs(x) > 1e-6 || Math.abs(y) > 1e-6) sh.set(e.id, [x, y]); });
   }
 
   // ------------------------------------------------------------------ composite pipeline
   compute() {
     const st = this.st;
+    this.computeShifts();
     const lb = this.layoutBBox();
     if (!this.result || !lb) { this.comp = null; this.updateStatus(); return; }
     const ppm0 = this.ppmSource();
@@ -526,13 +634,14 @@ export class Studio {
     cx.imageSmoothingEnabled = false;
     for (const e of st.elements) {
       if (e.hidden || !e.w) continue;
-      const src = this.elementCanvas(e);
-      if (!src || (e.kind === 'text' && !src.ready)) continue;
+      const rr = this.elRender(e);
+      if (!rr) continue;
+      const [sx, sy] = this.shiftOf(e);
       cx.setTransform(1, 0, 0, 1, 0, 0);
-      cx.translate((e.x + e.w / 2 - ox) * f, (e.y + e.h / 2 - oy) * f);
+      cx.translate((e.x + e.w / 2 + sx - ox) * f, (e.y + e.h / 2 + sy - oy) * f);
       cx.rotate((e.rot * Math.PI) / 180);
       cx.scale(e.scale * f, e.scale * f);
-      cx.drawImage(src, -e.w / 2, -e.h / 2, e.w, e.h);
+      cx.drawImage(rr.canvas, rr.x0 - e.w / 2, rr.y0 - e.h / 2, rr.w, rr.h);
     }
     const d = cx.getImageData(0, 0, W, H).data;
     const N = W * H, L = new Int16Array(N).fill(-1);
@@ -711,12 +820,13 @@ export class Studio {
       // live preview while dragging: draw elements directly
       for (const e of this.st.elements) {
         if (e.hidden || !e.w) continue;
-        const src = this.elementCanvas(e);
-        if (!src) continue;
+        const rr = this.elRender(e);
+        if (!rr) continue;
+        const [sx, sy] = this.shiftOf(e);
         ctx.save();
-        ctx.translate(e.x + e.w / 2, e.y + e.h / 2); ctx.rotate((e.rot * Math.PI) / 180); ctx.scale(e.scale, e.scale);
+        ctx.translate(e.x + e.w / 2 + sx, e.y + e.h / 2 + sy); ctx.rotate((e.rot * Math.PI) / 180); ctx.scale(e.scale, e.scale);
         ctx.globalAlpha = 0.85;
-        ctx.drawImage(src, -e.w / 2, -e.h / 2, e.w, e.h);
+        ctx.drawImage(rr.canvas, rr.x0 - e.w / 2, rr.y0 - e.h / 2, rr.w, rr.h);
         ctx.restore();
       }
     } else ctx.drawImage(c.canvas, c.ox, c.oy, c.W / c.f, c.H / c.f);
@@ -739,14 +849,17 @@ export class Studio {
     for (let k = this.st.elements.length - 1; k >= 0; k--) {
       const e = this.st.elements[k];
       if (e.hidden || !e.w) continue;
-      const cx = e.x + e.w / 2, cy = e.y + e.h / 2, a = (-e.rot * Math.PI) / 180;
+      const rr = this.elRender(e);
+      if (!rr) continue;
+      const [sx, sy] = this.shiftOf(e);
+      const cx = e.x + e.w / 2 + sx, cy = e.y + e.h / 2 + sy, a = (-e.rot * Math.PI) / 180;
       const dx = x - cx, dy = y - cy;
-      const u = (dx * Math.cos(a) - dy * Math.sin(a)) / e.scale + e.w / 2, v = (dx * Math.sin(a) + dy * Math.cos(a)) / e.scale + e.h / 2;
-      if (u < 0 || v < 0 || u >= e.w || v >= e.h) continue;
-      const src = this.elementCanvas(e);
-      try { if (src.getContext('2d').getImageData(Math.floor(u), Math.floor(v), 1, 1).data[3] > 0) return e; } catch { /* ignore */ }
+      const u = (dx * Math.cos(a) - dy * Math.sin(a)) / e.scale + e.w / 2 - rr.x0, v = (dx * Math.sin(a) + dy * Math.cos(a)) / e.scale + e.h / 2 - rr.y0;
+      if (u < 0 || v < 0 || u >= rr.w || v >= rr.h) continue;
+      const src = rr.canvas, kx = src.width / rr.w, ky = src.height / rr.h;
+      try { if (src.getContext('2d').getImageData(Math.floor(u * kx), Math.floor(v * ky), 1, 1).data[3] > 0) return e; } catch { /* ignore */ }
       // allow grabbing inside the box for thin shapes
-      if (e.w * e.scale * this.view.s < 60 || e.h * e.scale * this.view.s < 60) return e;
+      if (rr.w * e.scale * this.view.s < 60 || rr.h * e.scale * this.view.s < 60) return e;
     }
     return null;
   }
@@ -802,7 +915,8 @@ export class Studio {
     const st = this.st;
     this.$('elements').innerHTML = st.elements.map((e, i) => {
       const label = e.kind === 'text' ? `✍️ ${esc(String(e.text).split('\n')[0].slice(0, 22))}` : `🧩 Parte ${i + 1}`;
-      return `<div class="st-el ${e.id === this.sel ? 'active' : ''} ${e.hidden ? 'off' : ''}" data-el="${e.id}"><span>${label}</span><button class="eye" data-ea="eye" title="Mostrar / ocultar">${e.hidden ? '◌' : '👁'}</button></div>`;
+      const badge = e.thicken > 0 ? ` <small class="muted">+${fmt(e.thicken)} mm</small>` : '';
+      return `<div class="st-el ${e.id === this.sel ? 'active' : ''} ${e.hidden ? 'off' : ''}" data-el="${e.id}"><span>${label}${badge}</span><button class="eye" data-ea="eye" title="Mostrar / ocultar">${e.hidden ? '◌' : '👁'}</button></div>`;
     }).join('') || '<div class="empty-note">Sin elementos</div>';
     const e = this.selEl();
     this.$('elProps').hidden = !e;
@@ -810,6 +924,14 @@ export class Studio {
     this.$('elText').hidden = e.kind !== 'text';
     const set = (k, v) => { const el = this.root.querySelector(`[data-e="${k}"]`); if (el !== document.activeElement) el.value = v; };
     set('scale', fmt(e.scale * 100)); set('rot', fmt(e.rot));
+    set('thicken', fmt(e.thicken || 0)); set('spread', e.spread || 'auto');
+    this.root.querySelector('[data-e="keepHoles"]').checked = e.keepHoles !== false;
+    const sw = this.strokeMM(e), rr = e.thicken > 0 ? this.elRender(e) : null;
+    let info = sw > 0 ? `Trazo fino actual: <b>${fmt(sw)} mm</b>` : '';
+    if (sw > 0 && e.thicken > 0) info += ` → <b>${fmt(sw + 2 * e.thicken)} mm</b>`;
+    if (rr) info += rr.spread ? ' · letras separadas para no pegarse' : ' · crece en su lugar';
+    if (sw > 0 && sw + 2 * (e.thicken || 0) < 0.8) info += '<br>⚠️ Muy fino para imprimir en 3D (recomendado ≥ 0.8–1.2 mm).';
+    this.$('strokeInfo').innerHTML = info;
     if (e.kind === 'text') {
       set('text', e.text);
       const fs = this.root.querySelector('[data-e="font"]');
@@ -865,7 +987,7 @@ export class Studio {
   }
 
   paletteAction(i, act) {
-    if (act === 'del') { this.st.palette[i].mode = this.st.palette[i].mode === 'transparent' ? 'keep' : 'transparent'; this.changed(); }
+    if (act === 'del') { this.st.palette[i].mode = this.st.palette[i].mode === 'transparent' ? 'keep' : 'transparent'; this.changed('regroup'); }
   }
 
   // ------------------------------------------------------------------ inputs
@@ -924,12 +1046,15 @@ export class Studio {
   async restoreState(json) {
     const s = JSON.parse(json);
     const needProc = JSON.stringify([s.source?.dataURL, s.quant]) !== JSON.stringify([this.st.source?.dataURL, this.st.quant]);
+    const tKey = (x) => x.palette.map((p) => p.mode === 'transparent').join();
+    const needGroup = tKey(s) !== tKey(this.st);
     this.st = s;
     if (needProc) {
       const els = s.elements, pal = s.palette;
       await this.reprocess(false, false, false);
       this.st.elements = els; this.st.palette = pal;
-    }
+      this.regroup(false);
+    } else if (needGroup) this.regroup(false);
     this.compute(); this.draw(); this.syncInputs();
   }
   async undo() { if (this.hidx > 0) { this.hidx--; await this.restoreState(this.hist[this.hidx]); } }
@@ -951,6 +1076,7 @@ export class Studio {
     for (const e of els) if (e.kind === 'text') await ensureFont(e.font, e.weight || 700);
     await this.reprocess(false, false, false);
     this.st.elements = els; this.st.palette = pal;
+    this.regroup(false);
     this.compute(); this.fit(); this.syncInputs(); this.commit();
     this.cb.toast('Proyecto abierto');
   }

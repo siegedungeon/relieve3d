@@ -7,7 +7,7 @@
     "postinstall": "node scripts/vendor.mjs",
     "prestart": "node scripts/vendor.mjs",
     "start": "electron .",
-    "test": "node test/pipeline.test.mjs && node test/watertight.test.mjs && node test/features.test.mjs && node test/micbody.test.mjs && node test/elements.test.mjs && node test/accuracy.test.mjs",
+    "test": "node test/pipeline.test.mjs && node test/watertight.test.mjs && node test/features.test.mjs && node test/micbody.test.mjs && node test/elements.test.mjs && node test/accuracy.test.mjs && node test/thicken.test.mjs",
     "predist": "node scripts/vendor.mjs",
     "dist": "electron-builder --win nsis"
   },

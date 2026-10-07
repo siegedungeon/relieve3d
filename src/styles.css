@@ -202,6 +202,8 @@ textarea { width: 100%; font: inherit; font-size: 14px; padding: 6px 8px; border
 .st-el .eye { border: 0; background: transparent; color: var(--muted); }
 .st-props { border-top: 1px solid var(--border); margin-top: 8px; padding-top: 6px; }
 .st-props textarea { min-height: 44px; }
+.st-thick { border-top: 1px dashed var(--border); margin-top: 8px; padding-top: 4px; }
+.st-thick h4 { margin: 4px 0; }
 .studio .layout { grid-template-columns: 300px 1fr 280px; }
 .st-pal .num { display: none; }
 .st-hint { animation: r3dFade .6s 6s forwards; }
