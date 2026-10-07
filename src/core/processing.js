@@ -1,10 +1,12 @@
 // Image → color regions → pieces → vector loops (pure JS, no DOM).
+import { edt } from './raster.js';
 
 export const DEFAULT_PROC = {
   colors: 0,          // 0 = auto
   removeBg: 'auto',   // 'auto' | 'yes' | 'no'
   tolerance: 40,      // background color tolerance (RGB distance)
   minArea: 0,         // 0 = auto (px)
+  minWidth: 0,        // thinnest kept line (source px): 0 = auto, -1 = keep everything
   detail: 0.8,        // simplification epsilon (px)
   smooth: 1,          // chaikin iterations
   maxRes: 1000,       // max processing resolution (px)
@@ -319,6 +321,28 @@ function modeFilter(labels, W, H, k) {
     }
   }
   return out;
+}
+
+// Morphological opening per colour: pixels of a colour that sit in a part narrower than ~2r (thin outlines, fringes,
+// slivers along holes) are handed to the nearest colour (or background) that survives the opening.
+function removeThin(labels, W, H, k, rw) {
+  const r = rw + 0.5, N = W * H, m = new Uint8Array(N);
+  // pixels on either side of a colour change; distance to another colour ≈ distance to this set + 1
+  for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) {
+    const i = y * W + x, l = labels[i];
+    m[i] = (x > 0 && labels[i - 1] !== l) || (x < W - 1 && labels[i + 1] !== l) || (y > 0 && labels[i - W] !== l) || (y < H - 1 && labels[i + W] !== l) ? 1 : 0;
+  }
+  const din = edt(m, W, H);
+  for (let i = 0; i < N; i++) m[i] = labels[i] >= 0 && din[i] + 1 > r ? 1 : 0;      // eroded cores of every colour
+  // an eroded core of another colour is always farther than r, so the nearest core within r is our own colour
+  const dout = edt(m, W, H);
+  let any = false;
+  for (let i = 0; i < N; i++) { const t = labels[i] >= 0 && !(dout[i] <= r); m[i] = t ? 0 : 1; any = any || t; }
+  if (!any) return;
+  const { index: I } = edt(m, W, H, true);
+  const out = labels.slice();
+  for (let i = 0; i < N; i++) if (!m[i] && I[i] >= 0) out[i] = labels[I[i]];
+  labels.set(out);
 }
 
 // ---------- connected components (4-connectivity) ----------
@@ -713,6 +737,12 @@ export function processImage(img, opts = {}) {
   assignLabels(rgb, fg, flat, rgbC, 400, { labels });
   if (fg.bg) peelBackground(labels, rgb, rgbC, fg.bg, W, H);
   labels = modeFilter(labels, W, H, centers.length);
+  // hairline outlines / fringes (1–3 px) become loose slivers and paper-thin walls when printed
+  const minW = Number.isFinite(+o.minWidth) ? +o.minWidth : 0;
+  if (minW >= 0) {
+    const rThin = minW > 0 ? (minW * sc) / 2 : Math.max(1.5, 0.0015 * Math.max(W, H));
+    removeThin(labels, W, H, centers.length, rThin);
+  }
 
   const minArea = o.minArea > 0 ? o.minArea * sc * sc : Math.max(12, Math.round(fgCount * 0.00015));
   let comp, comps;

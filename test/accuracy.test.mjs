@@ -96,5 +96,18 @@ const red = [220, 30, 50], blue = [30, 60, 200];
 }
 function res0(res, p) { return res.palette[p.cluster].hex !== '#ffffff'; }
 
+// thin dark outline + hairline across a pink disc must not survive as loose slivers; a thick dark disc must
+{
+  const dark = [120, 40, 60], pink = [247, 188, 194];
+  const img = render(520, 420, [circle(210, 210, 151.2, dark), circle(210, 210, 150, pink), rect(210, 230, 220, 1.2, 0.4, dark), circle(470, 60, 40, dark)]);
+  const darkPieces = (res) => res.pieces.filter((p) => { const c = res.palette[p.cluster]; return c.r < 180 && c.g < 120; });
+  const on = processImage(img, {}), off = processImage(img, { minWidth: -1 });
+  console.log('thin outline: dark pieces auto', darkPieces(on).length, 'off', darkPieces(off).length);
+  expect(darkPieces(off).length >= 2, 'without cleanup the outline/hairline are separate pieces');
+  expect(darkPieces(on).length === 1, 'thin outline and hairline are removed, thick disc kept');
+  const disc = darkPieces(on)[0];
+  expect(disc && Math.abs(disc.area / (on.upscale ** 2) - Math.PI * 1600) < 0.05 * Math.PI * 1600, 'thick disc keeps its area');
+}
+
 if (fail) { console.log(`accuracy: ${fail} check(s) failed`); process.exit(1); }
 console.log('accuracy OK');

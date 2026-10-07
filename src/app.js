@@ -746,6 +746,7 @@ function syncProcInputs() {
   $('procDetail').value = p.detail;
   $('procSmooth').value = p.smooth;
   $('procMinArea').value = p.minArea;
+  $('procMinWidth').value = String(p.minWidth ?? 0);
   $('procBg').value = p.removeBg;
   $('procTol').value = p.tolerance;
   $('procRes').value = p.maxRes;
@@ -763,13 +764,14 @@ function readProcInputs() {
     detail: parseFloat($('procDetail').value),
     smooth: parseInt($('procSmooth').value),
     minArea: parseInt($('procMinArea').value),
+    minWidth: parseFloat($('procMinWidth').value),
     removeBg: $('procBg').value,
     tolerance: parseInt($('procTol').value),
     maxRes: parseInt($('procRes').value),
   };
 }
 for (const id of ['procDetail', 'procSmooth', 'procMinArea', 'procTol']) $(id).addEventListener('input', updateOutputs);
-for (const id of ['procColors', 'procDetail', 'procSmooth', 'procMinArea', 'procBg', 'procTol', 'procRes', 'procColorsAuto']) {
+for (const id of ['procColors', 'procDetail', 'procSmooth', 'procMinArea', 'procMinWidth', 'procBg', 'procTol', 'procRes', 'procColorsAuto']) {
   $(id).addEventListener('change', async () => {
     $('procColors').disabled = $('procColorsAuto').checked;
     readProcInputs();

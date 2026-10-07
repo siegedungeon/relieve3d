@@ -77,7 +77,7 @@ Los módulos de texto usan las fuentes más populares y las instaladas en el equ
 - **Argolla de llavero**: tamaño configurable, se coloca con un clic en el lienzo.
 - **Tamaño real**: el ancho en mm escala todo el modelo.
 - **Deshacer / Rehacer** (Ctrl+Z / Ctrl+Y) y **proyectos** `.r3d` (Ctrl+S) que guardan imagen y ajustes.
-- Vectorización ajustable: nº de colores (auto o manual), detalle, suavizado, limpieza de motas, tolerancia de fondo y resolución.
+- Vectorización ajustable: nº de colores (auto o manual), detalle, suavizado, limpieza de motas, **quitar líneas finas** (contornos finos, halos y astillas de 1–3 px que al imprimir quedaban como pestañas sueltas; Auto / ≤ 2–8 px / No), tolerancia de fondo y resolución.
 - Vectorización de precisión sub-píxel: las imágenes pequeñas se re-muestrean (bicúbico), los colores se agrupan en espacio Lab sin halos de antialias, se conservan líneas finas y los contornos se suavizan preservando esquinas con ajuste de rectas por mínimos cuadrados (sin escalones). `test/accuracy.test.mjs` mide el error contra formas analíticas (~0.1 px).
 
 ### Atajos

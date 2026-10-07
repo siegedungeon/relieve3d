@@ -19,7 +19,7 @@ export const STUDIO_DEFAULTS = (mode) => ({
   mode,
   name: mode === 'cakelaser' ? 'cake-topper' : 'logo',
   source: null,                    // { kind: 'image'|'text', dataURL, name }
-  quant: { colors: 4, removeBg: 'auto', tolerance: 40, minArea: 0 },
+  quant: { colors: 4, removeBg: 'auto', tolerance: 40, minArea: 0, minWidth: 0 },
   palette: [],                     // [{ hex, out, mode: 'keep'|'transparent'|'merge', mergeTo, thicken }]
   elements: [],                    // [{ id, kind: 'image'|'text', group, text, font, weight, color, x, y, scale, rot, hidden, thicken, spread, keepHoles }]
   groupGap: 1.5,                   // mm: parts closer than this form one element
@@ -104,6 +104,7 @@ export class Studio {
             <label class="row">Quitar fondo <select data-q="removeBg"><option value="auto">Auto</option><option value="yes">Sí</option><option value="no">No (usa transparencia)</option></select></label>
             <label class="row">Tolerancia fondo <input ${N} data-q="tolerance" /></label>
             <label class="row">Limpiar motas (px) <input ${N} data-q="minArea" /></label>
+        <label class="row" title="Elimina contornos finos, halos y astillas que al imprimir quedan como pestañas sueltas">Quitar líneas finas <select data-q="minWidth"><option value="0">Auto</option><option value="2">≤ 2 px</option><option value="3">≤ 3 px</option><option value="5">≤ 5 px</option><option value="8">≤ 8 px</option><option value="-1">No</option></select></label>
           </div>
           <div data-r="srcText">
             <textarea rows="2" data-t="text" placeholder="Escribe el texto…"></textarea>
@@ -396,7 +397,7 @@ export class Studio {
       const q = this.st.quant;
       const res = processImage(cx.getImageData(0, 0, w, h), {
         ...DEFAULT_PROC, colors: isText || src.kind === 'text' ? 0 : +q.colors, removeBg: src.kind === 'text' ? 'no' : q.removeBg,
-        tolerance: q.tolerance, minArea: q.minArea, maxRes,
+        tolerance: q.tolerance, minArea: q.minArea, minWidth: +(q.minWidth ?? 0), maxRes,
       });
       // text: force a single colour
       if (src.kind === 'text') { res.palette = [res.palette[0]]; for (const p of res.pieces) p.cluster = 0; }
@@ -1001,7 +1002,7 @@ export class Studio {
       if (el.type === 'checkbox') el.checked = !!v; else el.value = typeof v === 'number' ? fmt(v) : v;
     });
     r.querySelectorAll('[data-when]').forEach((el) => { const [p, v] = el.dataset.when.split('='); el.hidden = String(getPath(st, p)) !== v; });
-    r.querySelectorAll('[data-q]').forEach((el) => { el.value = String(st.quant[el.dataset.q]); });
+    r.querySelectorAll('[data-q]').forEach((el) => { el.value = String(st.quant[el.dataset.q] ?? 0); });
     r.querySelectorAll('[data-t]').forEach((el) => {
       if (el === document.activeElement) return;
       const v = st.text[el.dataset.t];
