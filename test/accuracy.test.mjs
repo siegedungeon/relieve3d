@@ -109,5 +109,21 @@ function res0(res, p) { return res.palette[p.cluster].hex !== '#ffffff'; }
   expect(disc && Math.abs(disc.area / (on.upscale ** 2) - Math.PI * 1600) < 0.05 * Math.PI * 1600, 'thick disc keeps its area');
 }
 
+// tiny counters (white hole inside a black letter on a white page) must survive the cleanups and can be widened
+{
+  const shapes = [];
+  for (let k = 0; k < 6; k++) shapes.push(circle(80 + k * 160, 200, 40, [0, 0, 0]), circle(80 + k * 160, 200, 1.6, [255, 255, 255]));
+  const img = render(1000, 400, shapes);
+  const holesOf = (res) => res.pieces.reduce((a, p) => a + p.shapes.reduce((b, s) => b + s.holes.length, 0), 0);
+  const holeArea = (res) => res.pieces.reduce((a, p) => a + p.shapes.reduce((b, s) => b + s.holes.reduce((c, h) => c + Math.abs(polyArea(h)), 0), 0), 0) / res.upscale ** 2;
+  const plain = processImage(img, { minHoleMM: 0 });
+  const wide = processImage(img, { minHoleMM: 1, widthMM: 100 });   // 880 px ↔ 100 mm: 1 mm ≈ 8.8 px
+  console.log(`tiny counters: holes ${holesOf(plain)} (area ${holeArea(plain).toFixed(0)}) widened ${holesOf(wide)} (area ${holeArea(wide).toFixed(0)})`);
+  expect(holesOf(plain) === 6, 'all 6 tiny counters kept');
+  expect(holeArea(wide) > 4 * holeArea(plain), 'counters widened towards 1 mm');
+  expect(holeArea(wide) / 6 < Math.PI * 6 * 6, 'widened counters stay small');
+}
+function polyArea(p) { let a = 0; for (let i = 0; i < p.length; i++) { const q = p[(i + 1) % p.length]; a += p[i][0] * q[1] - q[0] * p[i][1]; } return a / 2; }
+
 if (fail) { console.log(`accuracy: ${fail} check(s) failed`); process.exit(1); }
 console.log('accuracy OK');

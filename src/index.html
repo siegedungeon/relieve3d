@@ -102,6 +102,7 @@
         <label class="row">Suavizado <input type="range" id="procSmooth" min="0" max="3" step="1" value="1" /><output id="procSmoothOut"></output></label>
         <label class="row">Limpiar motas <input type="range" id="procMinArea" min="0" max="400" step="5" value="0" /><output id="procMinAreaOut"></output></label>
         <label class="row" title="Elimina contornos finos, halos y astillas que al imprimir quedan como pestañas sueltas">Quitar líneas finas <select id="procMinWidth"><option value="0">Auto</option><option value="2">≤ 2 px</option><option value="3">≤ 3 px</option><option value="5">≤ 5 px</option><option value="8">≤ 8 px</option><option value="-1">No</option></select></label>
+        <label class="row" title="Los huecos de las letras (a, e, o…) más pequeños que esto se agrandan para que no se cierren al imprimir (según el ancho del diseño)">Agrandar huecos <select id="procMinHole"><option value="0">No</option><option value="0.6">a 0.6 mm</option><option value="0.8">a 0.8 mm</option><option value="1">a 1 mm</option><option value="1.2">a 1.2 mm</option><option value="1.5">a 1.5 mm</option></select></label>
         <label class="row">Quitar fondo
           <select id="procBg"><option value="auto">Auto</option><option value="yes">Sí</option><option value="no">No</option></select>
         </label>

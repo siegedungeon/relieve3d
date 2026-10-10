@@ -1,7 +1,7 @@
 // Estudio 2D: preparación de logos (vectorizar, quitar fondo, engrosar, reducir colores, bordeado, silueta, reorganizar)
 // y cake toppers para corte láser (letras soldadas en una sola pieza, sin huecos, con palitos; SVG para Corel).
 import { processImage, DEFAULT_PROC } from './core/processing.js';
-import { edt, dilate, close, fillHoles, fillSmallHoles, components, connectIslands, fillPolygon, traceMask, maskBBox, countOn } from './core/raster.js';
+import { edt, dilate, close, fillHoles, fillSmallHoles, components, connectIslands, fillPolygon, traceMask, maskBBox, countOn, widenHoles } from './core/raster.js';
 import { renderTextImage, ensureFont, BUNDLED_FONTS } from './core/text.js';
 import { CAKE_PRESETS } from './modules.js';
 import { imageReady } from './core/imageload.js';
@@ -27,6 +27,7 @@ export const STUDIO_DEFAULTS = (mode) => ({
   strokeTarget: 1.2,               // mm: target stroke for "Ajustar trazo"
   widthMM: mode === 'cakelaser' ? 140 : 60,
   thicken: 0,
+  minHole: 0.8,                    // mm: letter counters narrower than this are reopened/widened (0 = off)
   border: { enabled: mode !== 'cakelaser', color: '#6d28d9', mm: 1.2, fillHoles: false },
   sil: { enabled: mode !== 'cakelaser', color: '#ffffff', mm: 2, smooth: 1, fillHoles: true },
   cake: {
@@ -123,6 +124,7 @@ export class Studio {
           <h3>Colores <small class="muted">clic en el color para cambiarlo</small></h3>
           <div data-r="palette" class="st-palette"></div>
           <label class="row">Engrosar todo (mm) <input ${N} data-s="thicken" /></label>
+          <label class="row" title="Los huecos de las letras (a, e, o…) más pequeños que esto se agrandan para que no se cierren al engrosar ni al imprimir. 0 = no tocar">Agrandar huecos pequeños a (mm) <input ${N} data-s="minHole" /></label>
         </section>
 
         <section class="card" data-only="logoprep">
@@ -655,26 +657,40 @@ export class Studio {
       if (idx >= 0 && idx < map.length) L[i] = map[idx];
     }
     const mm = (v) => v * ppm;
+    // counters (holes of a, e, o…) of a growing mask may shrink to at most half their inner radius
+    const holeLimit = (m, dist, r) => {
+      if (!(st.minHole > 0)) return () => r;
+      const filled = fillHoles(m, W, H);
+      const hole = Uint8Array.from(filled, (v, i) => (v && !m[i] ? 1 : 0));
+      const { labels: hl, comps: hc } = components(hole, W, H, false);
+      if (!hc.length) return () => r;
+      const rho = new Float32Array(hc.length);
+      for (let i = 0; i < N; i++) if (hl[i] >= 0 && dist[i] > rho[hl[i]]) rho[hl[i]] = dist[i];
+      return (i) => (hl[i] >= 0 ? Math.min(r, rho[hl[i]] * 0.5) : r);
+    };
     // per-colour thicken (grows over background and other colours)
     P.forEach((p, k) => {
       if (!(p.thicken > 0)) return;
       const m = Uint8Array.from(L, (v) => (v === k ? 1 : 0));
       if (!countOn(m)) return;
       const dist = edt(m, W, H);
-      const r = mm(p.thicken);
-      for (let i = 0; i < N; i++) if (dist[i] <= r && L[i] !== k) L[i] = k;
+      const r = mm(p.thicken), lim = holeLimit(m, dist, r);
+      for (let i = 0; i < N; i++) if (L[i] !== k && dist[i] <= lim(i)) L[i] = k;
     });
     const fgOf = () => Uint8Array.from(L, (v) => (v >= 0 ? 1 : 0));
-    const grow = (r) => {
+    const grow = (r, keep = false) => {
       if (!(r > 0)) return;
-      const { dist, index } = edt(fgOf(), W, H, true);
+      const fg = fgOf();
+      const { dist, index } = edt(fg, W, H, true);
+      const lim = keep ? holeLimit(fg, dist, r) : () => r;
       const L2 = L.slice();
-      for (let i = 0; i < N; i++) if (L[i] < 0 && dist[i] <= r && index[i] >= 0) L2[i] = L[index[i]];
+      for (let i = 0; i < N; i++) if (L[i] < 0 && index[i] >= 0 && dist[i] <= lim(i)) L2[i] = L[index[i]];
       L.set(L2);
     };
     const out = { W, H, L, ppm, ox, oy, f, cake };
     if (!cake) {
-      grow(mm(st.thicken));
+      grow(mm(st.thicken), true);
+      if (st.minHole > 0) widenHoles(L, W, H, mm(st.minHole), mm(0.6));
       if (st.border.enabled && st.border.mm > 0) {
         const fg = fgOf();
         const dist = edt(fg, W, H);

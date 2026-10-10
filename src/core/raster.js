@@ -112,6 +112,38 @@ export function fillSmallHoles(mask, W, H, maxArea) {
   return r;
 }
 
+// Widens enclosed holes (L < 0 surrounded by L >= 0, e.g. the counter of an "a") narrower than minD px so they
+// stay open when printed. The surrounding stroke keeps at least `wall` px towards the outside. Edits L in place;
+// returns the number of widened holes.
+export function widenHoles(L, W, H, minD, wall = 0) {
+  if (!(minD > 0)) return 0;
+  const N = W * H, fg = Uint8Array.from(L, (v) => (v >= 0 ? 1 : 0));
+  const out = outsideOf(fg, W, H);
+  const hole = new Uint8Array(N);
+  for (let i = 0; i < N; i++) hole[i] = !fg[i] && !out[i] ? 1 : 0;
+  const { labels: hl, comps } = components(hole, W, H, false);
+  if (!comps.length) return 0;
+  const dfg = edt(fg, W, H);
+  const rho = new Float32Array(comps.length);
+  for (let i = 0; i < N; i++) if (hl[i] >= 0 && dfg[i] > rho[hl[i]]) rho[hl[i]] = dfg[i];
+  // inscribed diameter ≈ 2·(ridge distance − ½ px)
+  const grow = Float32Array.from(rho, (r) => Math.max(0, minD / 2 - (r - 0.5)));
+  const small = new Uint8Array(N);
+  let n = 0;
+  for (let i = 0; i < N; i++) if (hl[i] >= 0 && grow[hl[i]] > 0) small[i] = 1;
+  for (let c = 0; c < comps.length; c++) if (grow[c] > 0) n++;
+  if (!n) return 0;
+  const { dist: dh, index: ih } = edt(small, W, H, true);
+  const rest = new Uint8Array(N);                     // outside + holes that are already big enough
+  for (let i = 0; i < N; i++) rest[i] = !fg[i] && !small[i] ? 1 : 0;
+  const dOut = edt(rest, W, H);
+  for (let i = 0; i < N; i++) {
+    if (!fg[i] || ih[i] < 0) continue;
+    if (dh[i] <= grow[hl[ih[i]]] && dOut[i] >= wall) L[i] = -1;
+  }
+  return n;
+}
+
 // Connected components of mask != 0.
 export function components(mask, W, H, conn8 = true) {
   const N = W * H, labels = new Int32Array(N).fill(-1), stack = new Int32Array(N), comps = [];

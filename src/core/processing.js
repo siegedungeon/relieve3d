@@ -1,5 +1,5 @@
 // Image → color regions → pieces → vector loops (pure JS, no DOM).
-import { edt } from './raster.js';
+import { edt, widenHoles } from './raster.js';
 
 export const DEFAULT_PROC = {
   colors: 0,          // 0 = auto
@@ -7,6 +7,7 @@ export const DEFAULT_PROC = {
   tolerance: 40,      // background color tolerance (RGB distance)
   minArea: 0,         // 0 = auto (px)
   minWidth: 0,        // thinnest kept line (source px): 0 = auto, -1 = keep everything
+  minHoleMM: 0.8,     // holes (counters) narrower than this are widened; 0 = off (needs widthMM)
   detail: 0.8,        // simplification epsilon (px)
   smooth: 1,          // chaikin iterations
   maxRes: 1000,       // max processing resolution (px)
@@ -321,6 +322,56 @@ function modeFilter(labels, W, H, k) {
     }
   }
   return out;
+}
+
+// Enclosed regions with (about) the background colour whose surrounding parts all sit on the background are
+// counters of letters/shapes: they become background. Large enclosed areas (a white badge face inside a ring)
+// stay pieces. Pixels are judged by their own colour too: a few tiny counters don't get a palette colour of their
+// own and end up in the letter's cluster. Returns true when something changed.
+function openCounters(labels, rgb, centers, bg, tol, W, H) {
+  const t2 = tol * tol, K = centers.length, d2 = (a, o, b) => (a[o] - b[0]) ** 2 + (a[o + 1] - b[1]) ** 2 + (a[o + 2] - b[2]) ** 2;
+  const paperC = centers.map((q) => d2(q, 0, bg) <= t2);
+  const tmp = labels.slice();
+  for (let i = 0; i < tmp.length; i++) {
+    const l = tmp[i];
+    if (l < 0) continue;
+    const db = d2(rgb, i * 3, bg);
+    if (paperC[l] || (db <= t2 && db < d2(rgb, i * 3, centers[l]))) tmp[i] = K;
+  }
+  const { comp, comps } = labelComponents(tmp, W, H);
+  const n = comps.length, touch = new Uint8Array(n);
+  const nb = Array.from({ length: n }, () => new Set());
+  for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) {
+    const i = y * W + x, c = comp[i];
+    if (c < 0) continue;
+    if (x === 0 || y === 0 || x === W - 1 || y === H - 1) touch[c] = 1;
+    const ns = [x > 0 ? i - 1 : -1, x < W - 1 ? i + 1 : -1, y > 0 ? i - W : -1, y < H - 1 ? i + W : -1];
+    for (const j of ns) { if (j < 0) continue; const d = comp[j]; if (d < 0) touch[c] = 1; else if (d !== c) nb[c].add(d); }
+  }
+  const open = new Uint8Array(n);
+  const paper = comps.map((c) => c.label === K);
+  // parts lying on the real background: reachable from it through coloured (non-paper) parts only
+  const onBg = new Uint8Array(n);
+  let queue = [];
+  for (let c = 0; c < n; c++) if (touch[c] && !paper[c]) { onBg[c] = 1; queue.push(c); }
+  while (queue.length) {
+    const next = [];
+    for (const c of queue) for (const d of nb[c]) if (!onBg[d] && !paper[d]) { onBg[d] = 1; next.push(d); }
+    queue = next;
+  }
+  let any = false;
+  for (let c = 0; c < n; c++) {
+    if (touch[c] || !paper[c] || !nb[c].size) continue;
+    let around = 0, ok = true;
+    for (const d of nb[c]) {
+      // the letter must not sit on a paper-coloured area of the design itself (e.g. a white sticker face)
+      if (!onBg[d] || [...nb[d]].some((e) => paper[e] && comps[e].area > comps[d].area)) { ok = false; break; }
+      around += comps[d].area;
+    }
+    if (ok && comps[c].area <= 0.5 * around) { open[c] = 1; any = true; }
+  }
+  if (any) for (let i = 0; i < labels.length; i++) if (comp[i] >= 0 && open[comp[i]]) labels[i] = -1;
+  return any;
 }
 
 // Morphological opening per colour: pixels of a colour that sit in a part narrower than ~2r (thin outlines, fringes,
@@ -737,11 +788,21 @@ export function processImage(img, opts = {}) {
   assignLabels(rgb, fg, flat, rgbC, 400, { labels });
   if (fg.bg) peelBackground(labels, rgb, rgbC, fg.bg, W, H);
   labels = modeFilter(labels, W, H, centers.length);
+  // counters (hole of an "a", "e", "o"…) painted with the background colour are background, not a white piece:
+  // as real holes they can't be swallowed by the thin-line / speck cleanups below
+  if (fg.bg && openCounters(labels, rgb, rgbC, fg.bg, Math.max(30, o.tolerance), W, H)) peelBackground(labels, rgb, rgbC, fg.bg, W, H);
   // hairline outlines / fringes (1–3 px) become loose slivers and paper-thin walls when printed
   const minW = Number.isFinite(+o.minWidth) ? +o.minWidth : 0;
   if (minW >= 0) {
     const rThin = minW > 0 ? (minW * sc) / 2 : Math.max(1.5, 0.0015 * Math.max(W, H));
     removeThin(labels, W, H, centers.length, rThin);
+  }
+  // small holes are widened to a printable size (needs the final width to know the mm scale)
+  if (o.minHoleMM > 0 && o.widthMM > 0) {
+    let x0 = W, x1 = -1;
+    for (let i = 0; i < N; i++) if (labels[i] >= 0) { const x = i % W; if (x < x0) x0 = x; if (x > x1) x1 = x; }
+    const ppm = (x1 - x0 + 1) / o.widthMM;
+    if (x1 >= x0) widenHoles(labels, W, H, o.minHoleMM * ppm, (o.holeWallMM ?? 0.6) * ppm);
   }
 
   const minArea = o.minArea > 0 ? o.minArea * sc * sc : Math.max(12, Math.round(fgCount * 0.00015));

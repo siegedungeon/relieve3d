@@ -253,7 +253,7 @@ async function runProcessing(state = null, { keepSettings = false } = {}) {
   await nextFrame();
   try {
     const t0 = performance.now();
-    const res = processImage(getImageData(S.image.el, S.proc.maxRes), S.proc);
+    const res = processImage(getImageData(S.image.el, S.proc.maxRes), { ...S.proc, widthMM: S.settings?.widthMM });
     const prevSettings = S.settings;
     S.result = res;
     S.selection.clear();
@@ -747,6 +747,7 @@ function syncProcInputs() {
   $('procSmooth').value = p.smooth;
   $('procMinArea').value = p.minArea;
   $('procMinWidth').value = String(p.minWidth ?? 0);
+  $('procMinHole').value = String(p.minHoleMM ?? 0);
   $('procBg').value = p.removeBg;
   $('procTol').value = p.tolerance;
   $('procRes').value = p.maxRes;
@@ -765,13 +766,14 @@ function readProcInputs() {
     smooth: parseInt($('procSmooth').value),
     minArea: parseInt($('procMinArea').value),
     minWidth: parseFloat($('procMinWidth').value),
+    minHoleMM: parseFloat($('procMinHole').value),
     removeBg: $('procBg').value,
     tolerance: parseInt($('procTol').value),
     maxRes: parseInt($('procRes').value),
   };
 }
 for (const id of ['procDetail', 'procSmooth', 'procMinArea', 'procTol']) $(id).addEventListener('input', updateOutputs);
-for (const id of ['procColors', 'procDetail', 'procSmooth', 'procMinArea', 'procMinWidth', 'procBg', 'procTol', 'procRes', 'procColorsAuto']) {
+for (const id of ['procColors', 'procDetail', 'procSmooth', 'procMinArea', 'procMinWidth', 'procMinHole', 'procBg', 'procTol', 'procRes', 'procColorsAuto']) {
   $(id).addEventListener('change', async () => {
     $('procColors').disabled = $('procColorsAuto').checked;
     readProcInputs();
