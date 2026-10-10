@@ -180,9 +180,9 @@ export function qrCanvas(text, { dark = '#111111', light = '#ffffff', px = 12, q
 }
 
 // Pure QR matrix (for tests / size checks)
-export function qrMatrix(text) {
+export function qrMatrix(text, ecc = 'M') {
   qrcode.stringToBytes = (s) => Array.from(new TextEncoder().encode(s));
-  const q = qrcode(0, 'M');
+  const q = qrcode(0, ecc);
   q.addData(String(text || ' '), 'Byte');
   q.make();
   const n = q.getModuleCount();

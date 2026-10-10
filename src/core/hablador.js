@@ -20,25 +20,28 @@ export const HABLADOR_FONTS = {
 
 export const DEFAULT_HABLADOR = () => ({
   name: 'LOVECUBE',
-  width: 170, height: 250, depth: 80,
+  width: 170, height: 250, depth: 80,   // overall (= base width × total height × base depth)
+  panelWidth: 148,                      // black back panel, narrower than the base
   white: { t: 4, label: 'Acrílico blanco', color: '#ffffff' },
   black: { t: 3, label: 'Acrílico negro', color: '#16161a' },
   clearance: 0.15,       // added to every slot (kerf + easy fit)
-  panelCorner: 6,
+  // roof: eave heights as a fraction of the panel height, slopes rising towards the icon (asymmetric house)
+  roof: { left: 0.717, right: 0.857, leftSlope: 0.45, rightSlope: 0.57, eaveCorner: 8 },
+  panelCorner: 4,
   baseCorner: 5,
-  border: 6,             // black border around the top icon
-  title: { enabled: true, text: 'LOVECUBE', font: 'Montserrat Black', height: 19, maxWidth: 124, tracking: -0.035, weld: true },
-  subtitle: { enabled: true, text: 'PHOTOBOOTH', font: 'Montserrat Black', capHeight: 8.5, tracking: 0.42 },
+  border: 3,             // black outline around the top icon
+  title: { enabled: true, text: 'LOVECUBE', font: 'Montserrat ExtraBold', height: 14.6, maxWidth: 112, tracking: 0, weld: false, gapTop: 7.5 },
+  subtitle: { enabled: true, text: 'PHOTOBOOTH', font: 'Montserrat Black', capHeight: 5.7, width: 97, tracking: 0.6, gapTop: 4.8 },
   qr: {
-    enabled: true, w: 73, h: 85, corner: 4, gap: 8, labelFont: 'Montserrat Black',
+    enabled: true, w: 0, h: 74, corner: 4, gap: 6, side: 6, topGap: 5, labelFont: 'Montserrat Black',
     items: [
-      { label: 'ESCRÍBENOS', sub: 'POR WHATSAPP', url: 'https://wa.me/573000000000', color: '#1faf38' },
-      { label: 'SÍGUENOS', sub: 'EN INSTAGRAM', url: 'https://instagram.com/lovecube.photobooth', color: '#e1306c' },
+      { label: 'ESCRÍBENOS', sub: 'POR WHATSAPP', url: 'https://wa.me/573000000000', color: '#22b33a', color2: '', badge: 'whatsapp' },
+      { label: 'SÍGUENOS', sub: 'EN INSTAGRAM', url: 'https://instagram.com/lovecube.photobooth', color: '#ff7a1a', color2: '#e8127c', badge: 'instagram' },
     ],
   },
   nfc: { enabled: false, diameter: 25, plate: 0 },
-  cards: { enabled: true, cardW: 90, height: 40, depth: 28, frontOffset: 10, print: true },
-  icon: { type: 'cube', height: 58, heart: true, custom: null },
+  cards: { enabled: true, cardW: 90, frontW: 115, height: 40, sideH: 32, depth: 28, frontOffset: 10, print: true },
+  icon: { type: 'cube', height: 84, heart: true, offsetX: 0, custom: null },
   braces: { enabled: true, h: 50, d: 30 },
   jig: { enabled: true },
   sheet: { w: 600, h: 400, gap: 3, margin: 5 },
@@ -258,8 +261,17 @@ export function layoutText(font, text, size, tracking = 0) {
 }
 
 // Text block placed so its ink bbox is centred on cx and its ink top/bottom matches the request.
-function textBlock(font, text, { capHeight, height, maxWidth, tracking = 0, cx = 0, top = null, bottom = null }) {
+function textBlock(font, text, { capHeight, height, maxWidth, width, tracking = 0, cx = 0, top = null, bottom = null }) {
   let size = capHeight ? capHeight / capHeightRatio(font) : 100;
+  if (width && [...String(text)].length > 1) {
+    // solve the letter spacing so the ink spans exactly `width` (size fixed by capHeight)
+    let lo = -0.2, hi = 3;
+    for (let i = 0; i < 40; i++) {
+      const mid = (lo + hi) / 2, w = bbox(layoutText(font, text, size, mid).flatMap((g) => g.contours)).w;
+      if (w > width) hi = mid; else lo = mid;
+    }
+    tracking = (lo + hi) / 2;
+  }
   let gl = layoutText(font, text, size, tracking);
   let bb = bbox(gl.flatMap((g) => g.contours));
   let k = 1;
@@ -272,6 +284,7 @@ function textBlock(font, text, { capHeight, height, maxWidth, tracking = 0, cx =
 }
 
 // ------------------------------------------------------------------ boolean (weld) with curve refit
+const simplifyRing = (pts) => { let r = pts; for (let k = 0; k < 3; k++) r = r.filter((p, i) => { const a = r[(i - 1 + r.length) % r.length], c = r[(i + 1) % r.length]; const cr = (p[0] - a[0]) * (c[1] - p[1]) - (p[1] - a[1]) * (c[0] - p[0]); return Math.hypot(p[0] - a[0], p[1] - a[1]) > 0.05 && Math.abs(cr) > 1e-6; }); return r; };
 const toRing = (pts) => { const r = pts.map((p) => [p[0], p[1]]); r.push(r[0]); return r; };
 function regionOf(contours) {
   // even-odd region of one glyph / shape (handles any contour direction)
@@ -350,148 +363,211 @@ export function pathToContour(d) {
 }
 
 // ------------------------------------------------------------------ the default "open box + card" icon
-// Partition of the icon (y-up, mm, bottom vertex at the origin, ~61 × 58 at scale 1); pieces are inset by gap/2.
+// Partition traced from the LOVECUBE front view (y-up, mm, bottom vertex of the box at the origin, 84 mm tall
+// at scale 1): two box faces forming a V and a tilted card coming out of the box. Pieces are inset by gap/2 so
+// the black panel shows between them as clean lines.
 const CUBE_ICON = {
-  faceL: [[0, 0], [-22.5, 13], [-22.5, 35], [0, 22]],
-  faceR: [[0, 0], [0, 22], [22.5, 35], [22.5, 13]],
-  flapL: [[0, 22], [-22.5, 35], [-30.5, 44], [-8, 31]],
-  flapR: [[0, 22], [8, 31], [30.5, 44], [22.5, 35]],
-  card: [[0, 22], [8, 31], [13, 58], [-11, 55], [-8, 31]],
-  heart: { x: 1, y: 43, w: 10.5 },
-  h: 58,
+  faceL: [[0, 0], [-33.5, 12.5], [-33.5, 46.5], [0, 34]],
+  faceR: [[0, 0], [0, 37.85], [33.5, 46.7], [33.5, 12.5]],
+  card: [[-5.5, 36.4], [33.5, 46.7], [33.5, 84], [-7, 73.1]],
+  heart: { x: 13.6, y: 61, w: 10.5 },
+  h: 84,
+  slope: 12.5 / 33.5,  // slope of the V (bottom edges of the faces)
 };
 
-function cubeIcon(cx, bottomY, height, gap = 2) {
+function cubeIcon(vx, vy, height, gap = 2, rIn = 1.2) {
   const k = height / CUBE_ICON.h;
-  const T = (p) => [cx + p[0] * k, bottomY - p[1] * k];
-  const names = { faceL: 'Ícono · cara izquierda', faceR: 'Ícono · cara derecha', flapL: 'Ícono · solapa izquierda', flapR: 'Ícono · solapa derecha', card: 'Ícono · tarjeta' };
+  const T = (p) => [vx + p[0] * k, vy - p[1] * k];
+  const names = { faceL: 'Ícono · cara izquierda', faceR: 'Ícono · cara derecha', card: 'Ícono · tarjeta' };
   const pieces = Object.keys(names).map((key) => {
     const pts = CUBE_ICON[key].map(T);
-    const ins = offsetConvex(pts, -gap / 2);
-    return { key, name: names[key], contours: [roundPoly(ins, 0.8)], pts };
+    return { key, name: names[key], contours: [roundPoly(offsetConvex(pts, -gap / 2), rIn)], pts };
   });
   const hp = T([CUBE_ICON.heart.x, CUBE_ICON.heart.y]);
-  const hull = convexHull(pieces.flatMap((p) => p.pts));
-  return { pieces, heart: heartC(hp[0], hp[1], CUBE_ICON.heart.w * k), hull };
+  return { pieces, heart: heartC(hp[0], hp[1], CUBE_ICON.heart.w * k), hull: convexHull(pieces.flatMap((p) => p.pts)), k };
 }
 
 // ------------------------------------------------------------------ QR (vector, horizontal runs merged)
-function qrContours(text, x, y, size) {
-  const m = qrMatrix(text), n = m.n, s = size / n, cs = [];
+// badge: clears a centred square of whole modules (error correction H) for a small printed icon.
+function qrContours(text, x, y, size, badge = false) {
+  const m = qrMatrix(text, badge ? 'H' : 'M'), n = m.n, s = size / n, cs = [];
+  let b0 = n, b1 = -1;
+  if (badge) { let bm = Math.round(n * 0.27); if (bm % 2 !== n % 2) bm++; b0 = (n - bm) / 2; b1 = b0 + bm; }
+  const hole = (r, c) => r >= b0 && r < b1 && c >= b0 && c < b1;
   for (let r = 0; r < n; r++) {
     let c0 = -1;
     for (let c = 0; c <= n; c++) {
-      const on = c < n && m.isDark(r, c);
+      const on = c < n && m.isDark(r, c) && !hole(r, c);
       if (on && c0 < 0) c0 = c;
       if (!on && c0 >= 0) { cs.push(rectC(x + c0 * s, y + r * s, (c - c0) * s, s)); c0 = -1; }
     }
   }
-  return { contours: cs, modules: n, moduleMM: s };
+  return { contours: cs, modules: n, moduleMM: s, badge: badge ? { cx: x + size / 2, cy: y + size / 2, size: (b1 - b0) * s } : null };
+}
+
+// Small generic social icons printed in the middle of the QR (print layer, even-odd fill).
+const ringOf = (c, tol = 0.01) => toRing(flatten(c, tol));
+const polysToContours = (mp) => mp.flatMap((poly) => poly.map((ring) => [['M', ...ring[0]], ...ring.slice(1, -1).map((p) => ['L', ...p]), ['Z']]));
+function badgeContours(type, cx, cy, size) {
+  const a = size * 0.86;
+  if (type === 'instagram') {
+    const t = a * 0.11;
+    return [rectC(cx - a / 2, cy - a / 2, a, a, a * 0.28), rectC(cx - a / 2 + t, cy - a / 2 + t, a - 2 * t, a - 2 * t, a * 0.28 - t),
+      circleC(cx, cy, a * 0.235), circleC(cx, cy, a * 0.235 - t), circleC(cx + a * 0.25, cy - a * 0.25, a * 0.065)];
+  }
+  if (type === 'whatsapp') {
+    // speech-bubble ring with a tail + handset
+    const R = a * 0.44, t = a * 0.085;
+    const outer = [ringOf(circleC(cx, cy, R))];
+    const tail = [[[cx - R * 0.62, cy + R * 0.55], [cx - R * 1.08, cy + R * 1.08], [cx - R * 0.18, cy + R * 0.9], [cx - R * 0.62, cy + R * 0.55]]];
+    const ring = polygonClipping.difference(polygonClipping.union([outer], [tail]), [[ringOf(circleC(cx, cy, R - t))]]);
+    // handset: thick arc around the bubble centre with rounded ends, rotated so it reads like a phone
+    const r0 = R * 0.42, r1 = R * 0.62, A0 = (100 * Math.PI) / 180, A1 = (215 * Math.PI) / 180, steps = 40;
+    const arc = [];
+    for (let i = 0; i <= steps; i++) { const A = A0 + ((A1 - A0) * i) / steps; arc.push([cx + R * 0.08 + r1 * Math.cos(A), cy - R * 0.08 + r1 * Math.sin(A)]); }
+    for (let i = steps; i >= 0; i--) { const A = A0 + ((A1 - A0) * i) / steps; arc.push([cx + R * 0.08 + r0 * Math.cos(A), cy - R * 0.08 + r0 * Math.sin(A)]); }
+    arc.push(arc[0]);
+    const end = (A) => ringOf(circleC(cx + R * 0.08 + ((r0 + r1) / 2) * Math.cos(A) * 1.04, cy - R * 0.08 + ((r0 + r1) / 2) * Math.sin(A) * 1.04, (r1 - r0) * 0.78));
+    const phone = polygonClipping.union([[arc]], [[end(A0)]], [[end(A1)]]);
+    return polysToContours(polygonClipping.union(ring, phone));
+  }
+  return [];
 }
 
 // ------------------------------------------------------------------ build
 // fonts: { [family]: opentype.Font }  (loaded by the caller: fs in Node, fetch in the app)
+// Panel space: x 0..panelW, y = 0 at the base top, y < 0 upwards. "h" values below are heights above the base top.
 export function buildHablador(cfgIn, fonts) {
   const cfg = cfgIn;
   const tW = cfg.white.t, tB = cfg.black.t, cl = cfg.clearance;
   const warnings = [];
   const font = (fam) => fonts[fam] || fonts[Object.keys(fonts)[0]];
-  const W = cfg.width, panelW = W - 2, cx = panelW / 2;
+  const W = cfg.width, panelW = Math.min(cfg.panelWidth || W - 2, W), cx = panelW / 2;
   const baseStack = 2 * tB;
   const panelH = cfg.height - baseStack;
   const pieces = [];
   const add = (p) => { const q = { qty: 1, print: [], onPanel: false, ...p }; pieces.push(q); return q; };
+  const roof = { left: 0.717, right: 0.857, leftSlope: 0.45, rightSlope: 0.57, eaveCorner: 8, ...(cfg.roof || {}) };
+  const hL = roof.left * panelH, hR = roof.right * panelH;
+  const roofAt = (x) => Math.min(panelH, hL + roof.leftSlope * x, hR + roof.rightSlope * (panelW - x));
 
-  // ---- top icon
-  let iconTop = -(panelH - cfg.border);
-  let icon = null, iconBottom = iconTop, hullPts = [];
+  // ---- top icon. vUp = height of its lowest point (the V of the box); iconRings = black outline behind it
+  const vx = cx + (cfg.icon.offsetX || 0);
+  let icon = null, iconRings = [], vUp = Math.min(hL, hR), slope = 0;
   if (cfg.icon.type === 'cube') {
-    icon = cubeIcon(cx, iconTop + cfg.icon.height, cfg.icon.height);
-    iconBottom = iconTop + cfg.icon.height;
-    hullPts = offsetConvex(icon.hull, cfg.border);
+    const h = Math.min(cfg.icon.height, panelH * 0.6);
+    vUp = panelH - cfg.border - h;
+    icon = cubeIcon(vx, -vUp, h);
+    iconRings = icon.pieces.map((p) => offsetConvex(p.pts, cfg.border));
+    slope = CUBE_ICON.slope;
   } else if (cfg.icon.type === 'custom' && cfg.icon.custom?.white?.length) {
-    // custom traced logo: white pieces (+ optional black inlays), scaled to icon height and centred
     const all = cfg.icon.custom.white.flat();
-    const bb = bbox(all), k = cfg.icon.height / bb.h;
-    const place = (cs) => translate(scaleContours(cs, k), cx - ((bb.x0 + bb.x1) / 2) * k, iconTop - bb.y0 * k);
+    const bb = bbox(all), k = Math.min(cfg.icon.height / bb.h, (panelW - 2 * cfg.border - 4) / bb.w);
+    const top = -(panelH - cfg.border);
+    const place = (cs) => translate(scaleContours(cs, k), vx - ((bb.x0 + bb.x1) / 2) * k, top - bb.y0 * k);
     icon = {
       pieces: cfg.icon.custom.white.map((cs, i) => ({ key: 'c' + i, name: `Logo · pieza ${i + 1}`, contours: place(cs) })),
       inlays: (cfg.icon.custom.black || []).map((cs) => place(cs)),
     };
-    iconBottom = iconTop + cfg.icon.height;
+    vUp = panelH - cfg.border - bb.h * k;
     const pts = icon.pieces.flatMap((p) => p.contours.flatMap((c) => flatten(c, 0.2)));
-    hullPts = offsetConvex(convexHull(pts), cfg.border);
+    iconRings = [offsetConvex(convexHull(pts), cfg.border)];
   }
 
-  // ---- QR plates
+  // ---- QR plates: tops follow the V of the icon (parallel to its bottom edges), clipped under the roof
   const items = cfg.qr.enabled ? cfg.qr.items.slice(0, 3) : [];
-  let plateW = cfg.qr.w, plateH = cfg.qr.h;
-  const side = 7;
-  if (items.length) {
-    const maxW = (panelW - 2 * side - (items.length - 1) * cfg.qr.gap) / items.length;
-    if (plateW > maxW) { warnings.push(`Placas QR reducidas a ${maxW.toFixed(1)} mm de ancho para caber en el panel.`); plateW = maxW; }
-  }
-  const platesTop = (icon ? iconBottom : iconTop) + 5;
-  const platesBottom = platesTop + (items.length ? plateH : 0);
-  const shoulder = -(-platesTop + 7);
+  const n = items.length, side = cfg.qr.side ?? 6, gap = cfg.qr.gap;
+  let plateW = n ? (panelW - 2 * side - (n - 1) * gap) / n : 0;
+  if (n && cfg.qr.w > 0) { if (cfg.qr.w > plateW) warnings.push(`Placas QR reducidas a ${plateW.toFixed(1)} mm de ancho para caber en el panel.`); else plateW = cfg.qr.w; }
+  const innerTop = (icon ? vUp : Math.min(hL, hR) - 4) - (cfg.qr.topGap ?? 5);
+  const plateH = cfg.qr.h;
+  const plateBottom = innerTop - plateH;
+  const pxs = platesX(n, plateW, gap, vx);
+  const plateTopAt = (x) => Math.min(innerTop + slope * Math.abs(x - vx), roofAt(x) - 6);
+  const plateShapes = pxs.map((xl) => {
+    const xr = xl + plateW;
+    const pts = [[xl, -plateBottom], [xr, -plateBottom], [xr, -plateTopAt(xr)]];
+    if (slope && vx > xl + 1 && vx < xr - 1) pts.push([vx, -plateTopAt(vx)]);
+    pts.push([xl, -plateTopAt(xl)]);
+    return { xl, xr, pts, low: Math.min(...pts.slice(2).map((p) => -p[1])) };
+  });
 
-  // ---- titles (bottom-up stack under the plates)
-  let y = platesBottom + (items.length ? 8 : 0);
+  // ---- titles (stacked under the plates)
+  let y = n ? plateBottom - (cfg.title.gapTop ?? 7.5) : innerTop;
   let title = null, sub = null;
   if (cfg.title.enabled && cfg.title.text.trim()) {
-    title = textBlock(font(cfg.title.font), cfg.title.text, { height: cfg.title.height, maxWidth: cfg.title.maxWidth, tracking: cfg.title.tracking, cx, top: y });
-    y = title.bbox.y1 + 6;
+    title = textBlock(font(cfg.title.font), cfg.title.text, { height: cfg.title.height, maxWidth: Math.min(cfg.title.maxWidth, panelW - 8), tracking: cfg.title.tracking, cx, top: -y });
+    y = -title.bbox.y1;
   }
   if (cfg.subtitle.enabled && cfg.subtitle.text.trim()) {
-    sub = textBlock(font(cfg.subtitle.font), cfg.subtitle.text, { capHeight: cfg.subtitle.capHeight, maxWidth: panelW - 20, tracking: cfg.subtitle.tracking, cx, top: y });
-    y = sub.bbox.y1;
+    y -= cfg.subtitle.gapTop ?? 5;
+    sub = textBlock(font(cfg.subtitle.font), cfg.subtitle.text, { capHeight: cfg.subtitle.capHeight, width: cfg.subtitle.width ? Math.min(cfg.subtitle.width, panelW - 10) : 0, maxWidth: panelW - 10, tracking: cfg.subtitle.tracking, cx, top: -y });
+    y = -sub.bbox.y1;
   }
   const lowest = y;
-  if (cfg.cards.enabled && -lowest < cfg.cards.height + 3) warnings.push(`El texto inferior queda tapado por el porta tarjetas (sube el alto del hablador o reduce textos: faltan ${(cfg.cards.height + 3 + lowest).toFixed(1)} mm).`);
-  if (-lowest < 5) warnings.push('El contenido no cabe en el alto del panel.');
+  if (cfg.cards.enabled && lowest < cfg.cards.height + 3) warnings.push(`El texto inferior queda tapado por el porta tarjetas (sube el alto del hablador o reduce textos: faltan ${(cfg.cards.height + 3 - lowest).toFixed(1)} mm).`);
+  if (lowest < 5) warnings.push('El contenido no cabe en el alto del panel.');
 
-  // ---- panel (black): hull of the body rectangle + icon border, filleted; tabs underneath
+  // ---- panel (black): roof polygon ∪ outline of the icon, every corner filleted; tabs underneath
   const tabs = cfg.tabs;
   const tabX = [cx - panelW * 0.3, cx + panelW * 0.3];
   {
-    const body = [[0, 0], [panelW, 0], [panelW, shoulder], [0, shoulder]];
-    const hull = convexHull(body.concat(hullPts.length ? hullPts : [[0, -panelH], [panelW, -panelH]]));
-    // rotate hull so it starts at the bottom-left corner, going towards bottom-right (y-down: area sign)
-    let i0 = hull.findIndex((p) => Math.abs(p[0]) < 1e-6 && Math.abs(p[1]) < 1e-6);
-    let ring = hull.slice(i0).concat(hull.slice(0, i0));
-    if (Math.abs(ring[1][1]) > 1e-6) ring = [ring[0], ...ring.slice(1).reverse()];
-    // ring[0]=(0,0), ring[1]=(panelW,0) … top vertices … back to (0,0)
-    const pts = [[0, 0]], rad = [0];
-    for (const tx of tabX) {
-      const a = tx - tabs.panel / 2, b = tx + tabs.panel / 2;
-      pts.push([a, 0], [a, tB], [b, tB], [b, 0]); rad.push(0, 0.4, 0.4, 0);
+    const ring = [[0, 0]];
+    for (const tx of tabX) { const a = tx - tabs.panel / 2, b = tx + tabs.panel / 2; ring.push([a, 0], [a, tB], [b, tB], [b, 0]); }
+    ring.push([panelW, 0], [panelW, -hR]);
+    if (iconRings.length) {
+      const xs = iconRings.flat().map((p) => p[0]);
+      const xr = Math.min(panelW, Math.max(...xs)), xl = Math.max(0, Math.min(...xs));
+      ring.push([xr, -Math.min(panelH, hR + roof.rightSlope * (panelW - xr))], [xl, -Math.min(panelH, hL + roof.leftSlope * xl)]);
+    } else {
+      const xa = (hR + roof.rightSlope * panelW - hL) / (roof.leftSlope + roof.rightSlope);
+      const ya = hL + roof.leftSlope * xa;
+      if (ya <= panelH) ring.push([xa, -ya]);
+      else ring.push([(panelH - hR) / -roof.rightSlope + panelW, -panelH], [(panelH - hL) / roof.leftSlope, -panelH]);
     }
-    for (let i = 1; i < ring.length; i++) { pts.push(ring[i]); rad.push(Math.abs(ring[i][1]) < 1e-6 ? 0 : cfg.panelCorner); }
+    ring.push([0, -hL]);
+    let u = polygonClipping.union([toRing(ring)], ...iconRings.map((r) => [toRing(r)]));
+    if (u.length > 1) { warnings.push('El ícono no toca el techo del panel: se usa solo la parte más grande.'); u.sort((a, b) => Math.abs(ringArea(b[0])) - Math.abs(ringArea(a[0]))); }
+    const pts = simplifyRing(u[0][0].slice(0, -1));
+    // orientation (sum of turns) tells convex from concave corners
+    const turn = (i) => { const a = pts[(i - 1 + pts.length) % pts.length], b = pts[i], c = pts[(i + 1) % pts.length]; return (b[0] - a[0]) * (c[1] - b[1]) - (b[1] - a[1]) * (c[0] - b[0]); };
+    const orient = Math.sign(pts.reduce((s, _, i) => s + Math.sign(turn(i)), 0)) || 1;
+    const rad = pts.map((p, i) => {
+      if (p[1] > 1e-6) return 0.4;                    // tab tips
+      if (p[1] > -1e-6) return 0;                     // bottom edge / tab roots
+      if (Math.sign(turn(i)) !== orient) return 3;    // concave: soft inner corner
+      if (Math.abs(p[0]) < 1e-6 || Math.abs(p[0] - panelW) < 1e-6) return roof.eaveCorner;
+      return cfg.panelCorner + (iconRings.length ? 1 : 0);
+    });
     const cut = [roundPoly(pts, rad)];
-    if (cfg.nfc.enabled && items.length) {
-      const k = Math.min(items.length - 1, cfg.nfc.plate | 0);
-      const px = platesX(items.length, plateW, cfg.qr.gap, cx)[k] + plateW / 2;
-      cut.push(circleC(px, platesTop + plateH * 0.42, (cfg.nfc.diameter + 1) / 2));
+    if (cfg.nfc.enabled && n) {
+      const k = Math.min(n - 1, cfg.nfc.plate | 0), ps = plateShapes[k];
+      cut.push(circleC((ps.xl + ps.xr) / 2, -(plateBottom + (ps.low - plateBottom) * 0.55), (cfg.nfc.diameter + 1) / 2));
     }
     add({ id: 'panel', name: 'Panel principal', mat: 'black', contours: cut, view: 'front' });
   }
 
   // ---- QR plates (white) + UV print
-  const pxs = platesX(items.length, plateW, cfg.qr.gap, cx);
   items.forEach((it, i) => {
-    const x = pxs[i], cont = [rectC(x, platesTop, plateW, plateH, cfg.qr.corner)];
+    const ps = plateShapes[i], x = ps.xl;
+    const cont = [roundPoly(ps.pts, cfg.qr.corner)];
     const lf = font(cfg.qr.labelFont);
-    const qs = Math.min(plateW - 14, plateH - 30);
-    const qr = qrContours(it.url || ' ', x + (plateW - qs) / 2, platesTop + 7, qs);
+    const contentTop = ps.low - 6;
+    const qs = Math.max(10, Math.min(plateW - 16, contentTop - plateBottom - 4 - 13.5));
+    const free = contentTop - plateBottom - 4 - (qs + 13.5);
+    const qy = -(contentTop - Math.max(0, free / 2));
+    const badge = it.badge && it.badge !== 'none';
+    const qr = qrContours(it.url || ' ', x + (plateW - qs) / 2, qy, qs, badge);
     if (qr.moduleMM < 0.5) warnings.push(`QR ${i + 1}: módulos de ${qr.moduleMM.toFixed(2)} mm, puede costar escanearlo (acorta la URL o agranda la placa).`);
-    const lab = textBlock(lf, it.label || '', { capHeight: 5.2, maxWidth: plateW - 10, tracking: 0.02, cx: x + plateW / 2, top: platesTop + 7 + qs + 4.5 });
-    const sb = textBlock(lf, it.sub || '', { capHeight: 2.6, maxWidth: plateW - 14, tracking: 0.08, cx: x + plateW / 2, top: lab.bbox.y1 + 2 });
-    add({
-      id: 'qr' + (i + 1), name: `Placa QR ${i + 1}${it.label ? ' · ' + it.label : ''}`, mat: 'white', contours: cont, onPanel: true,
-      print: [{ fill: it.color || '#111111', contours: qr.contours }, { fill: '#111111', contours: lab.glyphs.flatMap((g) => g.contours).concat(sb.glyphs.flatMap((g) => g.contours)) }],
-      note: `QR → ${it.url}`,
-    });
+    const lab = textBlock(lf, it.label || '', { capHeight: 4.8, maxWidth: plateW - 8, tracking: 0.0, cx: x + plateW / 2, top: qy + qs + 3.6 });
+    const sb = textBlock(lf, it.sub || '', { capHeight: 2.5, maxWidth: plateW - 12, tracking: 0.04, cx: x + plateW / 2, top: lab.bbox.y1 + 2 });
+    const qrLayer = { fill: it.color || '#111111', grad: it.color2 ? [it.color || '#111111', it.color2] : null, contours: qr.contours };
+    const print = [qrLayer];
+    if (qr.badge) print.push({ ...qrLayer, evenodd: true, contours: badgeContours(it.badge, qr.badge.cx, qr.badge.cy, qr.badge.size) });
+    print.push({ fill: '#111111', contours: lab.glyphs.flatMap((g) => g.contours).concat(sb.glyphs.flatMap((g) => g.contours)) });
+    add({ id: 'qr' + (i + 1), name: `Placa QR ${i + 1}${it.label ? ' · ' + it.label : ''}`, mat: 'white', contours: cont, onPanel: true, print, note: `QR → ${it.url}` });
   });
+  const platesTop = n ? -Math.max(...plateShapes.flatMap((p) => p.pts.map((q) => -q[1]))) : -innerTop, platesBottom = -plateBottom;
 
   // ---- title / subtitle (white)
   if (title) {
@@ -533,8 +609,7 @@ export function buildHablador(cfgIn, fonts) {
   for (const tx of tabX) slots.push({ x: px0 + tx - (tabs.panel + cl) / 2, y: Y(fPanel + tB) - cl / 2, w: tabs.panel + cl, h: tB + cl, what: 'panel' });
 
   if (cfg.cards.enabled) {
-    const inner = cfg.cards.cardW + 2;
-    const fw = inner + 2 * tB, fh = cfg.cards.height;
+    const fw = Math.min(Math.max(cfg.cards.frontW || 0, cfg.cards.cardW + 2), W - 2 * tB - 4), fh = cfg.cards.height;
     const fx = (W - fw) / 2;
     // front (white) with two tabs
     {
@@ -546,12 +621,12 @@ export function buildHablador(cfgIn, fonts) {
       for (const t of tx) slots.push({ x: fx + t - (tabs.front + cl) / 2, y: Y(fFront + tW) - cl / 2, w: tabs.front + cl, h: tW + cl, what: 'front' });
       if (cfg.cards.print) front.print = cardPrint(fw, fh);
     }
-    // sides (black, x2): depth × height, tab along the depth
+    // sides (black, x2) glued against the ends of the front, from the front face back to the panel; tab along the depth
     {
-      const d = cfg.cards.depth, h = cfg.cards.height, m = d / 2;
+      const d = tW + cfg.cards.depth, h = Math.min(cfg.cards.sideH || fh, fh), m = d / 2;
       const ring = [[0, 0], [0, -h], [d, -h], [d, 0], [m + tabs.side / 2, 0], [m + tabs.side / 2, tB], [m - tabs.side / 2, tB], [m - tabs.side / 2, 0]];
-      add({ id: 'cardSide', name: 'Lateral porta tarjetas', mat: 'black', qty: 2, contours: [roundPoly(ring, [0, 4, 0, 0, 0, 0.4, 0.4, 0])] });
-      for (const sx of [fx + tB / 2, fx + fw - tB / 2]) slots.push({ x: sx - (tB + cl) / 2, y: Y(fFront + tW + m + tabs.side / 2) - cl / 2, w: tB + cl, h: tabs.side + cl, what: 'side' });
+      add({ id: 'cardSide', name: 'Lateral porta tarjetas', mat: 'black', qty: 2, contours: [roundPoly(ring, [0, 4, 0, 0, 0, 0.4, 0.4, 0])], cardSide: { h } });
+      for (const sx of [fx - tB / 2, fx + fw + tB / 2]) slots.push({ x: sx - (tB + cl) / 2, y: Y(fFront + m + tabs.side / 2) - cl / 2, w: tB + cl, h: tabs.side + cl, what: 'side' });
     }
   }
   if (cfg.braces.enabled) {
@@ -580,7 +655,7 @@ export function buildHablador(cfgIn, fonts) {
   }
   for (const p of pieces) p.size = bbox(p.contours);
 
-  const model = { cfg, pieces, warnings, slots, layout: { panelW, panelH, platesTop, platesBottom, shoulder, fPanel, fFront, pxs, plateW, plateH } };
+  const model = { cfg, pieces, warnings, slots, layout: { panelW, panelH, platesTop, platesBottom, fPanel, fFront, pxs, plateW, plateH } };
 
   function cardPrint(fw, fh) {
     // logo printed (UV) on the card-holder front: small icon + title + subtitle
@@ -588,8 +663,10 @@ export function buildHablador(cfgIn, fonts) {
     const ih = fh * 0.36, top = 5;
     const mini = cfg.icon.type === 'cube' ? cubeIcon(fw / 2, -fh + top + ih, ih, 2 * (ih / cfg.icon.height) * 1.6) : null;
     if (mini) {
-      out.push({ fill: '#111111', contours: [roundPoly(offsetConvex(mini.hull, 0.9), 0.6)] });
-      out.push({ fill: '#ffffff', contours: mini.pieces.flatMap((p) => p.contours) });
+      // line-art version of the icon (even-odd rings) + heart
+      const g = 1.1, lw = 0.6;
+      const rings = mini.pieces.flatMap((p) => [roundPoly(offsetConvex(p.pts, -g / 2 + lw / 2), 0.5), roundPoly(offsetConvex(p.pts, -g / 2 - lw / 2), 0.3)]);
+      out.push({ fill: '#111111', evenodd: true, contours: rings });
       out.push({ fill: '#111111', contours: [mini.heart] });
     }
     const t1 = cfg.title.text.trim() ? textBlock(font(cfg.title.font), cfg.title.text, { height: fh * 0.2, maxWidth: fw * 0.62, tracking: cfg.title.tracking, cx: fw / 2, top: -fh + top + (mini ? ih + 2.5 : 8) }) : null;
@@ -682,6 +759,15 @@ export const MATERIALS = (cfg) => ({
   jig: 'Plantilla de pegado (cartón o MDF 3 mm)',
 });
 
+// Print layer → <path> (+ <linearGradient> for two-colour QR codes, left→right diagonal across the layer).
+let gradSeq = 0;
+function layerSVG(layer, cs) {
+  const d = contoursD(cs), rule = layer.evenodd ? 'evenodd' : 'nonzero';
+  if (!layer.grad) return `<path fill="${layer.fill}" fill-rule="${rule}" d="${d}"/>\n`;
+  const bb = bbox(cs), id = 'grad' + ++gradSeq;
+  return `<linearGradient id="${id}" gradientUnits="userSpaceOnUse" x1="${f3(bb.x0)}" y1="${f3(bb.y0)}" x2="${f3(bb.x1)}" y2="${f3(bb.y1)}"><stop offset="0" stop-color="${layer.grad[0]}"/><stop offset="1" stop-color="${layer.grad[1]}"/></linearGradient>\n<path fill="url(#${id})" fill-rule="${rule}" d="${d}"/>\n`;
+}
+
 // One SVG per sheet: red hairline cut lines, one path (compound) per piece.
 export function cutSVGs(model, mat) {
   const { w, h } = model.cfg.sheet;
@@ -703,7 +789,7 @@ export function printSVG(model) {
   for (const p of list) {
     const bb = bbox(p.contours), dx = x - bb.x0, dy = 10 - bb.y0;
     let g = `<g id="IMPRESION_${idOf(p.id)}">\n<path fill="#ffffff" stroke="#00aeef" stroke-width="0.1" d="${contoursD(translate(p.contours, dx, dy))}"/>\n`;
-    for (const layer of p.print) g += `<path fill="${layer.fill}" fill-rule="nonzero" d="${contoursD(translate(layer.contours, dx, dy))}"/>\n`;
+    for (const layer of p.print) g += layerSVG(layer, translate(layer.contours, dx, dy));
     parts.push(g + '</g>\n');
     x += bb.w + gap; H = Math.max(H, bb.h);
   }
@@ -723,14 +809,15 @@ export function assemblySVG(model) {
   o += `<path fill="${blk}" fill-rule="evenodd" d="${P(byId('panel').contours)}"/>\n`;
   for (const p of model.pieces.filter((q) => q.onPanel && !q.overWhite)) {
     o += `<path fill="${wht}" stroke="${edge}" stroke-width="0.15" fill-rule="evenodd" d="${P(p.contours)}"/>\n`;
-    for (const layer of p.print) o += `<path fill="${layer.fill}" d="${P(layer.contours)}"/>\n`;
+    for (const layer of p.print) o += layerSVG(layer, translate(layer.contours, ox, oy));
   }
   for (const p of model.pieces.filter((q) => q.overWhite)) o += `<path fill="${blk}" d="${P(p.contours)}"/>\n`;
   const cf = byId('cardFront');
   if (cf) {
-    const { x } = cf.cardFront;
+    const { x, w } = cf.cardFront, sd = byId('cardSide');
+    if (sd) for (const sx of [x - tB, x + w]) o += `<path fill="${blk}" stroke="#000" stroke-width="0.15" d="${P([rectC(sx, -sd.cardSide.h, tB, sd.cardSide.h, 0.6)])}"/>\n`;
     o += `<path fill="${wht}" stroke="${edge}" stroke-width="0.15" d="${P(translate(cf.contours, x, 0))}"/>\n`;
-    for (const layer of cf.print) o += `<path fill="${layer.fill}" d="${P(translate(layer.contours, x, 0))}"/>\n`;
+    for (const layer of cf.print) o += layerSVG(layer, translate(layer.contours, x + ox, oy));
   }
   o += `<rect x="20" y="${f3(oy)}" width="${f3(W)}" height="${f3(2 * tB)}" rx="1" fill="${blk}"/>\n`;
   o += `</g>\n`;

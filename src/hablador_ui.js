@@ -53,11 +53,16 @@ export class HabladorStudio {
         <section class="card">
           <h3>Hablador</h3>
           ${txt('Nombre', 'name')}
-          ${num('Ancho (mm)', 'width')}
+          ${num('Ancho base (mm)', 'width')}
+          ${num('Ancho panel (mm)', 'panelWidth', 'Panel negro trasero; la base sobresale a cada lado')}
           ${num('Alto total (mm)', 'height')}
           ${num('Fondo de la base (mm)', 'depth')}
           ${num('Radio esquinas panel', 'panelCorner')}
           ${num('Borde negro del ícono', 'border')}
+          ${num('Alero izquierdo (× alto)', 'roof.left', 'Altura del hombro izquierdo del techo, como fracción del alto del panel')}
+          ${num('Alero derecho (× alto)', 'roof.right')}
+          ${num('Pendiente techo izq.', 'roof.leftSlope')}
+          ${num('Pendiente techo der.', 'roof.rightSlope')}
         </section>
         <section class="card">
           <h3>Materiales</h3>
@@ -95,6 +100,7 @@ export class HabladorStudio {
             ${txt('Texto', 'subtitle.text')}
             ${font('subtitle.font')}
             ${num('Alto de letra (mm)', 'subtitle.capHeight')}
+            ${num('Ancho total (mm, 0 = libre)', 'subtitle.width', 'Ajusta el espaciado para que la palabra mida exactamente este ancho')}
             ${num('Espaciado (× alto)', 'subtitle.tracking')}
           </div>
         </section>
@@ -113,7 +119,7 @@ export class HabladorStudio {
           <div data-show="qr">
             <label class="row">Cantidad <select data-r="qrCount"><option>1</option><option>2</option><option>3</option></select></label>
             ${font('qr.labelFont')}
-            ${num('Ancho placa (mm)', 'qr.w')}
+            ${num('Ancho placa (mm, 0 = auto)', 'qr.w')}
             ${num('Alto placa (mm)', 'qr.h')}
             <div data-r="qrItems"></div>
           </div>
@@ -131,6 +137,8 @@ export class HabladorStudio {
           ${chk('Incluir porta tarjetas', 'cards.enabled')}
           <div data-show="cards">
             ${num('Ancho tarjeta (mm)', 'cards.cardW')}
+            ${num('Ancho frente (mm)', 'cards.frontW')}
+            ${num('Alto laterales (mm)', 'cards.sideH')}
             ${num('Alto (mm)', 'cards.height')}
             ${num('Fondo (mm)', 'cards.depth')}
             ${chk('Imprimir logo en el frente', 'cards.print')}
@@ -173,7 +181,12 @@ export class HabladorStudio {
       const el = e.target;
       if (el.dataset.r === 'qrCount') { this.setQrCount(+el.value); return; }
       const k = el.dataset.k, qi = el.dataset.qi;
-      if (qi != null) { this.cfg.qr.items[+qi][el.dataset.qf] = el.value; this.schedule(); return; }
+      if (qi != null) {
+        const it = this.cfg.qr.items[+qi], f = el.dataset.qf;
+        if (f === 'grad') { it.color2 = el.checked ? (it._c2 || '#e8127c') : ''; if (!el.checked) it._c2 = undefined; this.renderQrItems(); }
+        else { it[f] = el.value; if (f === 'color2') it._c2 = el.value; }
+        this.schedule(); return;
+      }
       if (!k) return;
       let v;
       if (el.type === 'checkbox') v = el.checked;
@@ -244,7 +257,7 @@ export class HabladorStudio {
 
   setQrCount(n) {
     const items = this.cfg.qr.items;
-    const presets = DEFAULT_HABLADOR().qr.items.concat([{ label: 'VISÍTANOS', sub: 'NUESTRA WEB', url: 'https://ejemplo.com', color: '#111111' }]);
+    const presets = DEFAULT_HABLADOR().qr.items.concat([{ label: 'VISÍTANOS', sub: 'NUESTRA WEB', url: 'https://ejemplo.com', color: '#111111', color2: '', badge: 'none' }]);
     while (items.length < n) items.push({ ...presets[items.length] });
     items.length = n;
     if (this.cfg.nfc.plate >= n) this.cfg.nfc.plate = 0;
@@ -261,6 +274,9 @@ export class HabladorStudio {
         <label class="row">Texto <input type="text" data-qi="${i}" data-qf="label" value="${esc(q.label)}" /></label>
         <label class="row">Línea 2 <input type="text" data-qi="${i}" data-qf="sub" value="${esc(q.sub)}" /></label>
         <label class="row">Color QR <input type="color" data-qi="${i}" data-qf="color" value="${esc(q.color)}" /></label>
+        <label class="row">Degradado <input type="checkbox" data-qi="${i}" data-qf="grad" ${q.color2 ? 'checked' : ''} /></label>
+        ${q.color2 ? `<label class="row">Color 2 <input type="color" data-qi="${i}" data-qf="color2" value="${esc(q.color2)}" /></label>` : ''}
+        <label class="row">Ícono al centro <select data-qi="${i}" data-qf="badge">${[['none', 'Ninguno'], ['whatsapp', 'WhatsApp'], ['instagram', 'Instagram']].map(([v, l]) => `<option value="${v}" ${(q.badge || 'none') === v ? 'selected' : ''}>${l}</option>`).join('')}</select></label>
       </div>`).join('');
     const sel = this.$('nfcPlate');
     sel.innerHTML = items.map((q, i) => `<option value="${i}">Placa ${i + 1} · ${esc(q.label)}</option>`).join('');

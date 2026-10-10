@@ -16,6 +16,8 @@ for (const [fam, file] of Object.entries(HABLADOR_FONTS)) {
 
 function checkModel(m, label) {
   const cfg = m.cfg;
+  const pnl = m.pieces.find((p) => p.id === 'panel').size;
+  ok(pnl.x0 >= -0.01 && pnl.x1 <= m.layout.panelW + 0.01 && pnl.h <= cfg.height - 2 * cfg.black.t + cfg.black.t + 0.01, `${label}: el panel no se sale de su ancho ni del alto total`);
   // every contour closed and finite
   let bad = 0;
   for (const p of m.pieces) for (const c of p.contours) {
@@ -68,16 +70,20 @@ console.log('Hablador LOVECUBE (por defecto)');
   ok(Date.now() - t0 < 5000, `genera en ${Date.now() - t0} ms`);
   ok(m.warnings.length === 0, 'sin avisos: ' + JSON.stringify(m.warnings));
   checkModel(m, 'LOVECUBE');
-  ok(m.pieces.filter((p) => p.id === 'title').length === 1, 'título soldado en UNA pieza');
+  ok(m.pieces.filter((p) => p.id.startsWith('title_')).length === 'LOVECUBE'.length, 'título en letras sueltas');
+  ok(['icon_faceL', 'icon_faceR', 'icon_card'].every((id) => m.pieces.some((p) => p.id === id && p.mat === 'white')), 'ícono: 2 caras + tarjeta en blanco');
   ok(m.pieces.filter((p) => p.id.startsWith('sub_')).length === 'PHOTOBOOTH'.length, 'subtítulo en letras sueltas');
   ok(m.pieces.every((p) => !p.qc?.thin), 'ninguna pieza con zonas < 1.2 mm');
   const W = m.pieces.filter((p) => p.mat === 'white'), B = m.pieces.filter((p) => p.mat === 'black');
   ok(W.some((p) => p.id === 'qr1') && W.some((p) => p.id === 'qr2') && W.some((p) => p.id === 'cardFront'), 'blanco: placas QR y frente porta tarjetas');
   ok(['panel', 'baseTop', 'baseBottom', 'cardSide', 'brace', 'heart'].every((id) => B.some((p) => p.id === id)), 'negro: panel, bases, laterales, soportes y corazón');
   const panel = m.pieces.find((p) => p.id === 'panel');
-  ok(near(panel.size.w, 168, 0.01) && near(panel.size.h, 250 - 2 * 3 + 3, 0.05), `panel ${panel.size.w.toFixed(2)} × ${panel.size.h.toFixed(2)} (incl. pestañas)`);
-  const qr = m.pieces.find((p) => p.id === 'qr1');
-  ok(near(qr.size.w, 73, 0.01) && near(qr.size.h, 85, 0.01), 'placa QR 73 × 85 mm');
+  ok(near(panel.size.w, 148, 0.01) && panel.size.h <= 250 - 2 * 3 + 3 + 0.01 && panel.size.h > 245, `panel ${panel.size.w.toFixed(2)} × ${panel.size.h.toFixed(2)} (incl. pestañas, sin pasar el alto total)`);
+  const qr = m.pieces.find((p) => p.id === 'qr1'), qr2 = m.pieces.find((p) => p.id === 'qr2');
+  ok(near(qr.size.w, 65, 0.01) && near(qr2.size.w, 65, 0.01) && qr.size.h > 74 && qr2.size.h > qr.size.h, `placas QR 65 mm de ancho con techo inclinado (${qr.size.h.toFixed(1)} / ${qr2.size.h.toFixed(1)} mm)`);
+  const sl = m.slots.filter((s) => s.what === 'side'), fr = m.slots.filter((s) => s.what === 'front');
+  ok(sl.length === 2 && sl[0].x + sl[0].w < Math.min(...fr.map((s) => s.x)) && sl[1].x > Math.max(...fr.map((s) => s.x + s.w)), 'laterales del porta tarjetas por fuera del frente');
+  ok(qr.print.some((l) => l.evenodd) && qr2.print.some((l) => l.grad), 'QR con ícono central y degradado');
 }
 
 console.log('Variantes: 3 QR, NFC, sin porta tarjetas, acrílico 5 mm');

@@ -1,6 +1,6 @@
 {
   "name": "relieve3d",
-  "version": "1.8.0",
+  "version": "1.8.1",
   "description": "Convierte imágenes en modelos 3D por capas de color (llaveros, letreros, relieves) con vista previa 3D.",
   "main": "main.js",
   "scripts": {
