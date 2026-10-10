@@ -1,7 +1,7 @@
 // Estudio 2D: preparación de logos (vectorizar, quitar fondo, engrosar, reducir colores, bordeado, silueta, reorganizar)
 // y cake toppers para corte láser (letras soldadas en una sola pieza, sin huecos, con palitos; SVG para Corel).
 import { processImage, DEFAULT_PROC } from './core/processing.js';
-import { edt, dilate, close, fillHoles, fillSmallHoles, components, connectIslands, fillPolygon, traceMask, maskBBox, countOn, widenHoles } from './core/raster.js';
+import { edt, dilate, close, fillHoles, fillSmallHoles, components, connectIslands, fillPolygon, traceMask, maskBBox, countOn, widenHoles, liftCounters } from './core/raster.js';
 import { renderTextImage, ensureFont, BUNDLED_FONTS } from './core/text.js';
 import { CAKE_PRESETS } from './modules.js';
 import { imageReady } from './core/imageload.js';
@@ -689,13 +689,25 @@ export class Studio {
     };
     const out = { W, H, L, ppm, ox, oy, f, cake };
     if (!cake) {
+      // white counters kept as pieces behave as holes while thickening/widening
+      const counters = st.minHole > 0 ? liftCounters(L, W, H) : null;
       grow(mm(st.thicken), true);
       if (st.minHole > 0) widenHoles(L, W, H, mm(st.minHole), mm(0.6));
+      counters?.restore();
       if (st.border.enabled && st.border.mm > 0) {
         const fg = fgOf();
         const dist = edt(fg, W, H);
+        // inside letter counters the outline leaves at least the minimum hole open
+        let lim = () => mm(st.border.mm);
+        if (st.minHole > 0 && !st.border.fillHoles) {
+          const filled = fillHoles(fg, W, H);
+          const { labels: hl, comps: hc } = components(Uint8Array.from(filled, (v, i) => (v && !fg[i] ? 1 : 0)), W, H, false);
+          const rho = new Float32Array(hc.length);
+          for (let i = 0; i < N; i++) if (hl[i] >= 0 && dist[i] > rho[hl[i]]) rho[hl[i]] = dist[i];
+          lim = (i) => (hl[i] >= 0 ? Math.min(mm(st.border.mm), rho[hl[i]] - mm(st.minHole) / 2) : mm(st.border.mm));
+        }
         let bm = new Uint8Array(N);
-        for (let i = 0; i < N; i++) if (!fg[i] && dist[i] <= mm(st.border.mm)) bm[i] = 1;
+        for (let i = 0; i < N; i++) if (!fg[i] && dist[i] <= lim(i)) bm[i] = 1;
         if (st.border.fillHoles) { const all = fillHoles(Uint8Array.from(fg, (v, i) => v || bm[i]), W, H); bm = Uint8Array.from(all, (v, i) => (v && !fg[i] ? 1 : 0)); }
         for (let i = 0; i < N; i++) if (bm[i]) L[i] = BORDER;
       }

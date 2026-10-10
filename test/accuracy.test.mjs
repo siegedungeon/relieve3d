@@ -123,6 +123,21 @@ function res0(res, p) { return res.palette[p.cluster].hex !== '#ffffff'; }
   expect(holeArea(wide) > 4 * holeArea(plain), 'counters widened towards 1 mm');
   expect(holeArea(wide) / 6 < Math.PI * 6 * 6, 'widened counters stay small');
 }
+// same counters on a white sticker face inside a red ring, with 4 colours forced (one more than the logo has):
+// they are white pieces of the face colour and must survive (and widen) as well
+{
+  const shapes = [circle(500, 500, 480, [200, 30, 50]), circle(500, 500, 420, [253, 253, 253])];
+  for (let k = 0; k < 6; k++) shapes.push(circle(200 + (k % 3) * 300, 400 + ((k / 3) | 0) * 200, 40, [0, 0, 0]), circle(200 + (k % 3) * 300, 400 + ((k / 3) | 0) * 200, 2, [253, 253, 253]));
+  const img = render(1000, 1000, shapes);
+  const counters = (res) => res.pieces.filter((p) => res.palette[p.cluster].r > 230 && res.palette[p.cluster].g > 230)
+    .flatMap((p) => p.shapes).filter((s) => Math.abs(polyArea(s.outer)) / res.upscale ** 2 < 2000).map((s) => Math.abs(polyArea(s.outer)) / res.upscale ** 2);
+  const plain = processImage(img, { colors: 4, minHoleMM: 0 }), wide = processImage(img, { colors: 4, minHoleMM: 1, widthMM: 50 });
+  const a = counters(plain), b = counters(wide);
+  console.log(`face counters: ${a.length} (area ${a.reduce((s, v) => s + v, 0).toFixed(0)}) widened ${b.length} (area ${b.reduce((s, v) => s + v, 0).toFixed(0)}) colours ${plain.palette.length}`);
+  expect(a.length === 6, 'all 6 white counters on the face kept');
+  expect(b.length === 6 && b.reduce((s, v) => s + v, 0) > 3 * a.reduce((s, v) => s + v, 0), 'white counters widened towards 1 mm');
+  expect(plain.palette.length === 3, 'near-identical colours are not split when the count is forced');
+}
 function polyArea(p) { let a = 0; for (let i = 0; i < p.length; i++) { const q = p[(i + 1) % p.length]; a += p[i][0] * q[1] - q[0] * p[i][1]; } return a / 2; }
 
 if (fail) { console.log(`accuracy: ${fail} check(s) failed`); process.exit(1); }

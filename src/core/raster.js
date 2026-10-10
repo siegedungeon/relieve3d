@@ -144,6 +144,69 @@ export function widenHoles(L, W, H, minD, wall = 0) {
   return n;
 }
 
+// Counters painted with a colour (the white hole of an "a" sitting on a white sticker face): a part enclosed by a
+// single other part whose colour also appears just outside that part. They are lifted out of L (set to -1) so hole
+// operations (widenHoles, hole-aware thickening, thin-line cleanup) treat them as holes; restore() paints every
+// enclosed empty region that contained a counter back with its colour. Returns { n, restore() }; restore() returns
+// the mask of restored pixels.
+export function liftCounters(L, W, H, minArea = 4) {
+  const N = W * H, comp = new Int32Array(N).fill(-1), stack = new Int32Array(N), lab = [], area = [], touch = [], box = [];
+  for (let s = 0; s < N; s++) {
+    if (L[s] < 0 || comp[s] >= 0) continue;
+    const id = lab.length, l = L[s];
+    let sp = 0, a = 0, t = 0, x0 = W, y0 = H, x1 = -1, y1 = -1; stack[sp++] = s; comp[s] = id;
+    while (sp) {
+      const i = stack[--sp], x = i % W, y = (i / W) | 0;
+      a++;
+      if (x < x0) x0 = x; if (x > x1) x1 = x; if (y < y0) y0 = y; if (y > y1) y1 = y;
+      if (x === 0 || y === 0 || x === W - 1 || y === H - 1) t = 1;
+      for (let k = 0; k < 4; k++) {
+        const j = k === 0 ? (x > 0 ? i - 1 : -1) : k === 1 ? (x < W - 1 ? i + 1 : -1) : k === 2 ? (y > 0 ? i - W : -1) : (y < H - 1 ? i + W : -1);
+        if (j < 0) continue;
+        if (L[j] < 0) t = 1; else if (L[j] === l && comp[j] < 0) { comp[j] = id; stack[sp++] = j; }
+      }
+    }
+    lab.push(l); area.push(a); touch.push(t); box.push([x0, y0, x1, y1]);
+  }
+  const n = lab.length, nb = Array.from({ length: n }, () => new Set());
+  for (let i = 0; i < N; i++) {
+    const c = comp[i];
+    if (c < 0) continue;
+    const x = i % W;
+    if (x < W - 1 && comp[i + 1] >= 0 && comp[i + 1] !== c) { nb[c].add(comp[i + 1]); nb[comp[i + 1]].add(c); }
+    if (i + W < N && comp[i + W] >= 0 && comp[i + W] !== c) { nb[c].add(comp[i + W]); nb[comp[i + W]].add(c); }
+  }
+  const lift = new Uint8Array(n);
+  let cnt = 0;
+  for (let c = 0; c < n; c++) {
+    if (touch[c] || nb[c].size !== 1 || area[c] < minArea) continue;
+    const [e] = nb[c];
+    if (lab[e] === lab[c] || area[c] > area[e]) continue;
+    // counters are compact; long hairlines inside a colour are not
+    const bc = box[c], bw = bc[2] - bc[0] + 1, bh = bc[3] - bc[1] + 1;
+    if (Math.min(bw, bh) < 0.2 * Math.max(bw, bh) || area[c] < 0.3 * bw * bh) continue;
+    // same colour as a part lying outside the enclosing part (not another letter inside it) → see-through counter
+    const be = box[e], inside = (b) => b[0] > be[0] && b[1] > be[1] && b[2] < be[2] && b[3] < be[3];
+    if ([...nb[e]].some((d) => d !== c && lab[d] === lab[c] && (touch[d] || !inside(box[d])))) { lift[c] = 1; cnt++; }
+  }
+  const mark = new Int16Array(N).fill(-1);
+  if (cnt) for (let i = 0; i < N; i++) if (comp[i] >= 0 && lift[comp[i]]) { mark[i] = L[i]; L[i] = -1; }
+  const restore = () => {
+    if (!cnt) return new Uint8Array(N);
+    const fg = Uint8Array.from(L, (v) => (v >= 0 ? 1 : 0));
+    const out = outsideOf(fg, W, H);
+    const hole = new Uint8Array(N);
+    for (let i = 0; i < N; i++) hole[i] = !fg[i] && !out[i] ? 1 : 0;
+    const { labels: hl, comps } = components(hole, W, H, false);
+    const col = new Int32Array(comps.length).fill(-1);
+    for (let i = 0; i < N; i++) if (hl[i] >= 0 && mark[i] >= 0 && col[hl[i]] < 0) col[hl[i]] = mark[i];
+    const kept = new Uint8Array(N);
+    for (let i = 0; i < N; i++) if (hl[i] >= 0 && col[hl[i]] >= 0) { L[i] = col[hl[i]]; kept[i] = 1; }
+    return kept;
+  };
+  return { n: cnt, restore };
+}
+
 // Connected components of mask != 0.
 export function components(mask, W, H, conn8 = true) {
   const N = W * H, labels = new Int32Array(N).fill(-1), stack = new Int32Array(N), comps = [];

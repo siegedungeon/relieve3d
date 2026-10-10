@@ -1,5 +1,5 @@
 // Image → color regions → pieces → vector loops (pure JS, no DOM).
-import { edt, widenHoles } from './raster.js';
+import { edt, widenHoles, liftCounters } from './raster.js';
 
 export const DEFAULT_PROC = {
   colors: 0,          // 0 = auto
@@ -424,8 +424,10 @@ export function labelComponents(labels, W, H) {
   return { comp, comps };
 }
 
-function mergeSmall(labels, comp, comps, W, H, minArea) {
+function mergeSmall(labels, comp, comps, W, H, minArea, keep) {
   const small = comps.map((c) => c.area < minArea);
+  // letter counters stay, however small
+  if (keep) for (let i = 0; i < keep.length; i++) if (keep[i] && comp[i] >= 0) small[comp[i]] = false;
   if (!small.some(Boolean)) return false;
   const votes = new Map();
   const vote = (c, l) => {
@@ -774,8 +776,9 @@ export function processImage(img, opts = {}) {
 
   const k = o.colors > 0 ? o.colors : estimateColorCount(img, sample);
   let centers = kmeansVec(lab, sample, k);
-  // auto mode: drop near-duplicate clusters (ΔE < 8) that only come from semi-transparent/noisy pixels
-  if (!(o.colors > 0) && centers.length > 1) {
+  // drop near-duplicate clusters (ΔE < 8): they only come from semi-transparent/noisy pixels, and a forced count
+  // would otherwise split one flat colour (e.g. two whites) into speckled halves that the cleanups shred
+  if (centers.length > 1) {
     const keep = [];
     for (const c of centers) if (!keep.some((q) => (q[0] - c[0]) ** 2 + (q[1] - c[1]) ** 2 + (q[2] - c[2]) ** 2 < 64)) keep.push(c);
     centers = keep;
@@ -792,6 +795,8 @@ export function processImage(img, opts = {}) {
   // as real holes they can't be swallowed by the thin-line / speck cleanups below
   if (fg.bg && openCounters(labels, rgb, rgbC, fg.bg, Math.max(30, o.tolerance), W, H)) peelBackground(labels, rgb, rgbC, fg.bg, W, H);
   // hairline outlines / fringes (1–3 px) become loose slivers and paper-thin walls when printed
+  // coloured counters (white hole of a letter on a white face) are handled as holes so the cleanups keep them
+  const counters = liftCounters(labels, W, H);
   const minW = Number.isFinite(+o.minWidth) ? +o.minWidth : 0;
   if (minW >= 0) {
     const rThin = minW > 0 ? (minW * sc) / 2 : Math.max(1.5, 0.0015 * Math.max(W, H));
@@ -804,12 +809,29 @@ export function processImage(img, opts = {}) {
     const ppm = (x1 - x0 + 1) / o.widthMM;
     if (x1 >= x0) widenHoles(labels, W, H, o.minHoleMM * ppm, (o.holeWallMM ?? 0.6) * ppm);
   }
+  const keep = counters.restore();
 
   const minArea = o.minArea > 0 ? o.minArea * sc * sc : Math.max(12, Math.round(fgCount * 0.00015));
   let comp, comps;
   for (let iter = 0; ; iter++) {
     ({ comp, comps } = labelComponents(labels, W, H));
-    if (iter >= 5 || !mergeSmall(labels, comp, comps, W, H, minArea)) break;
+    if (iter >= 5 || !mergeSmall(labels, comp, comps, W, H, minArea, keep)) break;
+  }
+  // a colour whose final mean is (almost) the same as a larger one's is folded into it: no extra filament slot
+  {
+    const acc = centers.map(() => [0, 0, 0, 0]);
+    for (let i = 0; i < N; i++) { const l = labels[i]; if (l < 0) continue; const t = acc[l]; t[0] += img.data[i * 4]; t[1] += img.data[i * 4 + 1]; t[2] += img.data[i * 4 + 2]; t[3]++; }
+    const idx = acc.map((a, i) => i).filter((i) => acc[i][3] > 0).sort((a, b) => acc[b][3] - acc[a][3]);
+    const to = centers.map((c, i) => i);
+    for (let u = 1; u < idx.length; u++) for (let v = 0; v < u; v++) {
+      const a = acc[idx[u]], b = acc[idx[v]];
+      const d2 = [0, 1, 2].reduce((s, c) => s + (a[c] / a[3] - b[c] / b[3]) ** 2, 0);
+      if (d2 < 144 && to[idx[v]] === idx[v]) { to[idx[u]] = idx[v]; break; }
+    }
+    if (to.some((t, i) => t !== i)) {
+      for (let i = 0; i < N; i++) if (labels[i] >= 0) labels[i] = to[labels[i]];
+      ({ comp, comps } = labelComponents(labels, W, H));
+    }
   }
 
   // palette: clusters ordered by area
