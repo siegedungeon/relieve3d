@@ -11,7 +11,11 @@
         "three": "../node_modules/three/build/three.module.js",
         "three/addons/": "./vendor/three-addons/",
         "fflate": "../node_modules/fflate/esm/browser.js",
-        "qrcode-generator": "../node_modules/qrcode-generator/dist/qrcode.mjs"
+        "qrcode-generator": "../node_modules/qrcode-generator/dist/qrcode.mjs",
+        "opentype.js": "../node_modules/opentype.js/dist/opentype.mjs",
+        "polygon-clipping": "../node_modules/polygon-clipping/dist/polygon-clipping.esm.js",
+        "splaytree": "../node_modules/splaytree/dist/splaytree.js",
+        "robust-predicates": "../node_modules/robust-predicates/index.js"
       }
     }
   </script>
@@ -501,11 +505,12 @@
 
   <!-- STUDIO 2D -->
   <div id="studio" class="studio" hidden></div>
+  <div id="hablador" class="studio" hidden></div>
 
   <div id="busy" class="busy" hidden><div class="spinner"></div><span id="busyText">Procesando…</span></div>
   <div id="toast" class="toast" hidden></div>
   <input type="file" id="fileImage" accept="image/*" hidden />
-  <input type="file" id="fileProject" accept=".r3d,.r3s,.json" hidden />
+  <input type="file" id="fileProject" accept=".r3d,.r3s,.r3h,.json" hidden />
 
   <script type="module" src="app.js"></script>
 </body>

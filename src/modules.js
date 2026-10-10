@@ -70,6 +70,10 @@ export const MODULES = [
     id: 'cakelaser', group: '2d', icon: '✂️', title: 'Cake topper láser',
     desc: 'Letras soldadas en una sola pieza con palitos, SVG listo para Corel.',
   },
+  {
+    id: 'hablador', group: '2d', icon: '🪧', title: 'Hablador acrílico',
+    desc: 'Despiece para corte láser (acrílico blanco y negro) desde un mockup: placas QR, NFC, porta tarjetas, logo, base con ranuras y plantilla de pegado.',
+  },
 ];
 
 export const MIC_PRESETS = {

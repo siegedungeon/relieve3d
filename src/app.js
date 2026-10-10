@@ -11,6 +11,7 @@ import { BODY_PRESETS, BODY_SHAPES, fitSlotY, parseSTL, autoOrient, placeCustomB
 import { Viewer3D } from './viewer3d.js';
 import { View2D, isTyping } from './view2d.js';
 import { Studio } from './studio.js';
+import { HabladorStudio } from './hablador_ui.js';
 
 const $ = (id) => document.getElementById(id);
 const fmt = (v) => String(Math.round(v * 100) / 100);
@@ -1033,6 +1034,7 @@ async function openProjectFile(file) {
   try {
     const j = JSON.parse(await file.text());
     if (j.app === 'Relieve3D-Studio') { hideHome(); studio.openProject(j); return; }
+    if (j.app === 'Relieve3D-Hablador') { hideHome(); await hablador.openProject(j); return; }
     if (j.app !== 'Relieve3D') throw new Error('No es un proyecto de Relieve3D');
     S.module = j.state.module || 'logo';
     S.text = { ...DEFAULT_TEXT(), ...(j.state.text || {}) };
@@ -1185,14 +1187,15 @@ document.addEventListener('drop', (e) => {
   const f = e.dataTransfer.files[0];
   if (!f) return;
   if (!$('studio').hidden) { studio.loadFile(f); return; }
-  if (/\.(r3d|r3s|json)$/i.test(f.name)) { openProjectFile(f); return; }
+  if (!$('hablador').hidden) { if (/\.(r3h|json)$/i.test(f.name)) openProjectFile(f); else hablador.loadLogo(f); return; }
+  if (/\.(r3d|r3s|r3h|json)$/i.test(f.name)) { openProjectFile(f); return; }
   if (!$('home').hidden) { S.module = 'logo'; clearDesign(); hideHome(); applyModuleUI(); }
   loadImageFile(f);
 });
 
 // keyboard
 window.addEventListener('keydown', (e) => {
-  if (isTyping(e) || !$('home').hidden || !$('studio').hidden) return;
+  if (isTyping(e) || !$('home').hidden || !$('studio').hidden || !$('hablador').hidden) return;
   const k = e.key.toLowerCase(), ctrl = e.ctrlKey || e.metaKey;
   if (ctrl && k === 'z' && !e.shiftKey) { e.preventDefault(); undo(); }
   else if (ctrl && (k === 'y' || (k === 'z' && e.shiftKey))) { e.preventDefault(); redo(); }
@@ -1747,6 +1750,7 @@ const studio = new Studio($('studio'), {
   onBack: () => showHome(),
   onSendTo3D: (payload) => sendStudioTo3D(payload),
 });
+const hablador = new HabladorStudio($('hablador'), { toast, showBusy, hideBusy, onBack: () => showHome() });
 
 function renderHome() {
   const card = (m) => `<button class="home-card" data-mod="${m.id}"><span class="hc-icon">${m.icon}</span><span class="hc-title">${escHtml(m.title)}</span><span class="hc-desc">${escHtml(m.desc)}</span></button>`;
@@ -1755,6 +1759,7 @@ function renderHome() {
 }
 function showHome() {
   $('studio').hidden = true;
+  $('hablador').hidden = true;
   $('home').hidden = false;
   $('homeContinue').hidden = !S.result;
   if (S.result) $('homeContinue').textContent = `↩ Continuar: ${moduleDef(S.module).title}`;
@@ -1799,6 +1804,7 @@ function clearDesign() {
 
 async function enterModule(id) {
   const m = moduleDef(id);
+  if (id === 'hablador') { hideHome(); await hablador.open(); return; }
   if (m.group === '2d') { hideHome(); studio.open(id); return; }
   let keep = false;
   if (S.result) {
@@ -1869,7 +1875,7 @@ if (stUpdate) {
     else if (d.state === 'up-to-date' || d.state === 'error') stUpdate.hidden = true;
   });
 }
-window.__r3d = { S, setSelection, doExport, exportParts, undo, redo, commit, hist, setViewMode, enterModule, applyText, showHome, studio, getFeat: () => feat, onSettingChanged, placeRing, loadImageFile, view2d,
+window.__r3d = { S, setSelection, doExport, exportParts, undo, redo, commit, hist, setViewMode, enterModule, applyText, showHome, studio, hablador, getFeat: () => feat, onSettingChanged, placeRing, loadImageFile, view2d,
   applyTier, applyComposition, getOrig: () => orig, ringSnap, gramsEstimate, viewer, renderElements };
 
 syncProcInputs();

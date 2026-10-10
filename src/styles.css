@@ -231,3 +231,24 @@ textarea { width: 100%; font: inherit; font-size: 14px; padding: 6px 8px; border
 .elem-alt:hover { border-color: var(--sel); }
 .elem-alt.active { border-color: var(--accent); box-shadow: 0 0 0 2px rgba(22, 163, 74, .25); }
 #batchNames { width: 100%; box-sizing: border-box; resize: vertical; font: inherit; font-size: 12px; border: 1px solid var(--border); border-radius: 8px; padding: 6px; }
+
+/* Hablador acrílico */
+.hb-tabs { display: flex; gap: 4px; padding: 8px 12px; border-bottom: 1px solid var(--border); background: var(--panel); flex-wrap: wrap; }
+.hb-view { background: #e9ebef; overflow: auto !important; scrollbar-gutter: stable; }
+#hablador .views { grid-template-rows: minmax(0, 1fr); }
+.hb-svg { padding: 20px; display: flex; flex-direction: column; align-items: center; gap: 16px; }
+.hb-page { background: #fff; box-shadow: 0 2px 10px rgba(0,0,0,.12); line-height: 0; position: relative; }
+.hb-page svg { display: block; }
+.hb-cap { position: absolute; top: -16px; left: 0; line-height: 1; font-size: 11px; color: var(--muted); }
+.hb-cmp { display: flex; gap: 16px; align-items: flex-start; justify-content: center; width: 100%; }
+.hb-cmp img { max-width: 48%; max-height: calc(100vh - 160px); box-shadow: 0 2px 10px rgba(0,0,0,.12); background: #fff; }
+.hb-empty { padding: 40px; color: var(--muted); text-align: center; line-height: 1.4; }
+.hb-qr { border-top: 1px dashed var(--border); margin-top: 8px; padding-top: 4px; }
+.hb-qr h4 { margin: 4px 0; font-size: 12px; }
+.hb-layout .row input[type=text] { width: 150px; padding: 3px 6px; border: 1px solid var(--border); border-radius: 6px; }
+.hb-layout .row input[inputmode=decimal] { width: 72px; }
+.hb-w { color: #b45309; background: #fff7ed; border-radius: 6px; padding: 4px 6px; margin-bottom: 4px; font-size: 12px; }
+.hb-ok { color: #15803d; font-size: 12px; margin-bottom: 6px; }
+.hb-list h4 { margin: 8px 0 4px; font-size: 12px; }
+.hb-pc { display: flex; justify-content: space-between; gap: 6px; padding: 1px 0; font-size: 12px; }
+.hb-list { overflow-y: auto; }
