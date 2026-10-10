@@ -77,6 +77,7 @@ export class HabladorStudio {
           <h3>Ícono superior</h3>
           <label class="row">Tipo <select data-k="icon.type"><option value="cube">Cubo con corazón</option><option value="custom">Logo desde imagen</option><option value="none">Ninguno</option></select></label>
           ${num('Alto del ícono (mm)', 'icon.height')}
+          ${num('Desplazamiento horizontal (mm)', 'icon.offsetX', 'Negativo = a la izquierda. La V del ícono marca dónde se separan las placas QR')}
           <div data-show="cube">${chk('Corazón negro', 'icon.heart')}</div>
           <div data-show="custom">
             <button class="btn wide" data-a="logo">🖼️ Cargar logo (PNG/JPG)</button>
@@ -121,6 +122,9 @@ export class HabladorStudio {
             ${font('qr.labelFont')}
             ${num('Ancho placa (mm, 0 = auto)', 'qr.w')}
             ${num('Alto placa (mm)', 'qr.h')}
+            ${num('Inclinación izquierda', 'qr.slopeL', 'Cuánto sube el borde superior de las placas a la izquierda de la V (mm por mm)')}
+            ${num('Inclinación derecha', 'qr.slopeR', 'Cuánto sube el borde superior de las placas a la derecha de la V (mm por mm)')}
+            ${num('Corte respecto a la V (mm)', 'qr.split', 'Con 2 placas: desplaza la separación entre ellas respecto a la V del ícono')}
             <div data-r="qrItems"></div>
           </div>
         </section>

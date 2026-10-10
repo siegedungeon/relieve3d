@@ -66,12 +66,13 @@ function checkModel(m, label) {
 console.log('Hablador LOVECUBE (por defecto)');
 {
   const t0 = Date.now();
-  const m = buildHablador(DEFAULT_HABLADOR(), fonts);
+  const cfg0 = DEFAULT_HABLADOR();
+  const m = buildHablador(cfg0, fonts);
   ok(Date.now() - t0 < 5000, `genera en ${Date.now() - t0} ms`);
   ok(m.warnings.length === 0, 'sin avisos: ' + JSON.stringify(m.warnings));
   checkModel(m, 'LOVECUBE');
   ok(m.pieces.filter((p) => p.id.startsWith('title_')).length === 'LOVECUBE'.length, 'título en letras sueltas');
-  ok(['icon_faceL', 'icon_faceR', 'icon_card'].every((id) => m.pieces.some((p) => p.id === id && p.mat === 'white')), 'ícono: 2 caras + tarjeta en blanco');
+  ok(['icon_faceL', 'icon_faceR', 'icon_card', 'icon_lid'].every((id) => m.pieces.some((p) => p.id === id && p.mat === 'white')), 'ícono: 2 caras + tarjeta + tapa en blanco');
   ok(m.pieces.filter((p) => p.id.startsWith('sub_')).length === 'PHOTOBOOTH'.length, 'subtítulo en letras sueltas');
   ok(m.pieces.every((p) => !p.qc?.thin), 'ninguna pieza con zonas < 1.2 mm');
   const W = m.pieces.filter((p) => p.mat === 'white'), B = m.pieces.filter((p) => p.mat === 'black');
@@ -80,7 +81,12 @@ console.log('Hablador LOVECUBE (por defecto)');
   const panel = m.pieces.find((p) => p.id === 'panel');
   ok(near(panel.size.w, 148, 0.01) && panel.size.h <= 250 - 2 * 3 + 3 + 0.01 && panel.size.h > 245, `panel ${panel.size.w.toFixed(2)} × ${panel.size.h.toFixed(2)} (incl. pestañas, sin pasar el alto total)`);
   const qr = m.pieces.find((p) => p.id === 'qr1'), qr2 = m.pieces.find((p) => p.id === 'qr2');
-  ok(near(qr.size.w, 65, 0.01) && near(qr2.size.w, 65, 0.01) && qr.size.h > 74 && qr2.size.h > qr.size.h, `placas QR 65 mm de ancho con techo inclinado (${qr.size.h.toFixed(1)} / ${qr2.size.h.toFixed(1)} mm)`);
+  ok(qr.size.w > 58 && qr2.size.w > qr.size.w && near(qr.size.w + qr2.size.w + 5 + 2 * 6.8, 148, 0.05) && qr2.size.h > qr.size.h, `placas QR partidas en la V (${qr.size.w.toFixed(1)} / ${qr2.size.w.toFixed(1)} mm) con techo inclinado (${qr.size.h.toFixed(1)} / ${qr2.size.h.toFixed(1)} mm)`);
+  // calibres: every tab goes through the black base top (3 mm), every slot = thickness of its piece
+  const P = (id) => m.pieces.find((p) => p.id === id);
+  ok(near(P('cardFront').size.h, 40 + 3) && near(P('cardSide').size.h, 32 + 3) && near(P('brace').size.h, 50 + 3) && near(panel.size.h, m.layout.panelH + 3, 0.01), 'pestañas de 3 mm = grosor de la base negra');
+  ok(m.slots.filter((s) => s.what === 'front').every((s) => near(s.h, 4 + cfg0.clearance)) && m.slots.filter((s) => s.what !== 'front').every((s) => near(Math.min(s.w, s.h), 3 + cfg0.clearance)), 'ranuras: 4 mm (+holgura) para el frente blanco, 3 mm para panel, laterales y soportes negros');
+  ok(near(m.layout.fPanel - m.layout.fFront, 4 + 28), 'laterales: cubren el canto del frente blanco (4 mm) + fondo del porta tarjetas');
   const sl = m.slots.filter((s) => s.what === 'side'), fr = m.slots.filter((s) => s.what === 'front');
   ok(sl.length === 2 && sl[0].x + sl[0].w < Math.min(...fr.map((s) => s.x)) && sl[1].x > Math.max(...fr.map((s) => s.x + s.w)), 'laterales del porta tarjetas por fuera del frente');
   ok(qr.print.some((l) => l.evenodd) && qr2.print.some((l) => l.grad), 'QR con ícono central y degradado');

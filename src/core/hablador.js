@@ -29,11 +29,12 @@ export const DEFAULT_HABLADOR = () => ({
   roof: { left: 0.717, right: 0.857, leftSlope: 0.45, rightSlope: 0.57, eaveCorner: 8 },
   panelCorner: 4,
   baseCorner: 5,
-  border: 3,             // black outline around the top icon
-  title: { enabled: true, text: 'LOVECUBE', font: 'Montserrat ExtraBold', height: 14.6, maxWidth: 112, tracking: 0, weld: false, gapTop: 7.5 },
-  subtitle: { enabled: true, text: 'PHOTOBOOTH', font: 'Montserrat Black', capHeight: 5.7, width: 97, tracking: 0.6, gapTop: 4.8 },
+  border: 4,             // black outline around the top icon (from the white edge)
+  title: { enabled: true, text: 'LOVECUBE', font: 'Montserrat ExtraBold', height: 14.6, maxWidth: 112, tracking: 0, weld: false, gapTop: 7.3 },
+  subtitle: { enabled: true, text: 'PHOTOBOOTH', font: 'Montserrat Black', capHeight: 5.4, width: 95, tracking: 0.6, gapTop: 5.2 },
   qr: {
-    enabled: true, w: 0, h: 74, corner: 4, gap: 6, side: 6, topGap: 5, labelFont: 'Montserrat Black',
+    // split: offset of the gap between 2 plates from the V; slopeL/slopeR: rise of each plate top away from the V
+    enabled: true, w: 0, h: 71.4, corner: 4, gap: 5, side: 6.8, topGap: 6, split: 4.2, slopeL: 0.215, slopeR: 0.415, margin: 6, labelFont: 'Montserrat Black',
     items: [
       { label: 'ESCRÍBENOS', sub: 'POR WHATSAPP', url: 'https://wa.me/573000000000', color: '#22b33a', color2: '', badge: 'whatsapp' },
       { label: 'SÍGUENOS', sub: 'EN INSTAGRAM', url: 'https://instagram.com/lovecube.photobooth', color: '#ff7a1a', color2: '#e8127c', badge: 'instagram' },
@@ -41,7 +42,7 @@ export const DEFAULT_HABLADOR = () => ({
   },
   nfc: { enabled: false, diameter: 25, plate: 0 },
   cards: { enabled: true, cardW: 90, frontW: 115, height: 40, sideH: 32, depth: 28, frontOffset: 10, print: true },
-  icon: { type: 'cube', height: 84, heart: true, offsetX: 0, custom: null },
+  icon: { type: 'cube', height: 82.1, heart: true, offsetX: -7.1, custom: null },
   braces: { enabled: true, h: 50, d: 30 },
   jig: { enabled: true },
   sheet: { w: 600, h: 400, gap: 3, margin: 5 },
@@ -366,22 +367,24 @@ export function pathToContour(d) {
 // Partition traced from the LOVECUBE front view (y-up, mm, bottom vertex of the box at the origin, 84 mm tall
 // at scale 1): two box faces forming a V and a tilted card coming out of the box. Pieces are inset by gap/2 so
 // the black panel shows between them as clean lines.
+// White pieces measured on the target (origin = the V centre line, y up, mm at scale 1, 82.1 mm tall); the
+// black panel shows ≈2.6 mm between them. "lid" is the flap of the box seen between the card and the right face.
 const CUBE_ICON = {
-  faceL: [[0, 0], [-33.5, 12.5], [-33.5, 46.5], [0, 34]],
-  faceR: [[0, 0], [0, 37.85], [33.5, 46.7], [33.5, 12.5]],
-  card: [[-5.5, 36.4], [33.5, 46.7], [33.5, 84], [-7, 73.1]],
-  heart: { x: 13.6, y: 61, w: 10.5 },
-  h: 84,
-  slope: 12.5 / 33.5,  // slope of the V (bottom edges of the faces)
+  faceL: [[-33.9, 14.5], [-1.7, 0.4], [-1.7, 30.6], [-33.9, 45.0]],
+  faceR: [[1.7, 1.1], [32.7, 17.9], [32.7, 47.6], [1.7, 31.2]],
+  card: [[-5.0, 40.2], [32.7, 51.5], [32.7, 82.1], [-5.0, 70.3]],
+  lid: [[-5.3, 34.8], [-0.47, 32.65], [32.7, 48.75], [32.7, 50.35], [-5.3, 37.5]],  // ≥1.6 mm wide at its tip
+  heart: { x: 11.4, y: 61.9, w: 9.5 },
+  h: 82.1,
 };
 
-function cubeIcon(vx, vy, height, gap = 2, rIn = 1.2) {
+function cubeIcon(vx, vy, height, rIn = 1) {
   const k = height / CUBE_ICON.h;
   const T = (p) => [vx + p[0] * k, vy - p[1] * k];
-  const names = { faceL: 'Ícono · cara izquierda', faceR: 'Ícono · cara derecha', card: 'Ícono · tarjeta' };
+  const names = { faceL: 'Ícono · cara izquierda', faceR: 'Ícono · cara derecha', card: 'Ícono · tarjeta', lid: 'Ícono · tapa' };
   const pieces = Object.keys(names).map((key) => {
     const pts = CUBE_ICON[key].map(T);
-    return { key, name: names[key], contours: [roundPoly(offsetConvex(pts, -gap / 2), rIn)], pts };
+    return { key, name: names[key], contours: [roundPoly(pts, key === 'lid' ? Math.min(rIn, 0.5 * k) : rIn * Math.min(1, k * 2))], pts };
   });
   const hp = T([CUBE_ICON.heart.x, CUBE_ICON.heart.y]);
   return { pieces, heart: heartC(hp[0], hp[1], CUBE_ICON.heart.w * k), hull: convexHull(pieces.flatMap((p) => p.pts)), k };
@@ -450,16 +453,57 @@ export function buildHablador(cfgIn, fonts) {
   const roof = { left: 0.717, right: 0.857, leftSlope: 0.45, rightSlope: 0.57, eaveCorner: 8, ...(cfg.roof || {}) };
   const hL = roof.left * panelH, hR = roof.right * panelH;
   const roofAt = (x) => Math.min(panelH, hL + roof.leftSlope * x, hR + roof.rightSlope * (panelW - x));
+  const tabs = cfg.tabs;
+  const tabX = [cx - panelW * 0.3, cx + panelW * 0.3];
+
+  // ---- panel (black) outline: roof polygon ∪ outline of the icon, every corner filleted; tabs underneath
+  function panelOutline(iconRings, warn = () => {}) {
+    const ring = [[0, 0]];
+    for (const tx of tabX) { const a = tx - tabs.panel / 2, b = tx + tabs.panel / 2; ring.push([a, 0], [a, tB], [b, tB], [b, 0]); }
+    ring.push([panelW, 0], [panelW, -hR]);
+    if (iconRings.length) {
+      const xs = iconRings.flat().map((p) => p[0]);
+      const xr = Math.min(panelW, Math.max(...xs)), xl = Math.max(0, Math.min(...xs));
+      ring.push([xr, -Math.min(panelH, hR + roof.rightSlope * (panelW - xr))], [xl, -Math.min(panelH, hL + roof.leftSlope * xl)]);
+    } else {
+      const xa = (hR + roof.rightSlope * panelW - hL) / (roof.leftSlope + roof.rightSlope);
+      const ya = hL + roof.leftSlope * xa;
+      if (ya <= panelH) ring.push([xa, -ya]);
+      else ring.push([(panelH - hR) / -roof.rightSlope + panelW, -panelH], [(panelH - hL) / roof.leftSlope, -panelH]);
+    }
+    ring.push([0, -hL]);
+    let u = polygonClipping.union([toRing(ring)], ...iconRings.map((r) => [toRing(r)]));
+    if (u.length > 1) { warn('El ícono no toca el techo del panel: se usa solo la parte más grande.'); u.sort((a, b) => Math.abs(ringArea(b[0])) - Math.abs(ringArea(a[0]))); }
+    const pts = simplifyRing(u[0][0].slice(0, -1));
+    // orientation (sum of turns) tells convex from concave corners
+    const turn = (i) => { const a = pts[(i - 1 + pts.length) % pts.length], b = pts[i], c = pts[(i + 1) % pts.length]; return (b[0] - a[0]) * (c[1] - b[1]) - (b[1] - a[1]) * (c[0] - b[0]); };
+    const orient = Math.sign(pts.reduce((s, _, i) => s + Math.sign(turn(i)), 0)) || 1;
+    const rad = pts.map((p, i) => {
+      if (p[1] > 1e-6) return 0.4;                    // tab tips
+      if (p[1] > -1e-6) return 0;                     // bottom edge / tab roots
+      if (Math.sign(turn(i)) !== orient) return 3;    // concave: soft inner corner
+      if (Math.abs(p[0]) < 1e-6 || Math.abs(p[0] - panelW) < 1e-6) return roof.eaveCorner;
+      return cfg.panelCorner + (iconRings.length ? 1 : 0);
+    });
+    return roundPoly(pts, rad);
+  }
 
   // ---- top icon. vUp = height of its lowest point (the V of the box); iconRings = black outline behind it
   const vx = cx + (cfg.icon.offsetX || 0);
   let icon = null, iconRings = [], vUp = Math.min(hL, hR), slope = 0;
   if (cfg.icon.type === 'cube') {
     const h = Math.min(cfg.icon.height, panelH * 0.6);
+    // the icon touches the top: drop it by whatever the filleted panel outline overshoots the total height
+    const ringsAt = (v) => cubeIcon(vx, -v, h).pieces.map((p) => offsetConvex(p.pts, cfg.border));
     vUp = panelH - cfg.border - h;
+    for (let k = 0; k < 4; k++) {
+      const over = -bbox([panelOutline(ringsAt(vUp))]).y0 - panelH;
+      if (Math.abs(over) < 1e-4) break;
+      vUp -= over + 1e-4;
+    }
     icon = cubeIcon(vx, -vUp, h);
     iconRings = icon.pieces.map((p) => offsetConvex(p.pts, cfg.border));
-    slope = CUBE_ICON.slope;
+    slope = 1;
   } else if (cfg.icon.type === 'custom' && cfg.icon.custom?.white?.length) {
     const all = cfg.icon.custom.white.flat();
     const bb = bbox(all), k = Math.min(cfg.icon.height / bb.h, (panelW - 2 * cfg.border - 4) / bb.w);
@@ -474,7 +518,8 @@ export function buildHablador(cfgIn, fonts) {
     iconRings = [offsetConvex(convexHull(pts), cfg.border)];
   }
 
-  // ---- QR plates: tops follow the V of the icon (parallel to its bottom edges), clipped under the roof
+  // ---- QR plates: each top is a straight edge parallel-ish to its side of the V (own slope), clipped under the roof.
+  // Two plates are split at the V (+ qr.split); one or three are spread evenly over the panel width.
   const items = cfg.qr.enabled ? cfg.qr.items.slice(0, 3) : [];
   const n = items.length, side = cfg.qr.side ?? 6, gap = cfg.qr.gap;
   let plateW = n ? (panelW - 2 * side - (n - 1) * gap) / n : 0;
@@ -482,15 +527,22 @@ export function buildHablador(cfgIn, fonts) {
   const innerTop = (icon ? vUp : Math.min(hL, hR) - 4) - (cfg.qr.topGap ?? 5);
   const plateH = cfg.qr.h;
   const plateBottom = innerTop - plateH;
-  const pxs = platesX(n, plateW, gap, vx);
-  const plateTopAt = (x) => Math.min(innerTop + slope * Math.abs(x - vx), roofAt(x) - 6);
-  const plateShapes = pxs.map((xl) => {
-    const xr = xl + plateW;
-    const pts = [[xl, -plateBottom], [xr, -plateBottom], [xr, -plateTopAt(xr)]];
-    if (slope && vx > xl + 1 && vx < xr - 1) pts.push([vx, -plateTopAt(vx)]);
-    pts.push([xl, -plateTopAt(xl)]);
-    return { xl, xr, pts, low: Math.min(...pts.slice(2).map((p) => -p[1])) };
+  let spans = platesX(n, plateW, gap, cx).map((xl) => [xl, xl + plateW]);
+  if (n === 2 && !(cfg.qr.w > 0) && icon) {
+    const sx = Math.min(panelW - side - 30, Math.max(side + 30, vx + (cfg.qr.split ?? 0)));
+    spans = [[side, sx - gap / 2], [sx + gap / 2, panelW - side]];
+  }
+  const sL = slope ? cfg.qr.slopeL ?? 0.3 : 0, sR = slope ? cfg.qr.slopeR ?? 0.3 : 0;
+  const lineL = (x) => innerTop + sL * (vx - x), lineR = (x) => innerTop + sR * (x - vx);
+  const plateShapes = spans.map(([xl, xr]) => {
+    const mode = xr <= vx + 3 ? 'L' : xl >= vx - 3 ? 'R' : 'V';
+    const top = (x) => Math.min(mode === 'L' ? lineL(x) : mode === 'R' ? lineR(x) : x < vx ? lineL(x) : lineR(x), roofAt(x) - 6);
+    const pts = [[xl, -plateBottom], [xr, -plateBottom], [xr, -top(xr)]];
+    if (mode === 'V') pts.push([vx, -top(vx)]);
+    pts.push([xl, -top(xl)]);
+    return { xl, xr, w: xr - xl, pts, top, low: Math.min(...pts.slice(2).map((p) => -p[1])) };
   });
+  const pxs = plateShapes.map((p) => p.xl);
 
   // ---- titles (stacked under the plates)
   let y = n ? plateBottom - (cfg.title.gapTop ?? 7.5) : innerTop;
@@ -508,38 +560,9 @@ export function buildHablador(cfgIn, fonts) {
   if (cfg.cards.enabled && lowest < cfg.cards.height + 3) warnings.push(`El texto inferior queda tapado por el porta tarjetas (sube el alto del hablador o reduce textos: faltan ${(cfg.cards.height + 3 - lowest).toFixed(1)} mm).`);
   if (lowest < 5) warnings.push('El contenido no cabe en el alto del panel.');
 
-  // ---- panel (black): roof polygon ∪ outline of the icon, every corner filleted; tabs underneath
-  const tabs = cfg.tabs;
-  const tabX = [cx - panelW * 0.3, cx + panelW * 0.3];
+  // ---- panel (black) + NFC hole
   {
-    const ring = [[0, 0]];
-    for (const tx of tabX) { const a = tx - tabs.panel / 2, b = tx + tabs.panel / 2; ring.push([a, 0], [a, tB], [b, tB], [b, 0]); }
-    ring.push([panelW, 0], [panelW, -hR]);
-    if (iconRings.length) {
-      const xs = iconRings.flat().map((p) => p[0]);
-      const xr = Math.min(panelW, Math.max(...xs)), xl = Math.max(0, Math.min(...xs));
-      ring.push([xr, -Math.min(panelH, hR + roof.rightSlope * (panelW - xr))], [xl, -Math.min(panelH, hL + roof.leftSlope * xl)]);
-    } else {
-      const xa = (hR + roof.rightSlope * panelW - hL) / (roof.leftSlope + roof.rightSlope);
-      const ya = hL + roof.leftSlope * xa;
-      if (ya <= panelH) ring.push([xa, -ya]);
-      else ring.push([(panelH - hR) / -roof.rightSlope + panelW, -panelH], [(panelH - hL) / roof.leftSlope, -panelH]);
-    }
-    ring.push([0, -hL]);
-    let u = polygonClipping.union([toRing(ring)], ...iconRings.map((r) => [toRing(r)]));
-    if (u.length > 1) { warnings.push('El ícono no toca el techo del panel: se usa solo la parte más grande.'); u.sort((a, b) => Math.abs(ringArea(b[0])) - Math.abs(ringArea(a[0]))); }
-    const pts = simplifyRing(u[0][0].slice(0, -1));
-    // orientation (sum of turns) tells convex from concave corners
-    const turn = (i) => { const a = pts[(i - 1 + pts.length) % pts.length], b = pts[i], c = pts[(i + 1) % pts.length]; return (b[0] - a[0]) * (c[1] - b[1]) - (b[1] - a[1]) * (c[0] - b[0]); };
-    const orient = Math.sign(pts.reduce((s, _, i) => s + Math.sign(turn(i)), 0)) || 1;
-    const rad = pts.map((p, i) => {
-      if (p[1] > 1e-6) return 0.4;                    // tab tips
-      if (p[1] > -1e-6) return 0;                     // bottom edge / tab roots
-      if (Math.sign(turn(i)) !== orient) return 3;    // concave: soft inner corner
-      if (Math.abs(p[0]) < 1e-6 || Math.abs(p[0] - panelW) < 1e-6) return roof.eaveCorner;
-      return cfg.panelCorner + (iconRings.length ? 1 : 0);
-    });
-    const cut = [roundPoly(pts, rad)];
+    const cut = [panelOutline(iconRings, (w) => warnings.push(w))];
     if (cfg.nfc.enabled && n) {
       const k = Math.min(n - 1, cfg.nfc.plate | 0), ps = plateShapes[k];
       cut.push(circleC((ps.xl + ps.xr) / 2, -(plateBottom + (ps.low - plateBottom) * 0.55), (cfg.nfc.diameter + 1) / 2));
@@ -549,18 +572,22 @@ export function buildHablador(cfgIn, fonts) {
 
   // ---- QR plates (white) + UV print
   items.forEach((it, i) => {
-    const ps = plateShapes[i], x = ps.xl;
+    const ps = plateShapes[i], x = ps.xl, pw = ps.w, pcx = x + pw / 2;
     const cont = [roundPoly(ps.pts, cfg.qr.corner)];
     const lf = font(cfg.qr.labelFont);
-    const contentTop = ps.low - 6;
-    const qs = Math.max(10, Math.min(plateW - 16, contentTop - plateBottom - 4 - 13.5));
-    const free = contentTop - plateBottom - 4 - (qs + 13.5);
-    const qy = -(contentTop - Math.max(0, free / 2));
+    // bottom-up: subtitle, label, then the biggest square QR that keeps qr.margin to the sides and 4 mm to the top
+    const sb = textBlock(lf, it.sub || '', { capHeight: 2.6, width: Math.min(38.5, pw - 12), maxWidth: pw - 12, tracking: 0.04, cx: pcx, bottom: -(plateBottom + 6.2) });
+    const lab = textBlock(lf, it.label || '', { capHeight: 4.8, maxWidth: pw - 8, tracking: 0.0, cx: pcx, bottom: (it.sub ? sb.bbox.y0 : -(plateBottom + 6.2)) - (it.sub ? 2.2 : 0) });
+    const qrBottom = (it.label ? -lab.bbox.y0 : it.sub ? -sb.bbox.y0 : plateBottom + 1.5) + 2.8;
+    let qs = pw - 2 * (cfg.qr.margin ?? 6);
+    for (let k = 0; k < 3; k++) {
+      const xs = [pcx - qs / 2, pcx + qs / 2]; if (vx > xs[0] && vx < xs[1]) xs.push(vx);
+      qs = Math.max(10, Math.min(pw - 2 * (cfg.qr.margin ?? 6), Math.min(...xs.map(ps.top)) - 4 - qrBottom));
+    }
+    const qy = -(qrBottom + qs);
     const badge = it.badge && it.badge !== 'none';
-    const qr = qrContours(it.url || ' ', x + (plateW - qs) / 2, qy, qs, badge);
+    const qr = qrContours(it.url || ' ', pcx - qs / 2, qy, qs, badge);
     if (qr.moduleMM < 0.5) warnings.push(`QR ${i + 1}: módulos de ${qr.moduleMM.toFixed(2)} mm, puede costar escanearlo (acorta la URL o agranda la placa).`);
-    const lab = textBlock(lf, it.label || '', { capHeight: 4.8, maxWidth: plateW - 8, tracking: 0.0, cx: x + plateW / 2, top: qy + qs + 3.6 });
-    const sb = textBlock(lf, it.sub || '', { capHeight: 2.5, maxWidth: plateW - 12, tracking: 0.04, cx: x + plateW / 2, top: lab.bbox.y1 + 2 });
     const qrLayer = { fill: it.color || '#111111', grad: it.color2 ? [it.color || '#111111', it.color2] : null, contours: qr.contours };
     const print = [qrLayer];
     if (qr.badge) print.push({ ...qrLayer, evenodd: true, contours: badgeContours(it.badge, qr.badge.cx, qr.badge.cy, qr.badge.size) });
@@ -614,7 +641,7 @@ export function buildHablador(cfgIn, fonts) {
     // front (white) with two tabs
     {
       const tx = [fw * 0.25, fw * 0.75];
-      const ring = [[0, -fh], [fw, -fh], [fw, 0]], rad = [3, 3, 0];
+      const ring = [[0, -fh], [fw, -fh], [fw, 0]], rad = [4, 4, 0];
       for (const t of [...tx].reverse()) { const a = t + tabs.front / 2, b = t - tabs.front / 2; ring.push([a, 0], [a, tB], [b, tB], [b, 0]); rad.push(0, 0.4, 0.4, 0); }
       ring.push([0, 0]); rad.push(0);
       const front = add({ id: 'cardFront', name: 'Frente porta tarjetas', mat: 'white', contours: [roundPoly(ring, rad)], print: [], cardFront: { x: (panelW - fw) / 2, w: fw, h: fh } });
@@ -655,24 +682,26 @@ export function buildHablador(cfgIn, fonts) {
   }
   for (const p of pieces) p.size = bbox(p.contours);
 
-  const model = { cfg, pieces, warnings, slots, layout: { panelW, panelH, platesTop, platesBottom, fPanel, fFront, pxs, plateW, plateH } };
+  const model = { cfg, pieces, warnings, slots, layout: { panelW, panelH, platesTop, platesBottom, fPanel, fFront, pxs, plateW, plateWs: plateShapes.map((p) => p.w), plateH } };
 
   function cardPrint(fw, fh) {
-    // logo printed (UV) on the card-holder front: small icon + title + subtitle
+    // logo printed (UV) on the card-holder front: line-art icon + title + subtitle, stacked like the target
     const out = [];
-    const ih = fh * 0.36, top = 5;
-    const mini = cfg.icon.type === 'cube' ? cubeIcon(fw / 2, -fh + top + ih, ih, 2 * (ih / cfg.icon.height) * 1.6) : null;
-    if (mini) {
-      // line-art version of the icon (even-odd rings) + heart
-      const g = 1.1, lw = 0.6;
-      const rings = mini.pieces.flatMap((p) => [roundPoly(offsetConvex(p.pts, -g / 2 + lw / 2), 0.5), roundPoly(offsetConvex(p.pts, -g / 2 - lw / 2), 0.3)]);
+    const ih = fh * 0.55, top = 2.5;
+    let mini = null;
+    if (cfg.icon.type === 'cube') {
+      const k = ih / CUBE_ICON.h;
+      mini = cubeIcon(fw / 2 + 0.6 * k, -fh + top + ih, ih, 0.3);
+      // outline of each white piece drawn inside it (even-odd ring); the thin lid is filled
+      const lw = 0.5;
+      const rings = mini.pieces.flatMap((p) => p.key === 'lid' ? [p.contours[0]] : [roundPoly(p.pts, 0.3), roundPoly(offsetConvex(p.pts, -lw), 0.1)]);
       out.push({ fill: '#111111', evenodd: true, contours: rings });
       out.push({ fill: '#111111', contours: [mini.heart] });
     }
-    const t1 = cfg.title.text.trim() ? textBlock(font(cfg.title.font), cfg.title.text, { height: fh * 0.2, maxWidth: fw * 0.62, tracking: cfg.title.tracking, cx: fw / 2, top: -fh + top + (mini ? ih + 2.5 : 8) }) : null;
+    const t1 = cfg.title.text.trim() ? textBlock(font(cfg.title.font), cfg.title.text, { height: fw * 0.46 / 7.6, maxWidth: fw * 0.46, tracking: cfg.title.tracking, cx: fw / 2, top: -fh + top + (mini ? ih + 2 : 8) }) : null;
     if (t1) out.push({ fill: '#111111', contours: t1.glyphs.flatMap((g) => g.contours) });
     if (cfg.subtitle.text.trim()) {
-      const t2 = textBlock(font(cfg.subtitle.font), cfg.subtitle.text, { capHeight: fh * 0.055, maxWidth: fw * 0.5, tracking: cfg.subtitle.tracking, cx: fw / 2, top: (t1 ? t1.bbox.y1 : -fh / 2) + 1.4 });
+      const t2 = textBlock(font(cfg.subtitle.font), cfg.subtitle.text, { capHeight: 2, width: fw * 0.36, maxWidth: fw * 0.5, tracking: cfg.subtitle.tracking, cx: fw / 2, top: (t1 ? t1.bbox.y1 : -fh / 2) + 1.2 });
       out.push({ fill: '#111111', contours: t2.glyphs.flatMap((g) => g.contours) });
     }
     return out;
