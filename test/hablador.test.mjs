@@ -1,12 +1,24 @@
 // Hablador acrílico: geometry, slots, nesting, QC and logo tracing.
 import fs from 'fs';
 import { parse } from '../node_modules/opentype.js/dist/opentype.mjs';
-import { HABLADOR_FONTS, DEFAULT_HABLADOR, buildHablador, exportAll, nest, bbox, flatten, traceLogo, thinCheck } from '../src/core/hablador.js';
+import { HABLADOR_FONTS, DEFAULT_HABLADOR, buildHablador, exportAll, nest, bbox, flatten, traceLogo, thinCheck, sheetOf } from '../src/core/hablador.js';
 import { fitClosed } from '../src/core/curvefit.js';
 
 let fails = 0;
 const ok = (c, msg) => { if (!c) { fails++; console.log('  ✗ ' + msg); } else console.log('  ✓ ' + msg); };
 const near = (a, b, e = 1e-6) => Math.abs(a - b) <= e;
+// distance between two nested pieces (0 if one point of B lies inside A or vice versa)
+const segD = (p, a, b) => { const dx = b[0] - a[0], dy = b[1] - a[1], L = dx * dx + dy * dy; const t = L ? Math.max(0, Math.min(1, ((p[0] - a[0]) * dx + (p[1] - a[1]) * dy) / L)) : 0; return Math.hypot(p[0] - a[0] - t * dx, p[1] - a[1] - t * dy); };
+const inside = (p, segs) => { let c = false; for (const r of segs) for (let i = 0, j = r.length - 1; i < r.length; j = i++) if ((r[i][1] > p[1]) !== (r[j][1] > p[1]) && p[0] < r[i][0] + ((p[1] - r[i][1]) / (r[j][1] - r[i][1])) * (r[j][0] - r[i][0])) c = !c; return c; };
+function minDist(A, B) {
+  if (inside(B.pts[0], A.segs) || inside(A.pts[0], B.segs)) return 0;
+  let d = Infinity;
+  for (const [P, Q] of [[A, B], [B, A]]) for (const p of P.pts) {
+    if (p[0] < Q.b.x0 - 3 || p[0] > Q.b.x1 + 3 || p[1] < Q.b.y0 - 3 || p[1] > Q.b.y1 + 3) continue;
+    for (const r of Q.segs) for (let i = 0, j = r.length - 1; i < r.length; j = i++) d = Math.min(d, segD(p, r[j], r[i]));
+  }
+  return d;
+}
 
 const fonts = {};
 for (const [fam, file] of Object.entries(HABLADOR_FONTS)) {
@@ -42,18 +54,23 @@ function checkModel(m, label) {
   // tabs of the panel match its slots
   const panelSlots = m.slots.filter((s) => s.what === 'panel');
   ok(panelSlots.length === 2 && panelSlots.every((s) => near(s.w, cfg.tabs.panel + cfg.clearance)), `${label}: 2 ranuras de panel del largo de la pestaña`);
-  // nesting: inside the sheet, no overlaps
+  // nesting: inside the sheet margin, real outlines never closer than the gap
   for (const mat of ['white', 'black', 'jig']) {
     const sheets = nest(m, mat);
-    let overlap = 0, outside = 0;
+    let close = 0, outside = 0;
+    const { gap, margin, w: SW, h: SH } = sheetOf(cfg, mat);
     for (const s of sheets) {
-      const boxes = s.items.map((it) => bbox(it.cs));
-      boxes.forEach((b, i) => {
-        if (b.x0 < 0 || b.y0 < 0 || b.x1 > cfg.sheet.w || b.y1 > cfg.sheet.h) outside++;
-        for (let j = i + 1; j < boxes.length; j++) { const o = boxes[j]; if (b.x0 < o.x1 - 1e-6 && o.x0 < b.x1 - 1e-6 && b.y0 < o.y1 - 1e-6 && o.y0 < b.y1 - 1e-6) overlap++; }
+      const ps = s.items.map((it) => ({ b: bbox(it.cs), pts: it.cs.flatMap((c) => flatten(c, 0.1)), segs: it.cs.map((c) => flatten(c, 0.1)) }));
+      ps.forEach((A, i) => {
+        if (A.b.x0 < margin - 0.3 || A.b.y0 < margin - 0.3 || A.b.x1 > SW - margin + 0.3 || A.b.y1 > SH - margin + 0.3) outside++;
+        for (let j = i + 1; j < ps.length; j++) {
+          const B = ps[j];
+          if (A.b.x0 > B.b.x1 + gap || B.b.x0 > A.b.x1 + gap || A.b.y0 > B.b.y1 + gap || B.b.y0 > A.b.y1 + gap) continue;
+          if (minDist(A, B) < gap - 0.15) close++;
+        }
       });
     }
-    ok(!overlap && !outside, `${label}: lámina ${mat} sin solapes y dentro de ${cfg.sheet.w}×${cfg.sheet.h}`);
+    ok(!close && !outside, `${label}: lámina ${mat}: piezas a ≥ ${gap} mm entre sí y dentro de ${SW}×${SH} (${sheets.length} lámina(s): ${sheets.map((s) => Math.round(s.fill * 100) + '%').join(', ')})`);
   }
   // cut files: red hairline, no fill, mm units
   const files = exportAll(m);

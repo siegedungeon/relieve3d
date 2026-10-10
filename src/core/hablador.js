@@ -1,6 +1,9 @@
 // Hablador (table sign / photobooth stand) in laser-cut acrylic: parametric generator. Pure JS, no DOM.
 // Every outline is built from exact lines, circular fillets (SVG arcs) and font Béziers, so the cut files have
-// no stair steps, spikes or hairlines. Slots are sized from the real acrylic thickness + clearance.
+// no stair steps, spikes or hairlines. Slots are sized from the real acrylic thickness + fit adjustment
+// (negative = press fit: −0.2 turns a 3 mm sheet into a 2.8 mm slot so the joint does not wobble).
+// source 'mockup': the front (panel silhouette, white pieces, print) comes from analyzeMockup(); the structure
+// (base, slots, supports, card holder) is still built here from the measurements and calibres.
 // Units: millimetres. SVG coordinates (y grows downwards). Panel space: x 0..panelW, y = 0 at the base top, up < 0.
 import polygonClipping from 'polygon-clipping';
 import { fitClosed, cubicsToPath } from './curvefit.js';
@@ -22,9 +25,12 @@ export const DEFAULT_HABLADOR = () => ({
   name: 'LOVECUBE',
   width: 170, height: 250, depth: 80,   // overall (= base width × total height × base depth)
   panelWidth: 148,                      // black back panel, narrower than the base
-  white: { t: 4, label: 'Acrílico blanco', color: '#ffffff' },
-  black: { t: 3, label: 'Acrílico negro', color: '#16161a' },
-  clearance: 0.15,       // added to every slot (kerf + easy fit)
+  // t = calibre (mm), sheet = size of the sheet each material is cut from
+  white: { t: 4, label: 'Acrílico blanco', color: '#ffffff', sheet: { w: 120, h: 300 } },
+  black: { t: 3, label: 'Acrílico negro', color: '#16161a', sheet: { w: 450, h: 300 } },
+  clearance: -0.2,       // fit adjustment added to every slot size (negative = press fit, e.g. 3 mm → 2.8 mm slot)
+  source: 'param',       // 'param' (form) | 'mockup' (front traced from a frontal image, see hablador_mockup.js)
+  traced: null,
   // roof: eave heights as a fraction of the panel height, slopes rising towards the icon (asymmetric house)
   roof: { left: 0.717, right: 0.857, leftSlope: 0.45, rightSlope: 0.57, eaveCorner: 8 },
   panelCorner: 4,
@@ -45,7 +51,7 @@ export const DEFAULT_HABLADOR = () => ({
   icon: { type: 'cube', height: 82.1, heart: true, offsetX: -7.1, custom: null },
   braces: { enabled: true, h: 50, d: 30 },
   jig: { enabled: true },
-  sheet: { w: 600, h: 400, gap: 3, margin: 5 },
+  sheet: { w: 600, h: 400, gap: 2, margin: 3 },   // jig sheet; gap (between pieces) and margin (sheet edge) for every sheet
   tabs: { panel: 30, front: 20, side: 14, brace: 16 },
 });
 
@@ -445,9 +451,12 @@ export function buildHablador(cfgIn, fonts) {
   const tW = cfg.white.t, tB = cfg.black.t, cl = cfg.clearance;
   const warnings = [];
   const font = (fam) => fonts[fam] || fonts[Object.keys(fonts)[0]];
-  const W = cfg.width, panelW = Math.min(cfg.panelWidth || W - 2, W), cx = panelW / 2;
   const baseStack = 2 * tB;
   const panelH = cfg.height - baseStack;
+  const T = cfg.source === 'mockup' && cfg.traced?.panel ? cfg.traced : null;
+  const kM = T ? panelH / T.panelH : 1;   // traced front follows later changes of the total height
+  const W = cfg.width, panelW = T ? T.panelW * kM : Math.min(cfg.panelWidth || W - 2, W), cx = panelW / 2;
+  if (T && panelW > W) warnings.push(`El panel del mockup mide ${panelW.toFixed(1)} mm de ancho y la base ${W} mm: sube el largo o baja el alto.`);
   const pieces = [];
   const add = (p) => { const q = { qty: 1, print: [], onPanel: false, ...p }; pieces.push(q); return q; };
   const roof = { left: 0.717, right: 0.857, leftSlope: 0.45, rightSlope: 0.57, eaveCorner: 8, ...(cfg.roof || {}) };
@@ -488,142 +497,148 @@ export function buildHablador(cfgIn, fonts) {
     return roundPoly(pts, rad);
   }
 
-  // ---- top icon. vUp = height of its lowest point (the V of the box); iconRings = black outline behind it
-  const vx = cx + (cfg.icon.offsetX || 0);
-  let icon = null, iconRings = [], vUp = Math.min(hL, hR), slope = 0;
-  if (cfg.icon.type === 'cube') {
-    const h = Math.min(cfg.icon.height, panelH * 0.6);
-    // the icon touches the top: drop it by whatever the filleted panel outline overshoots the total height
-    const ringsAt = (v) => cubeIcon(vx, -v, h).pieces.map((p) => offsetConvex(p.pts, cfg.border));
-    vUp = panelH - cfg.border - h;
-    for (let k = 0; k < 4; k++) {
-      const over = -bbox([panelOutline(ringsAt(vUp))]).y0 - panelH;
-      if (Math.abs(over) < 1e-4) break;
-      vUp -= over + 1e-4;
+  // ---- front: parametric (form) or traced from the mockup. Both return the plate layout.
+  const FL = T ? mockupFront() : paramFront();
+
+  function paramFront() {
+    // ---- top icon. vUp = height of its lowest point (the V of the box); iconRings = black outline behind it
+    const vx = cx + (cfg.icon.offsetX || 0);
+    let icon = null, iconRings = [], vUp = Math.min(hL, hR), slope = 0;
+    if (cfg.icon.type === 'cube') {
+      const h = Math.min(cfg.icon.height, panelH * 0.6);
+      // the icon touches the top: drop it by whatever the filleted panel outline overshoots the total height
+      const ringsAt = (v) => cubeIcon(vx, -v, h).pieces.map((p) => offsetConvex(p.pts, cfg.border));
+      vUp = panelH - cfg.border - h;
+      for (let k = 0; k < 4; k++) {
+        const over = -bbox([panelOutline(ringsAt(vUp))]).y0 - panelH;
+        if (Math.abs(over) < 1e-4) break;
+        vUp -= over + 1e-4;
+      }
+      icon = cubeIcon(vx, -vUp, h);
+      iconRings = icon.pieces.map((p) => offsetConvex(p.pts, cfg.border));
+      slope = 1;
+    } else if (cfg.icon.type === 'custom' && cfg.icon.custom?.white?.length) {
+      const all = cfg.icon.custom.white.flat();
+      const bb = bbox(all), k = Math.min(cfg.icon.height / bb.h, (panelW - 2 * cfg.border - 4) / bb.w);
+      const top = -(panelH - cfg.border);
+      const place = (cs) => translate(scaleContours(cs, k), vx - ((bb.x0 + bb.x1) / 2) * k, top - bb.y0 * k);
+      icon = {
+        pieces: cfg.icon.custom.white.map((cs, i) => ({ key: 'c' + i, name: `Logo · pieza ${i + 1}`, contours: place(cs) })),
+        inlays: (cfg.icon.custom.black || []).map((cs) => place(cs)),
+      };
+      vUp = panelH - cfg.border - bb.h * k;
+      const pts = icon.pieces.flatMap((p) => p.contours.flatMap((c) => flatten(c, 0.2)));
+      iconRings = [offsetConvex(convexHull(pts), cfg.border)];
     }
-    icon = cubeIcon(vx, -vUp, h);
-    iconRings = icon.pieces.map((p) => offsetConvex(p.pts, cfg.border));
-    slope = 1;
-  } else if (cfg.icon.type === 'custom' && cfg.icon.custom?.white?.length) {
-    const all = cfg.icon.custom.white.flat();
-    const bb = bbox(all), k = Math.min(cfg.icon.height / bb.h, (panelW - 2 * cfg.border - 4) / bb.w);
-    const top = -(panelH - cfg.border);
-    const place = (cs) => translate(scaleContours(cs, k), vx - ((bb.x0 + bb.x1) / 2) * k, top - bb.y0 * k);
-    icon = {
-      pieces: cfg.icon.custom.white.map((cs, i) => ({ key: 'c' + i, name: `Logo · pieza ${i + 1}`, contours: place(cs) })),
-      inlays: (cfg.icon.custom.black || []).map((cs) => place(cs)),
-    };
-    vUp = panelH - cfg.border - bb.h * k;
-    const pts = icon.pieces.flatMap((p) => p.contours.flatMap((c) => flatten(c, 0.2)));
-    iconRings = [offsetConvex(convexHull(pts), cfg.border)];
-  }
 
-  // ---- QR plates: each top is a straight edge parallel-ish to its side of the V (own slope), clipped under the roof.
-  // Two plates are split at the V (+ qr.split); one or three are spread evenly over the panel width.
-  const items = cfg.qr.enabled ? cfg.qr.items.slice(0, 3) : [];
-  const n = items.length, side = cfg.qr.side ?? 6, gap = cfg.qr.gap;
-  let plateW = n ? (panelW - 2 * side - (n - 1) * gap) / n : 0;
-  if (n && cfg.qr.w > 0) { if (cfg.qr.w > plateW) warnings.push(`Placas QR reducidas a ${plateW.toFixed(1)} mm de ancho para caber en el panel.`); else plateW = cfg.qr.w; }
-  const innerTop = (icon ? vUp : Math.min(hL, hR) - 4) - (cfg.qr.topGap ?? 5);
-  const plateH = cfg.qr.h;
-  const plateBottom = innerTop - plateH;
-  let spans = platesX(n, plateW, gap, cx).map((xl) => [xl, xl + plateW]);
-  if (n === 2 && !(cfg.qr.w > 0) && icon) {
-    const sx = Math.min(panelW - side - 30, Math.max(side + 30, vx + (cfg.qr.split ?? 0)));
-    spans = [[side, sx - gap / 2], [sx + gap / 2, panelW - side]];
-  }
-  const sL = slope ? cfg.qr.slopeL ?? 0.3 : 0, sR = slope ? cfg.qr.slopeR ?? 0.3 : 0;
-  const lineL = (x) => innerTop + sL * (vx - x), lineR = (x) => innerTop + sR * (x - vx);
-  const plateShapes = spans.map(([xl, xr]) => {
-    const mode = xr <= vx + 3 ? 'L' : xl >= vx - 3 ? 'R' : 'V';
-    const top = (x) => Math.min(mode === 'L' ? lineL(x) : mode === 'R' ? lineR(x) : x < vx ? lineL(x) : lineR(x), roofAt(x) - 6);
-    const pts = [[xl, -plateBottom], [xr, -plateBottom], [xr, -top(xr)]];
-    if (mode === 'V') pts.push([vx, -top(vx)]);
-    pts.push([xl, -top(xl)]);
-    return { xl, xr, w: xr - xl, pts, top, low: Math.min(...pts.slice(2).map((p) => -p[1])) };
-  });
-  const pxs = plateShapes.map((p) => p.xl);
-
-  // ---- titles (stacked under the plates)
-  let y = n ? plateBottom - (cfg.title.gapTop ?? 7.5) : innerTop;
-  let title = null, sub = null;
-  if (cfg.title.enabled && cfg.title.text.trim()) {
-    title = textBlock(font(cfg.title.font), cfg.title.text, { height: cfg.title.height, maxWidth: Math.min(cfg.title.maxWidth, panelW - 8), tracking: cfg.title.tracking, cx, top: -y });
-    y = -title.bbox.y1;
-  }
-  if (cfg.subtitle.enabled && cfg.subtitle.text.trim()) {
-    y -= cfg.subtitle.gapTop ?? 5;
-    sub = textBlock(font(cfg.subtitle.font), cfg.subtitle.text, { capHeight: cfg.subtitle.capHeight, width: cfg.subtitle.width ? Math.min(cfg.subtitle.width, panelW - 10) : 0, maxWidth: panelW - 10, tracking: cfg.subtitle.tracking, cx, top: -y });
-    y = -sub.bbox.y1;
-  }
-  const lowest = y;
-  if (cfg.cards.enabled && lowest < cfg.cards.height + 3) warnings.push(`El texto inferior queda tapado por el porta tarjetas (sube el alto del hablador o reduce textos: faltan ${(cfg.cards.height + 3 - lowest).toFixed(1)} mm).`);
-  if (lowest < 5) warnings.push('El contenido no cabe en el alto del panel.');
-
-  // ---- panel (black) + NFC hole
-  {
-    const cut = [panelOutline(iconRings, (w) => warnings.push(w))];
-    if (cfg.nfc.enabled && n) {
-      const k = Math.min(n - 1, cfg.nfc.plate | 0), ps = plateShapes[k];
-      cut.push(circleC((ps.xl + ps.xr) / 2, -(plateBottom + (ps.low - plateBottom) * 0.55), (cfg.nfc.diameter + 1) / 2));
+    // ---- QR plates: each top is a straight edge parallel-ish to its side of the V (own slope), clipped under the roof.
+    // Two plates are split at the V (+ qr.split); one or three are spread evenly over the panel width.
+    const items = cfg.qr.enabled ? cfg.qr.items.slice(0, 3) : [];
+    const n = items.length, side = cfg.qr.side ?? 6, gap = cfg.qr.gap;
+    let plateW = n ? (panelW - 2 * side - (n - 1) * gap) / n : 0;
+    if (n && cfg.qr.w > 0) { if (cfg.qr.w > plateW) warnings.push(`Placas QR reducidas a ${plateW.toFixed(1)} mm de ancho para caber en el panel.`); else plateW = cfg.qr.w; }
+    const innerTop = (icon ? vUp : Math.min(hL, hR) - 4) - (cfg.qr.topGap ?? 5);
+    const plateH = cfg.qr.h;
+    const plateBottom = innerTop - plateH;
+    let spans = platesX(n, plateW, gap, cx).map((xl) => [xl, xl + plateW]);
+    if (n === 2 && !(cfg.qr.w > 0) && icon) {
+      const sx = Math.min(panelW - side - 30, Math.max(side + 30, vx + (cfg.qr.split ?? 0)));
+      spans = [[side, sx - gap / 2], [sx + gap / 2, panelW - side]];
     }
-    add({ id: 'panel', name: 'Panel principal', mat: 'black', contours: cut, view: 'front' });
-  }
+    const sL = slope ? cfg.qr.slopeL ?? 0.3 : 0, sR = slope ? cfg.qr.slopeR ?? 0.3 : 0;
+    const lineL = (x) => innerTop + sL * (vx - x), lineR = (x) => innerTop + sR * (x - vx);
+    const plateShapes = spans.map(([xl, xr]) => {
+      const mode = xr <= vx + 3 ? 'L' : xl >= vx - 3 ? 'R' : 'V';
+      const top = (x) => Math.min(mode === 'L' ? lineL(x) : mode === 'R' ? lineR(x) : x < vx ? lineL(x) : lineR(x), roofAt(x) - 6);
+      const pts = [[xl, -plateBottom], [xr, -plateBottom], [xr, -top(xr)]];
+      if (mode === 'V') pts.push([vx, -top(vx)]);
+      pts.push([xl, -top(xl)]);
+      return { xl, xr, w: xr - xl, pts, top, low: Math.min(...pts.slice(2).map((p) => -p[1])) };
+    });
+    const pxs = plateShapes.map((p) => p.xl);
 
-  // ---- QR plates (white) + UV print
-  items.forEach((it, i) => {
-    const ps = plateShapes[i], x = ps.xl, pw = ps.w, pcx = x + pw / 2;
-    const cont = [roundPoly(ps.pts, cfg.qr.corner)];
-    const lf = font(cfg.qr.labelFont);
-    // bottom-up: subtitle, label, then the biggest square QR that keeps qr.margin to the sides and 4 mm to the top
-    const sb = textBlock(lf, it.sub || '', { capHeight: 2.6, width: Math.min(38.5, pw - 12), maxWidth: pw - 12, tracking: 0.04, cx: pcx, bottom: -(plateBottom + 6.2) });
-    const lab = textBlock(lf, it.label || '', { capHeight: 4.8, maxWidth: pw - 8, tracking: 0.0, cx: pcx, bottom: (it.sub ? sb.bbox.y0 : -(plateBottom + 6.2)) - (it.sub ? 2.2 : 0) });
-    const qrBottom = (it.label ? -lab.bbox.y0 : it.sub ? -sb.bbox.y0 : plateBottom + 1.5) + 2.8;
-    let qs = pw - 2 * (cfg.qr.margin ?? 6);
-    for (let k = 0; k < 3; k++) {
-      const xs = [pcx - qs / 2, pcx + qs / 2]; if (vx > xs[0] && vx < xs[1]) xs.push(vx);
-      qs = Math.max(10, Math.min(pw - 2 * (cfg.qr.margin ?? 6), Math.min(...xs.map(ps.top)) - 4 - qrBottom));
+    // ---- titles (stacked under the plates)
+    let y = n ? plateBottom - (cfg.title.gapTop ?? 7.5) : innerTop;
+    let title = null, sub = null;
+    if (cfg.title.enabled && cfg.title.text.trim()) {
+      title = textBlock(font(cfg.title.font), cfg.title.text, { height: cfg.title.height, maxWidth: Math.min(cfg.title.maxWidth, panelW - 8), tracking: cfg.title.tracking, cx, top: -y });
+      y = -title.bbox.y1;
     }
-    const qy = -(qrBottom + qs);
-    const badge = it.badge && it.badge !== 'none';
-    const qr = qrContours(it.url || ' ', pcx - qs / 2, qy, qs, badge);
-    if (qr.moduleMM < 0.5) warnings.push(`QR ${i + 1}: módulos de ${qr.moduleMM.toFixed(2)} mm, puede costar escanearlo (acorta la URL o agranda la placa).`);
-    const qrLayer = { fill: it.color || '#111111', grad: it.color2 ? [it.color || '#111111', it.color2] : null, contours: qr.contours };
-    const print = [qrLayer];
-    if (qr.badge) print.push({ ...qrLayer, evenodd: true, contours: badgeContours(it.badge, qr.badge.cx, qr.badge.cy, qr.badge.size) });
-    print.push({ fill: '#111111', contours: lab.glyphs.flatMap((g) => g.contours).concat(sb.glyphs.flatMap((g) => g.contours)) });
-    add({ id: 'qr' + (i + 1), name: `Placa QR ${i + 1}${it.label ? ' · ' + it.label : ''}`, mat: 'white', contours: cont, onPanel: true, print, note: `QR → ${it.url}` });
-  });
-  const platesTop = n ? -Math.max(...plateShapes.flatMap((p) => p.pts.map((q) => -q[1]))) : -innerTop, platesBottom = -plateBottom;
+    if (cfg.subtitle.enabled && cfg.subtitle.text.trim()) {
+      y -= cfg.subtitle.gapTop ?? 5;
+      sub = textBlock(font(cfg.subtitle.font), cfg.subtitle.text, { capHeight: cfg.subtitle.capHeight, width: cfg.subtitle.width ? Math.min(cfg.subtitle.width, panelW - 10) : 0, maxWidth: panelW - 10, tracking: cfg.subtitle.tracking, cx, top: -y });
+      y = -sub.bbox.y1;
+    }
+    const lowest = y;
+    if (cfg.cards.enabled && lowest < cfg.cards.height + 3) warnings.push(`El texto inferior queda tapado por el porta tarjetas (sube el alto del hablador o reduce textos: faltan ${(cfg.cards.height + 3 - lowest).toFixed(1)} mm).`);
+    if (lowest < 5) warnings.push('El contenido no cabe en el alto del panel.');
 
-  // ---- title / subtitle (white)
-  if (title) {
-    if (cfg.title.weld) {
-      let polys = weld(title.glyphs.map((g) => g.contours));
-      // auto-tighten until the letters overlap into one piece, then a bit more for solid (not tangent) joints
-      if (polys.length > 1 && cfg.title.autoJoin !== false) {
-        for (let tr = cfg.title.tracking - 0.01; tr >= -0.16; tr -= 0.01) {
-          const t2 = textBlock(font(cfg.title.font), cfg.title.text, { height: cfg.title.height, maxWidth: cfg.title.maxWidth, tracking: tr, cx, top: title.bbox.y0 });
-          const p2 = weld(t2.glyphs.map((g) => g.contours));
-          if (p2.length === 1) {
-            const t3 = textBlock(font(cfg.title.font), cfg.title.text, { height: cfg.title.height, maxWidth: cfg.title.maxWidth, tracking: tr - 0.015, cx, top: title.bbox.y0 });
-            const p3 = weld(t3.glyphs.map((g) => g.contours));
-            if (p3.length === 1) { title = t3; polys = p3; } else { title = t2; polys = p2; }
-            break;
+    // ---- panel (black) + NFC hole
+    {
+      const cut = [panelOutline(iconRings, (w) => warnings.push(w))];
+      if (cfg.nfc.enabled && n) {
+        const k = Math.min(n - 1, cfg.nfc.plate | 0), ps = plateShapes[k];
+        cut.push(circleC((ps.xl + ps.xr) / 2, -(plateBottom + (ps.low - plateBottom) * 0.55), (cfg.nfc.diameter + 1) / 2));
+      }
+      add({ id: 'panel', name: 'Panel principal', mat: 'black', contours: cut, view: 'front' });
+    }
+
+    // ---- QR plates (white) + UV print
+    items.forEach((it, i) => {
+      const ps = plateShapes[i], x = ps.xl, pw = ps.w, pcx = x + pw / 2;
+      const cont = [roundPoly(ps.pts, cfg.qr.corner)];
+      const lf = font(cfg.qr.labelFont);
+      // bottom-up: subtitle, label, then the biggest square QR that keeps qr.margin to the sides and 4 mm to the top
+      const sb = textBlock(lf, it.sub || '', { capHeight: 2.6, width: Math.min(38.5, pw - 12), maxWidth: pw - 12, tracking: 0.04, cx: pcx, bottom: -(plateBottom + 6.2) });
+      const lab = textBlock(lf, it.label || '', { capHeight: 4.8, maxWidth: pw - 8, tracking: 0.0, cx: pcx, bottom: (it.sub ? sb.bbox.y0 : -(plateBottom + 6.2)) - (it.sub ? 2.2 : 0) });
+      const qrBottom = (it.label ? -lab.bbox.y0 : it.sub ? -sb.bbox.y0 : plateBottom + 1.5) + 2.8;
+      let qs = pw - 2 * (cfg.qr.margin ?? 6);
+      for (let k = 0; k < 3; k++) {
+        const xs = [pcx - qs / 2, pcx + qs / 2]; if (vx > xs[0] && vx < xs[1]) xs.push(vx);
+        qs = Math.max(10, Math.min(pw - 2 * (cfg.qr.margin ?? 6), Math.min(...xs.map(ps.top)) - 4 - qrBottom));
+      }
+      const qy = -(qrBottom + qs);
+      const badge = it.badge && it.badge !== 'none';
+      const qr = qrContours(it.url || ' ', pcx - qs / 2, qy, qs, badge);
+      if (qr.moduleMM < 0.5) warnings.push(`QR ${i + 1}: módulos de ${qr.moduleMM.toFixed(2)} mm, puede costar escanearlo (acorta la URL o agranda la placa).`);
+      const qrLayer = { fill: it.color || '#111111', grad: it.color2 ? [it.color || '#111111', it.color2] : null, contours: qr.contours };
+      const print = [qrLayer];
+      if (qr.badge) print.push({ ...qrLayer, evenodd: true, contours: badgeContours(it.badge, qr.badge.cx, qr.badge.cy, qr.badge.size) });
+      print.push({ fill: '#111111', contours: lab.glyphs.flatMap((g) => g.contours).concat(sb.glyphs.flatMap((g) => g.contours)) });
+      add({ id: 'qr' + (i + 1), name: `Placa QR ${i + 1}${it.label ? ' · ' + it.label : ''}`, mat: 'white', contours: cont, onPanel: true, print, note: `QR → ${it.url}` });
+    });
+    const platesTop = n ? -Math.max(...plateShapes.flatMap((p) => p.pts.map((q) => -q[1]))) : -innerTop, platesBottom = -plateBottom;
+
+    // ---- title / subtitle (white)
+    if (title) {
+      if (cfg.title.weld) {
+        let polys = weld(title.glyphs.map((g) => g.contours));
+        // auto-tighten until the letters overlap into one piece, then a bit more for solid (not tangent) joints
+        if (polys.length > 1 && cfg.title.autoJoin !== false) {
+          for (let tr = cfg.title.tracking - 0.01; tr >= -0.16; tr -= 0.01) {
+            const t2 = textBlock(font(cfg.title.font), cfg.title.text, { height: cfg.title.height, maxWidth: cfg.title.maxWidth, tracking: tr, cx, top: title.bbox.y0 });
+            const p2 = weld(t2.glyphs.map((g) => g.contours));
+            if (p2.length === 1) {
+              const t3 = textBlock(font(cfg.title.font), cfg.title.text, { height: cfg.title.height, maxWidth: cfg.title.maxWidth, tracking: tr - 0.015, cx, top: title.bbox.y0 });
+              const p3 = weld(t3.glyphs.map((g) => g.contours));
+              if (p3.length === 1) { title = t3; polys = p3; } else { title = t2; polys = p2; }
+              break;
+            }
           }
         }
-      }
-      if (polys.length > 1) warnings.push(`«${cfg.title.text}» quedó en ${polys.length} piezas (baja el espaciado para unirlas en una sola).`);
-      polys.forEach((cs, i) => add({ id: 'title' + (polys.length > 1 ? i + 1 : ''), name: polys.length > 1 ? `Título · pieza ${i + 1}` : `Título «${cfg.title.text}»`, mat: 'white', contours: cs, onPanel: true }));
-    } else title.glyphs.forEach((g, i) => add({ id: 'title_' + i, name: `Título · letra ${g.ch}`, mat: 'white', contours: g.contours, onPanel: true }));
-  }
-  if (sub) sub.glyphs.forEach((g, i) => add({ id: 'sub_' + i, name: `Subtítulo · letra ${g.ch}`, mat: 'white', contours: g.contours, onPanel: true }));
+        if (polys.length > 1) warnings.push(`«${cfg.title.text}» quedó en ${polys.length} piezas (baja el espaciado para unirlas en una sola).`);
+        polys.forEach((cs, i) => add({ id: 'title' + (polys.length > 1 ? i + 1 : ''), name: polys.length > 1 ? `Título · pieza ${i + 1}` : `Título «${cfg.title.text}»`, mat: 'white', contours: cs, onPanel: true }));
+      } else title.glyphs.forEach((g, i) => add({ id: 'title_' + i, name: `Título · letra ${g.ch}`, mat: 'white', contours: g.contours, onPanel: true }));
+    }
+    if (sub) sub.glyphs.forEach((g, i) => add({ id: 'sub_' + i, name: `Subtítulo · letra ${g.ch}`, mat: 'white', contours: g.contours, onPanel: true }));
 
-  // ---- icon (white pieces + black heart / inlays)
-  if (icon) {
-    for (const p of icon.pieces) add({ id: 'icon_' + p.key, name: p.name, mat: 'white', contours: p.contours, onPanel: true });
-    if (icon.heart && cfg.icon.heart) add({ id: 'heart', name: 'Corazón', mat: 'black', contours: [icon.heart], onPanel: true, overWhite: true });
-    (icon.inlays || []).forEach((cs, i) => add({ id: 'inlay' + i, name: `Logo · detalle negro ${i + 1}`, mat: 'black', contours: cs, onPanel: true, overWhite: true }));
+    // ---- icon (white pieces + black heart / inlays)
+    if (icon) {
+      for (const p of icon.pieces) add({ id: 'icon_' + p.key, name: p.name, mat: 'white', contours: p.contours, onPanel: true });
+      if (icon.heart && cfg.icon.heart) add({ id: 'heart', name: 'Corazón', mat: 'black', contours: [icon.heart], onPanel: true, overWhite: true });
+      (icon.inlays || []).forEach((cs, i) => add({ id: 'inlay' + i, name: `Logo · detalle negro ${i + 1}`, mat: 'black', contours: cs, onPanel: true, overWhite: true }));
+    }
+    return { platesTop, platesBottom, pxs, plateW, plateWs: plateShapes.map((p) => p.w), plateH };
   }
 
   // ---- base layout (top view): x 0..W, y 0..D, y = D is the front edge
@@ -646,7 +661,7 @@ export function buildHablador(cfgIn, fonts) {
       ring.push([0, 0]); rad.push(0);
       const front = add({ id: 'cardFront', name: 'Frente porta tarjetas', mat: 'white', contours: [roundPoly(ring, rad)], print: [], cardFront: { x: (panelW - fw) / 2, w: fw, h: fh } });
       for (const t of tx) slots.push({ x: fx + t - (tabs.front + cl) / 2, y: Y(fFront + tW) - cl / 2, w: tabs.front + cl, h: tW + cl, what: 'front' });
-      if (cfg.cards.print) front.print = cardPrint(fw, fh);
+      if (cfg.cards.print) front.print = T?.card?.print?.length ? fitPrint(T.card, fw, fh) : cardPrint(fw, fh);
     }
     // sides (black, x2) glued against the ends of the front, from the front face back to the panel; tab along the depth
     {
@@ -682,7 +697,75 @@ export function buildHablador(cfgIn, fonts) {
   }
   for (const p of pieces) p.size = bbox(p.contours);
 
-  const model = { cfg, pieces, warnings, slots, layout: { panelW, panelH, platesTop, platesBottom, fPanel, fFront, pxs, plateW, plateWs: plateShapes.map((p) => p.w), plateH } };
+  const model = { cfg, pieces, warnings, slots, layout: { panelW, panelH, fPanel, fFront, ...FL } };
+
+  function fitPrint(card, fw, fh) {
+    // traced card-front print scaled into the real front (bottom-anchored, centred)
+    const k = Math.min(fw / card.w, fh / card.h), dx = (fw - card.w * k) / 2, dy = -(fh - card.h * k) / 2;
+    return card.print.map((l) => ({ ...l, contours: scaleContours(l.contours, k, dx, dy) }));
+  }
+
+  function mockupFront() {
+    const S = (cs) => scaleContours(cs, kM);
+    // panel: traced silhouette cut flat at the base top, tabs added underneath, refit as smooth curves
+    const sil = polygonClipping.intersection([toRing(flatten(S([T.panel])[0], 0.02))], [[[-1e4, -1e4], [1e4, -1e4], [1e4, 0], [-1e4, 0], [-1e4, -1e4]]]);
+    const tabP = tabX.map((tx) => { const a = tx - tabs.panel / 2, b = tx + tabs.panel / 2; return [[[a, -0.5], [b, -0.5], [b, tB], [a, tB], [a, -0.5]]]; });
+    const u = polygonClipping.union(sil, ...tabP).sort((a, b) => Math.abs(ringArea(b[0])) - Math.abs(ringArea(a[0])));
+    if (u.length > 1) warnings.push('Las pestañas del panel quedan fuera de su borde inferior (revisa el mockup).');
+    const cut = [pathToContour(cubicsToPath(fitClosed(u[0][0].slice(0, -1), { tol: 0.03, cornerDeg: 40 })))];
+
+    const items = cfg.qr.enabled ? cfg.qr.items : [];
+    const lf = font(cfg.qr.labelFont);
+    const boxes = [];
+    let np = 0;
+    T.pieces.forEach((tp, i) => {
+      const contours = S(tp.contours);
+      if (tp.kind !== 'plate') { add({ id: 'm' + i, name: tp.name, mat: 'white', contours, onPanel: true, print: (tp.print || []).map((l) => ({ ...l, contours: S(l.contours) })) }); return; }
+      const it = items[np] || {}, print = [];
+      np++;
+      const qy1 = (tp.qr.y + tp.qr.size) * kM;
+      if (items.length >= np) {
+        const badge = it.badge && it.badge !== 'none';
+        const qr = qrContours(it.url || ' ', tp.qr.x * kM, tp.qr.y * kM, tp.qr.size * kM, badge);
+        if (qr.moduleMM < 0.5) warnings.push(`QR ${np}: módulos de ${qr.moduleMM.toFixed(2)} mm, puede costar escanearlo (acorta la URL).`);
+        const color = it.color || tp.qr.color, color2 = it.color2 ?? tp.qr.color2;
+        const layer = { fill: color, grad: color2 ? [color, color2] : null, contours: qr.contours };
+        print.push(layer);
+        if (qr.badge) print.push({ ...layer, evenodd: true, contours: badgeContours(it.badge, qr.badge.cx, qr.badge.cy, qr.badge.size) });
+      }
+      // ink below the QR grouped in lines: line 1 = Texto, line 2 = Línea 2 (redrawn with the font when given)
+      const lines = [];
+      for (const t of [...tp.texts].sort((a, b) => a.box.y0 - b.box.y0)) {
+        const ln = lines.find((l) => Math.min(l.y1, t.box.y1) - Math.max(l.y0, t.box.y0) > 0.4 * Math.min(l.y1 - l.y0, t.box.y1 - t.box.y0));
+        if (ln) { ln.ts.push(t); ln.x0 = Math.min(ln.x0, t.box.x0); ln.x1 = Math.max(ln.x1, t.box.x1); ln.y0 = Math.min(ln.y0, t.box.y0); ln.y1 = Math.max(ln.y1, t.box.y1); }
+        else lines.push({ ts: [t], ...t.box });
+      }
+      let li = 0;
+      for (const ln of lines) {
+        const below = ln.y0 * kM >= qy1 - 0.5;
+        const txt = below ? [it.label, it.sub][li++] : '';
+        if (txt && txt.trim()) {
+          const w = (ln.x1 - ln.x0) * kM, cx2 = ((ln.x0 + ln.x1) / 2) * kM, bottom = ln.y1 * kM;
+          let tb = textBlock(lf, txt, { height: (ln.y1 - ln.y0) * kM, maxWidth: w, cx: cx2, bottom });
+          if (tb.bbox.x1 - tb.bbox.x0 < 0.96 * w && [...txt].length > 1) tb = textBlock(lf, txt, { capHeight: tb.size * capHeightRatio(lf), width: w, maxWidth: w, cx: cx2, bottom });
+          const fill = ln.ts.reduce((a, b) => (b.contours.length > a.contours.length ? b : a)).fill;
+          print.push({ fill, contours: tb.glyphs.flatMap((g) => g.contours) });
+        } else for (const t of ln.ts) print.push({ fill: t.fill, evenodd: true, contours: S(t.contours) });
+      }
+      add({ id: 'qr' + np, name: `Placa QR ${np}${it.label ? ' · ' + it.label : ''}`, mat: 'white', contours, onPanel: true, print, note: it.url ? `QR → ${it.url}` : '' });
+      boxes.push(bbox(contours));
+    });
+    if (cfg.nfc.enabled && boxes.length) {
+      const b = boxes[Math.min(boxes.length - 1, cfg.nfc.plate | 0)];
+      cut.push(circleC((b.x0 + b.x1) / 2, (b.y0 + b.y1) / 2, (cfg.nfc.diameter + 1) / 2));
+    }
+    pieces.unshift({ id: 'panel', name: 'Panel principal', mat: 'black', contours: cut, view: 'front', qty: 1, print: [], onPanel: false });
+    const n = boxes.length;
+    return {
+      platesTop: n ? Math.min(...boxes.map((b) => b.y0)) : 0, platesBottom: n ? Math.max(...boxes.map((b) => b.y1)) : 0,
+      pxs: boxes.map((b) => b.x0), plateW: n ? boxes.reduce((s, b) => s + b.w, 0) / n : 0, plateWs: boxes.map((b) => b.w), plateH: n ? Math.max(...boxes.map((b) => b.h)) : 0,
+    };
+  }
 
   function cardPrint(fw, fh) {
     // logo printed (UV) on the card-holder front: line-art icon + title + subtitle, stacked like the target
@@ -746,32 +829,156 @@ export function thinCheck(cs, r = 0.6, ppm = 10) {
   return { thin: after !== before, before, after };
 }
 
-// ------------------------------------------------------------------ nesting on sheets (shelf packing)
-export function nest(model, mat) {
-  const { w: SW, h: SH, gap, margin } = model.cfg.sheet;
-  const list = [];
-  for (const p of model.pieces) if (p.mat === mat) for (let q = 0; q < p.qty; q++) {
-    let cs = p.contours, bb = bbox(cs), rot = false;
-    // landscape orientation packs best on shelves; rotate only if it still fits the sheet
-    if (bb.h > bb.w * 1.15 && bb.h <= SW - 2 * margin) { cs = rot90(cs); bb = bbox(cs); rot = true; }
-    list.push({ piece: p, n: q + 1, cs: translate(cs, -bb.x0, -bb.y0), w: bb.w, h: bb.h, rot });
+// ------------------------------------------------------------------ nesting on sheets (true-shape, raster)
+// Every piece is rasterised (ppm px/mm) in 4 orientations; pieces go biggest first to the free spot closest to
+// the sheet's long-side start (left on landscape sheets, top on portrait ones), so small pieces fill the gaps and
+// concavities of big ones and the rest of the sheet stays as one clean offcut. Distance between real outlines
+// ≥ sheet.gap; nothing enters the edge margin. Overflowing pieces open new sheets (earlier sheets are tried first).
+function rasterize(cs, ppm, pad) {
+  const bb = bbox(cs);
+  const W = Math.ceil(bb.w * ppm) + 2 * pad + 1, H = Math.ceil(bb.h * ppm) + 2 * pad + 1;
+  const m = new Uint8Array(W * H);
+  const rings = cs.map((c) => flatten(c, 0.05).map((p) => [(p[0] - bb.x0) * ppm + pad, (p[1] - bb.y0) * ppm + pad]));
+  for (let y = 0; y < H; y++) {
+    const sy = y + 0.5, xs = [];
+    for (const R of rings) for (let i = 0, j = R.length - 1; i < R.length; j = i++) {
+      const [xi, yi] = R[i], [xj, yj] = R[j];
+      if ((yi > sy) !== (yj > sy)) xs.push(xi + ((sy - yi) / (yj - yi)) * (xj - xi));
+    }
+    xs.sort((a, b) => a - b);
+    for (let k = 0; k + 1 < xs.length; k += 2) for (let x = Math.max(0, Math.ceil(xs[k] - 0.5)); x <= Math.min(W - 1, Math.floor(xs[k + 1] - 0.5)); x++) m[y * W + x] = 1;
   }
-  list.sort((a, b) => b.h - a.h || b.w - a.w);
+  // outlines thinner than a pixel still mark their pixels
+  for (const R of rings) for (const [x, y] of R) { const xi = Math.min(W - 1, Math.max(0, Math.floor(x))), yi = Math.min(H - 1, Math.max(0, Math.floor(y))); m[yi * W + xi] = 1; }
+  return { m, W, H, bb };
+}
+const runsOf = (m, W, H) => {
+  const rows = [];
+  for (let y = 0; y < H; y++) {
+    let a = -1;
+    for (let x = 0; x <= W; x++) {
+      const on = x < W && m[y * W + x];
+      if (on && a < 0) a = x;
+      if (!on && a >= 0) { rows.push([y, a, x]); a = -1; }
+    }
+  }
+  return rows;
+};
+
+const pieceArea = (p) => (p._area ??= (() => { const outs = outerContours(p.contours); return p.contours.reduce((t, c) => t + (outs.includes(c) ? 1 : -1) * Math.abs(ringArea(flatten(c, 0.1))), 0); })());
+export function nest(model, mat) {
+  model._nest ??= {};
+  return (model._nest[mat] ??= nestSheets(model, mat));
+}
+function nestSheets(model, mat) {
+  const { w: SW, h: SH, gap, margin } = sheetOf(model.cfg, mat);
+  const ppm = Math.min(4, Math.sqrt(4e6 / (SW * SH)));
+  const GW = Math.floor(SW * ppm), GH = Math.floor(SH * ppm);
+  const halo = gap * ppm - 0.6, pad = Math.ceil(halo) + 2;
+  const landscape = SW >= SH;
+  const list = [];
+  for (const p of model.pieces) if (p.mat === mat) {
+    // 4 orientations (duplicates of symmetric pieces are harmless)
+    let cs = p.contours;
+    const ors = [];
+    for (let r = 0; r < 4; r++) {
+      const bb0 = bbox(cs), c0 = translate(cs, -bb0.x0, -bb0.y0);
+      const ras = rasterize(c0, ppm, pad);
+      const body = dilate(ras.m, ras.W, ras.H, 1);
+      let bx0 = ras.W, by0 = ras.H, bx1 = -1, by1 = -1, area = 0;
+      for (let y = 0; y < ras.H; y++) for (let x = 0; x < ras.W; x++) if (body[y * ras.W + x]) { area++; if (x < bx0) bx0 = x; if (x > bx1) bx1 = x; if (y < by0) by0 = y; if (y > by1) by1 = y; }
+      const runs = runsOf(body, ras.W, ras.H);
+      // check the longest runs first: collisions are found sooner
+      const order = [...runs].sort((a, b) => b[2] - b[1] - (a[2] - a[1]));
+      ors.push({ rot: r * 90, cs: c0, W: ras.W, H: ras.H, body, runs: order, bx0, by0, bx1, by1, area, w: bb0.w, h: bb0.h });
+      cs = rot90(cs);
+    }
+    for (let q = 0; q < p.qty; q++) list.push({ piece: p, n: q + 1, ors, area: ors[0].area });
+  }
+  list.sort((a, b) => b.area - a.area);
+
   const sheets = [];
-  let sheet = null, x = 0, y = 0, shelfH = 0;
-  const newSheet = () => { sheet = { items: [] }; sheets.push(sheet); x = margin; y = margin; shelfH = 0; };
+  const newSheet = () => {
+    const occ = new Uint8Array(GW * GH), m = Math.round(margin * ppm);
+    for (let y = 0; y < GH; y++) for (let x = 0; x < GW; x++) if (x < m || y < m || x >= GW - m || y >= GH - m) occ[y * GW + x] = 1;
+    const pre = new Int32Array((GW + 1) * GH);
+    const s = { items: [], occ, pre, rowsDirty: null };
+    for (let y = 0; y < GH; y++) prefixRow(s, y);
+    sheets.push(s);
+    return s;
+  };
+  const prefixRow = (s, y) => { const o = y * (GW + 1); s.pre[o] = 0; for (let x = 0; x < GW; x++) s.pre[o + x + 1] = s.pre[o + x] + s.occ[y * GW + x]; };
+  const fits = (s, o, X, Y) => {
+    for (const [ry, a, b] of o.runs) {
+      const row = (Y + ry) * (GW + 1);
+      if (s.pre[row + X + b] - s.pre[row + X + a]) return false;
+    }
+    return true;
+  };
+  // first free spot along the long side; stops as soon as it cannot beat `best`
+  const search = (s, o, best) => {
+    const X0 = -o.bx0, X1 = GW - 1 - o.bx1, Y0 = -o.by0, Y1 = GH - 1 - o.by1;
+    if (X1 < X0 || Y1 < Y0) return null;
+    if (landscape) {
+      for (let X = X0; X <= X1; X++) {
+        if (X + o.bx1 >= best) return null;
+        for (let Y = Y0; Y <= Y1; Y++) if (fits(s, o, X, Y)) return { X, Y, score: X + o.bx1, tie: Y + o.by1 };
+      }
+    } else {
+      for (let Y = Y0; Y <= Y1; Y++) {
+        if (Y + o.by1 >= best) return null;
+        for (let X = X0; X <= X1; X++) if (fits(s, o, X, Y)) return { X, Y, score: Y + o.by1, tie: X + o.bx1 };
+      }
+    }
+    return null;
+  };
+  const place = (s, it, o, X, Y) => {
+    // occupy the piece grown by the gap
+    const grown = dilate(o.body, o.W, o.H, halo);
+    for (let y = 0; y < o.H; y++) {
+      const gy = Y + y;
+      if (gy < 0 || gy >= GH) continue;
+      for (let x = 0; x < o.W; x++) { const gx = X + x; if (gx >= 0 && gx < GW && grown[y * o.W + x]) s.occ[gy * GW + gx] = 1; }
+      prefixRow(s, gy);
+    }
+    const dx = (X + pad) / ppm, dy = (Y + pad) / ppm;
+    s.items.push({ piece: it.piece, n: it.n, rot: o.rot, x: dx, y: dy, w: o.w, h: o.h, cs: translate(o.cs, dx, dy) });
+  };
+
   for (const it of list) {
-    if (it.w > SW - 2 * margin || it.h > SH - 2 * margin) { model.warnings.push(`«${it.piece.name}» no cabe en la lámina de ${SW}×${SH} mm.`); }
-    if (!sheet) newSheet();
-    if (x + it.w > SW - margin) { x = margin; y += shelfH + gap; shelfH = 0; }
-    if (y + it.h > SH - margin) { newSheet(); }
-    sheet.items.push({ ...it, x, y, cs: translate(it.cs, x, y) });
-    x += it.w + gap; shelfH = Math.max(shelfH, it.h);
+    let done = false;
+    for (const s of sheets) {
+      let best = null, bo = null;
+      for (const o of it.ors) {
+        const r = search(s, o, best ? best.score + 1 : Infinity);
+        if (r && (!best || r.score < best.score || (r.score === best.score && r.tie < best.tie))) { best = r; bo = o; }
+      }
+      if (best) { place(s, it, bo, best.X, best.Y); done = true; break; }
+    }
+    if (done) continue;
+    const s = newSheet();
+    let best = null, bo = null;
+    for (const o of it.ors) {
+      const r = search(s, o, best ? best.score + 1 : Infinity);
+      if (r && (!best || r.score < best.score || (r.score === best.score && r.tie < best.tie))) { best = r; bo = o; }
+    }
+    if (best) place(s, it, bo, best.X, best.Y);
+    else {
+      model.warnings.push(`«${it.piece.name}» no cabe en la lámina de ${SW}×${SH} mm (con ${margin} mm de margen).`);
+      const o = it.ors[0];
+      s.items.push({ piece: it.piece, n: it.n, rot: 0, x: margin, y: margin, w: o.w, h: o.h, cs: translate(o.cs, margin, margin) });
+    }
   }
   for (const s of sheets) {
-    let ux = 0, uy = 0;
-    for (const it of s.items) { ux = Math.max(ux, it.x + it.w); uy = Math.max(uy, it.y + it.h); }
+    let ux = 0, uy = 0, a = 0;
+    for (const it of s.items) {
+      const b = bbox(it.cs);
+      ux = Math.max(ux, b.x1); uy = Math.max(uy, b.y1);
+      a += pieceArea(it.piece);
+    }
     s.used = { w: ux + margin, h: uy + margin };
+    s.fill = a / (SW * SH);
+    delete s.occ; delete s.pre; delete s.rowsDirty;
   }
   return sheets;
 }
@@ -781,6 +988,8 @@ const esc = (s) => String(s).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&l
 const idOf = (s) => String(s).normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/[^A-Za-z0-9_]+/g, '_').replace(/^_+|_+$/g, '');
 const svgOpen = (w, h, extra = '') => `<?xml version="1.0" encoding="UTF-8"?>\n<svg xmlns="http://www.w3.org/2000/svg" width="${f3(w)}mm" height="${f3(h)}mm" viewBox="0 0 ${f3(w)} ${f3(h)}"${extra}>\n`;
 export const CUT_STYLE = 'fill="none" stroke="#ff0000" stroke-width="0.01"';
+
+export const sheetOf = (cfg, mat) => ({ ...cfg.sheet, ...(mat !== 'jig' && cfg[mat]?.sheet?.w > 0 && cfg[mat]?.sheet?.h > 0 ? cfg[mat].sheet : {}) });
 
 export const MATERIALS = (cfg) => ({
   white: `${cfg.white.label} ${cfg.white.t} mm`,
@@ -799,7 +1008,7 @@ function layerSVG(layer, cs) {
 
 // One SVG per sheet: red hairline cut lines, one path (compound) per piece.
 export function cutSVGs(model, mat) {
-  const { w, h } = model.cfg.sheet;
+  const { w, h } = sheetOf(model.cfg, mat);
   return nest(model, mat).map((s, i) => {
     let o = svgOpen(w, h);
     o += `<g id="CORTE_${idOf(MATERIALS(model.cfg)[mat])}_lamina_${i + 1}">\n`;
@@ -890,6 +1099,12 @@ export function summary(model) {
     out[k] ??= { pieces: 0, sheets: 0 };
     out[k].pieces += p.qty;
   }
-  for (const mat of ['white', 'black', 'jig']) { const k = M[mat]; if (out[k]) out[k].sheets = nest(model, mat).length; }
+  for (const mat of ['white', 'black', 'jig']) {
+    const k = M[mat];
+    if (!out[k]) continue;
+    const ss = nest(model, mat);
+    out[k].sheets = ss.length;
+    out[k].fill = ss.map((s) => Math.round(s.fill * 100));
+  }
   return out;
 }

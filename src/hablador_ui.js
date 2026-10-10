@@ -3,6 +3,7 @@
 import { parse as parseFont } from 'opentype.js';
 import { HABLADOR_FONTS, DEFAULT_HABLADOR, buildHablador, exportAll, summary, traceLogo, MATERIALS } from './core/hablador.js';
 import { imageReady } from './core/imageload.js';
+import { analyzeMockup } from './core/hablador_mockup.js';
 
 const esc = (s) => String(s).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
 const parseNum = (s) => parseFloat(String(s).trim().replace(',', '.'));
@@ -40,7 +41,7 @@ export class HabladorStudio {
       <button class="btn" data-a="home">⌂ Inicio</button>
       <div class="brand"><span class="logo">◆</span> Relieve3D <span class="module-name">· 🪧 Hablador acrílico</span></div>
       <div class="tb-group">
-        <button class="btn" data-a="mockup" title="Imagen de referencia del hablador (solo para comparar)">🖼️ Cargar mockup</button>
+        <button class="btn" data-a="mockup" title="Imagen frontal del hablador: referencia y fuente para «Generar desde mockup»">🖼️ Cargar mockup</button>
         <button class="btn" data-a="openCfg">📂 Abrir</button>
         <button class="btn" data-a="saveCfg">💾 Guardar proyecto</button>
         <button class="btn" data-a="reset" title="Volver a los valores del ejemplo LOVECUBE">↺ Ejemplo</button>
@@ -51,29 +52,50 @@ export class HabladorStudio {
     <main class="layout studio-layout hb-layout">
       <aside class="panel left">
         <section class="card">
-          <h3>Hablador</h3>
+          <h3>Origen del diseño</h3>
+          <label class="row">Frente <select data-k="source"><option value="param">Paramétrico (formulario)</option><option value="mockup">Desde mockup</option></select></label>
+          <button class="btn wide primary" data-a="fromMockup" title="Calca el frente (panel, piezas blancas, QR, textos, porta tarjetas) de una imagen frontal">🪄 Generar desde mockup</button>
+          <div class="muted small">Usa una vista <b>FRONTAL recta</b> (sin perspectiva), fondo liso, base visible abajo, colores reales del acrílico y mínimo 1500 px de alto. No hacen falta vistas laterales ni superior: el fondo sale de «Ancho / fondo».</div>
+          <div class="muted small" data-r="mockInfo"></div>
+        </section>
+        <section class="card">
+          <h3>Medidas objetivo</h3>
           ${txt('Nombre', 'name')}
-          ${num('Ancho base (mm)', 'width')}
-          ${num('Ancho panel (mm)', 'panelWidth', 'Panel negro trasero; la base sobresale a cada lado')}
-          ${num('Alto total (mm)', 'height')}
-          ${num('Fondo de la base (mm)', 'depth')}
-          ${num('Radio esquinas panel', 'panelCorner')}
-          ${num('Borde negro del ícono', 'border')}
-          ${num('Alero izquierdo (× alto)', 'roof.left', 'Altura del hombro izquierdo del techo, como fracción del alto del panel')}
-          ${num('Alero derecho (× alto)', 'roof.right')}
-          ${num('Pendiente techo izq.', 'roof.leftSlope')}
-          ${num('Pendiente techo der.', 'roof.rightSlope')}
+          ${num('Alto total (mm)', 'height', 'Desde la mesa hasta la punta más alta')}
+          ${num('Largo / frente (mm)', 'width', 'Ancho de la base vista de frente')}
+          ${num('Ancho / fondo (mm)', 'depth', 'Profundidad de la base')}
+          <div data-show="param">
+            ${num('Ancho panel (mm)', 'panelWidth', 'Panel negro trasero; la base sobresale a cada lado')}
+            ${num('Radio esquinas panel', 'panelCorner')}
+            ${num('Borde negro del ícono', 'border')}
+            ${num('Alero izquierdo (× alto)', 'roof.left', 'Altura del hombro izquierdo del techo, como fracción del alto del panel')}
+            ${num('Alero derecho (× alto)', 'roof.right')}
+            ${num('Pendiente techo izq.', 'roof.leftSlope')}
+            ${num('Pendiente techo der.', 'roof.rightSlope')}
+          </div>
         </section>
         <section class="card">
-          <h3>Materiales</h3>
-          ${num('Acrílico blanco (mm)', 'white.t')}
-          ${num('Acrílico negro (mm)', 'black.t')}
-          ${num('Holgura de ranuras (mm)', 'clearance', 'Se suma al grosor en cada ranura: compensa el kerf del láser y deja entrar la pieza sin forzar')}
-          ${num('Lámina ancho (mm)', 'sheet.w')}
-          ${num('Lámina alto (mm)', 'sheet.h')}
-          ${num('Separación piezas (mm)', 'sheet.gap')}
+          <h3>Láminas</h3>
+          <h4>Piezas claras (frente)</h4>
+          ${txt('Material', 'white.label')}
+          ${num('Calibre (mm)', 'white.t')}
+          <label class="row">Color <input type="color" data-k="white.color" /></label>
+          ${num('Lámina ancho (mm)', 'white.sheet.w')}
+          ${num('Lámina alto (mm)', 'white.sheet.h')}
+          <h4>Piezas oscuras (panel y base)</h4>
+          ${txt('Material', 'black.label')}
+          ${num('Calibre (mm)', 'black.t')}
+          <label class="row">Color <input type="color" data-k="black.color" /></label>
+          ${num('Lámina ancho (mm)', 'black.sheet.w')}
+          ${num('Lámina alto (mm)', 'black.sheet.h')}
+          <h4>Corte</h4>
+          ${num('Ajuste de uniones (mm)', 'clearance', 'Se suma al calibre en cada ranura. −0.2 = encaje a presión: lámina de 3 mm → ranura de 2.8 mm (el kerf del láser la abre a ~3 mm sin juego)')}
+          ${num('Separación entre piezas (mm)', 'sheet.gap', 'Distancia mínima entre contornos al acomodar las piezas en la lámina')}
+          ${num('Margen del borde (mm)', 'sheet.margin')}
+          ${num('Plantilla: lámina ancho (mm)', 'sheet.w')}
+          ${num('Plantilla: lámina alto (mm)', 'sheet.h')}
         </section>
-        <section class="card">
+        <section class="card" data-show="param">
           <h3>Ícono superior</h3>
           <label class="row">Tipo <select data-k="icon.type"><option value="cube">Cubo con corazón</option><option value="custom">Logo desde imagen</option><option value="none">Ninguno</option></select></label>
           ${num('Alto del ícono (mm)', 'icon.height')}
@@ -86,7 +108,7 @@ export class HabladorStudio {
             <div class="muted small" data-r="logoInfo"></div>
           </div>
         </section>
-        <section class="card">
+        <section class="card" data-show="param">
           <h3>Título y subtítulo</h3>
           ${chk('Título', 'title.enabled')}
           <div data-show="title">
@@ -118,13 +140,16 @@ export class HabladorStudio {
           <h3>Placas QR</h3>
           ${chk('Incluir placas QR', 'qr.enabled')}
           <div data-show="qr">
+            <div data-show="param">
             <label class="row">Cantidad <select data-r="qrCount"><option>1</option><option>2</option><option>3</option></select></label>
-            ${font('qr.labelFont')}
             ${num('Ancho placa (mm, 0 = auto)', 'qr.w')}
             ${num('Alto placa (mm)', 'qr.h')}
             ${num('Inclinación izquierda', 'qr.slopeL', 'Cuánto sube el borde superior de las placas a la izquierda de la V (mm por mm)')}
             ${num('Inclinación derecha', 'qr.slopeR', 'Cuánto sube el borde superior de las placas a la derecha de la V (mm por mm)')}
             ${num('Corte respecto a la V (mm)', 'qr.split', 'Con 2 placas: desplaza la separación entre ellas respecto a la V del ícono')}
+            </div>
+            ${font('qr.labelFont')}
+            <div class="muted small" data-show="mockup">Desde mockup: el QR real se dibuja donde estaba el del mockup. Si dejas «Texto» vacío se conserva el texto calcado; si lo escribes se redibuja con la fuente elegida.</div>
             <div data-r="qrItems"></div>
           </div>
         </section>
@@ -174,7 +199,8 @@ export class HabladorStudio {
       const tab = e.target.closest('[data-tab]')?.dataset.tab;
       if (tab) { this.tab = tab; this.renderView(); return; }
       if (a === 'home') this.cb.onBack();
-      else if (a === 'mockup') this.$('fileMockup').click();
+      else if (a === 'mockup') { this._genAfterLoad = false; this.$('fileMockup').click(); }
+      else if (a === 'fromMockup') { if (this.mockup) this.fromMockup(); else { this._genAfterLoad = true; this.$('fileMockup').click(); } }
       else if (a === 'logo') this.$('fileLogo').click();
       else if (a === 'openCfg') this.$('fileCfg').click();
       else if (a === 'saveCfg') this.saveProject();
@@ -254,7 +280,8 @@ export class HabladorStudio {
 
   updateVisibility() {
     const c = this.cfg;
-    const show = { cube: c.icon.type === 'cube', custom: c.icon.type === 'custom', title: c.title.enabled, subtitle: c.subtitle.enabled, qr: c.qr.enabled, nfc: c.nfc.enabled, cards: c.cards.enabled };
+    const mk = c.source === 'mockup' && !!c.traced;
+    const show = { param: !mk, mockup: mk, cube: c.icon.type === 'cube', custom: c.icon.type === 'custom', title: c.title.enabled, subtitle: c.subtitle.enabled, qr: c.qr.enabled, nfc: c.nfc.enabled, cards: c.cards.enabled };
     for (const el of this.root.querySelectorAll('[data-show]')) el.hidden = !show[el.dataset.show];
     this.$('logoInfo').textContent = c.icon.custom?.white?.length ? `Logo: ${c.icon.custom.white.length} pieza(s) en curvas` : 'Carga una imagen del logo (fondo liso o transparente).';
   }
@@ -314,7 +341,7 @@ export class HabladorStudio {
     const m = this.model;
     const M = MATERIALS(m.cfg);
     const sum = summary(m);
-    this.$('status').textContent = Object.entries(sum).map(([k, v]) => `${k}: ${v.pieces} piezas · ${v.sheets} lámina${v.sheets > 1 ? 's' : ''}`).join('   |   ');
+    this.$('status').textContent = Object.entries(sum).map(([k, v]) => `${k}: ${v.pieces} piezas · ${v.sheets} lámina${v.sheets > 1 ? 's' : ''} (${v.fill.map((f) => f + '%').join(', ')} usado)`).join('   |   ');
     this.$('warn').innerHTML = m.warnings.length ? m.warnings.map((w) => `<div class="hb-w">⚠ ${esc(w)}</div>`).join('') : '<div class="hb-ok">✓ Sin líneas finas ni piezas que no quepan</div>';
     let h = '';
     for (const mat of ['white', 'black', 'jig']) {
@@ -368,8 +395,52 @@ export class HabladorStudio {
 
   async loadMockup(file) {
     this.mockup = await this.readDataURL(file);
+    if (this._genAfterLoad) { this._genAfterLoad = false; await this.fromMockup(); return; }
     this.tab = 'mockup';
     this.renderView();
+  }
+
+  // Front traced from the frontal mockup; measurements, calibres and sheets stay those of the form.
+  async fromMockup() {
+    if (!this.mockup) return;
+    this.cb.showBusy('Calcando el mockup…');
+    await nextFrame();
+    const c = this.cfg;
+    try {
+      const img = new Image(); img.src = this.mockup; await imageReady(img);
+      const k = Math.min(1, 3000 / Math.max(img.naturalWidth, img.naturalHeight));
+      const cv = document.createElement('canvas');
+      cv.width = Math.max(1, Math.round(img.naturalWidth * k)); cv.height = Math.max(1, Math.round(img.naturalHeight * k));
+      const cx = cv.getContext('2d', { willReadFrequently: true });
+      cx.drawImage(img, 0, 0, cv.width, cv.height);
+      const T = analyzeMockup(cx.getImageData(0, 0, cv.width, cv.height), { height: c.height, baseStack: 2 * c.black.t, white: c.white.color, black: c.black.color });
+      c.traced = T;
+      c.source = 'mockup';
+      const plates = T.pieces.filter((p) => p.qr);
+      const presets = DEFAULT_HABLADOR().qr.items;
+      c.qr.enabled = plates.length > 0;
+      c.qr.items = plates.map((p, i) => {
+        const old = c.qr.items[i] || presets[i] || presets[0];
+        return { ...old, label: '', sub: '', color: p.qr.color, color2: p.qr.color2 || '' };
+      });
+      if (!c.qr.items.length) c.qr.items = [{ ...presets[0], label: '', sub: '' }];
+      if (c.nfc.plate >= c.qr.items.length) c.nfc.plate = 0;
+      c.cards.enabled = !!T.card;
+      if (T.card) {
+        c.cards.frontW = Math.round(T.card.w * 10) / 10;
+        c.cards.height = Math.round(T.card.h * 10) / 10;
+        c.cards.cardW = Math.min(c.cards.cardW, c.cards.frontW - 10);
+      }
+      const i = T.info;
+      this.$('mockInfo').textContent = `Detectado: panel ${T.panelW.toFixed(1)} mm de ancho, ${i.plates} placa(s) QR, ${i.pieces} pieza(s) blanca(s)${T.card ? `, porta tarjetas ${T.card.w.toFixed(0)}×${T.card.h.toFixed(0)} mm` : ''}. Base en el mockup ≈ ${i.baseW.toFixed(0)} mm${i.baseFound ? '' : ' (no se vio la base: se asumió)'}.`;
+      this.sync();
+      this.tab = 'assembly';
+      this.cb.toast(`✓ Mockup calcado: ${i.plates} placa(s) QR y ${i.pieces} pieza(s)`);
+    } catch (err) {
+      console.error(err);
+      this.cb.toast('No se pudo calcar el mockup: ' + err.message, true);
+    } finally { this.cb.hideBusy(); }
+    await this.rebuild();
   }
 
   async loadLogo(file) {
@@ -411,7 +482,7 @@ export class HabladorStudio {
   }
 
   async saveProject() {
-    const data = JSON.stringify({ app: 'Relieve3D-Hablador', version: 1, cfg: this.cfg, logoSrc: this.logoSrc });
+    const data = JSON.stringify({ app: 'Relieve3D-Hablador', version: 2, cfg: this.cfg, logoSrc: this.logoSrc, mockup: this.mockup });
     const p = await window.api.saveFile({ defaultPath: (this.cfg.name || 'hablador') + '.r3h', filters: [{ name: 'Proyecto Hablador', extensions: ['r3h'] }], data });
     if (p) this.cb.toast('✓ Proyecto guardado');
   }
@@ -422,6 +493,7 @@ export class HabladorStudio {
     const merge = (a, b) => { for (const k of Object.keys(b)) a[k] = b[k] && typeof b[k] === 'object' && !Array.isArray(b[k]) && a[k] && typeof a[k] === 'object' ? merge(a[k], b[k]) : b[k]; return a; };
     this.cfg = merge(d, j.cfg);
     this.logoSrc = j.logoSrc || null;
+    this.mockup = j.mockup || null;
     this.root.hidden = false;
     this.sync();
     return this.rebuild();
