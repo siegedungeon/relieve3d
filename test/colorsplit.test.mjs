@@ -1,0 +1,153 @@
+// Color separation: synthetic multicolor 3MF (painted sphere + solid colored block sunk into it)
+// → single-color parts that are watertight, don't overlap, rebuild the original and lie on the bed.
+import Module from 'manifold-3d';
+import { zipSync, strToU8 } from 'fflate';
+import { read3MF } from '../src/core/threemf_read.js';
+import { splitColors, layoutPlates, applyPose, DEFAULT_SPLIT } from '../src/core/colorsplit.js';
+import { exportFiles } from '../src/core/colorsplit_export.js';
+
+let fails = 0;
+const check = (ok, msg) => { console.log((ok ? 'ok   ' : 'FAIL ') + msg); if (!ok) fails++; };
+
+// icosphere
+function icosphere(r, sub) {
+  const t = (1 + Math.sqrt(5)) / 2;
+  let V = [[-1, t, 0], [1, t, 0], [-1, -t, 0], [1, -t, 0], [0, -1, t], [0, 1, t], [0, -1, -t], [0, 1, -t], [t, 0, -1], [t, 0, 1], [-t, 0, -1], [-t, 0, 1]];
+  let F = [[0, 11, 5], [0, 5, 1], [0, 1, 7], [0, 7, 10], [0, 10, 11], [1, 5, 9], [5, 11, 4], [11, 10, 2], [10, 7, 6], [7, 1, 8], [3, 9, 4], [3, 4, 2], [3, 2, 6], [3, 6, 8], [3, 8, 9], [4, 9, 5], [2, 4, 11], [6, 2, 10], [8, 6, 7], [9, 8, 1]];
+  const nrm = (p) => { const l = Math.hypot(...p); return p.map((x) => x / l); };
+  V = V.map(nrm);
+  for (let s = 0; s < sub; s++) {
+    const mid = new Map(), F2 = [];
+    const m = (a, b) => { const k = a < b ? a + ',' + b : b + ',' + a; if (!mid.has(k)) { V.push(nrm(V[a].map((x, i) => (x + V[b][i]) / 2))); mid.set(k, V.length - 1); } return mid.get(k); };
+    for (const [a, b, c] of F) { const ab = m(a, b), bc = m(b, c), ca = m(c, a); F2.push([a, ab, ca], [b, bc, ab], [c, ca, bc], [ab, bc, ca]); }
+    F = F2;
+  }
+  return { V: V.map((p) => p.map((x) => x * r)), F };
+}
+function box(c, s) {
+  const V = [];
+  for (let i = 0; i < 8; i++) V.push([c[0] + (i & 1 ? s[0] : -s[0]) / 2, c[1] + (i & 2 ? s[1] : -s[1]) / 2, c[2] + (i & 4 ? s[2] : -s[2]) / 2]);
+  const F = [[0, 2, 3], [0, 3, 1], [4, 5, 7], [4, 7, 6], [0, 1, 5], [0, 5, 4], [2, 6, 7], [2, 7, 3], [0, 4, 6], [0, 6, 2], [1, 3, 7], [1, 7, 5]];
+  return { V, F };
+}
+const sph = icosphere(20, 4);
+const blk = box([0, 0, 24], [14, 10, 12]); // green block sinking 6 mm into the top of the sphere
+// painted band: a pink stripe around the sphere (|z| < 6) + a pink cap at the bottom
+const paint = (f) => { const z = f.reduce((a, i) => a + sph.V[i][2], 0) / 3; return Math.abs(z) < 6 || z < -16 ? 1 : 0; };
+const meshXML = (m, attrs) => `<mesh><vertices>${m.V.map((p) => `<vertex x="${p[0]}" y="${p[1]}" z="${p[2]}"/>`).join('')}</vertices><triangles>${m.F.map((f, i) => `<triangle v1="${f[0]}" v2="${f[1]}" v3="${f[2]}"${attrs(f, i)}/>`).join('')}</triangles></mesh>`;
+const xml = `<?xml version="1.0" encoding="UTF-8"?>
+<model unit="millimeter" xmlns="http://schemas.microsoft.com/3dmanufacturing/core/2015/02">
+<resources>
+<basematerials id="1"><base name="Blanco" displaycolor="#F4F4F4"/><base name="Rosa" displaycolor="#E8AFCF"/><base name="Verde" displaycolor="#8ADFBD"/></basematerials>
+<object id="2" type="model" pid="1" pindex="0">${meshXML(sph, (f) => ` pid="1" p1="${paint(f)}"`)}</object>
+<object id="3" type="model" pid="1" pindex="2">${meshXML(blk, () => '')}</object>
+</resources>
+<build><item objectid="2"/><item objectid="3"/></build>
+</model>`;
+const bytes = zipSync({ '3D/3dmodel.model': strToU8(xml), '[Content_Types].xml': strToU8('<Types/>') });
+
+const model = read3MF(bytes);
+check(model.palette.length === 3, `palette ${model.palette.join(' ')}`);
+check(model.parts.length === 2, `parts read: ${model.parts.length}`);
+
+const WHITE = model.palette.indexOf('#F4F4F4'), PINK = model.palette.indexOf('#E8AFCF'), GREEN = model.palette.indexOf('#8ADFBD');
+const w = await Module();
+w.setup();
+const { Manifold, Mesh } = w;
+const toMan = (m) => {
+  const mesh = new Mesh({ numProp: 3, vertProperties: Float32Array.from(m.V), triVerts: Uint32Array.from(m.T) });
+  mesh.merge();
+  return new Manifold(mesh);
+};
+const t0 = Date.now();
+const r = splitColors(w, model, {}, () => {});
+console.log(`  ${((Date.now() - t0) / 1000).toFixed(1)} s, ${r.parts.length} parts, warnings: ${r.warnings.join(' | ') || '-'}`);
+const kinds = (k, c) => r.parts.filter((p) => p.kind === k && (c == null || p.color === c));
+check(r.base === WHITE, `base color = white (${r.base})`);
+check(kinds('body').length === 1, `one body (${kinds('body').length})`);
+check(kinds('solid', GREEN).length === 1, `green block → one solid part (${kinds('solid', GREEN).length})`);
+check(kinds('inlay', PINK).length >= 2 && kinds('inlay', PINK).length <= 40, `pink inlays: ${kinds('inlay', PINK).length}`);
+check(r.parts.every((p) => (p.kind === 'body' ? p.color === WHITE : p.color !== WHITE)), 'every part is single-color');
+
+// watertight + positive volume
+const mans = r.parts.map((p) => toMan(p.mesh));
+check(mans.every((m) => m.status() === 'NoError' && m.volume() > 0.3), 'all parts are valid closed solids');
+// (zero-volume fins can appear when the float32 mesh is re-welded with tolerance; they aren't printable matter)
+check(mans.every((m) => m.decompose().filter((q) => q.volume() > 0.01).length === 1), 'each part is a single connected piece');
+
+// no part overlaps another (clearance keeps them apart)
+let maxOv = 0;
+for (let i = 0; i < mans.length; i++) for (let j = i + 1; j < mans.length; j++) maxOv = Math.max(maxOv, mans[i].intersect(mans[j]).volume());
+check(maxOv < 0.01, `no overlaps (max ${maxOv.toFixed(4)} mm³)`);
+
+// reassembled volume ≈ original (only the clearance gaps are missing)
+const orig = toMan({ V: model.parts[0].V, T: model.parts[0].T }).add(toMan({ V: model.parts[1].V, T: model.parts[1].T })).volume();
+const total = mans.reduce((a, m) => a + m.volume(), 0);
+check(total < orig && total > orig * 0.97, `reassembled volume ${total.toFixed(0)} vs ${orig.toFixed(0)} mm³`);
+
+// the parts' outside surface matches the original surface: assembled union covers the original within the clearance
+const asm = Manifold.union(mans);
+const missing = toMan({ V: model.parts[0].V, T: model.parts[0].T }).add(toMan({ V: model.parts[1].V, T: model.parts[1].T })).subtract(asm).volume();
+check(missing < orig * 0.03, `uncovered volume ${missing.toFixed(1)} mm³`);
+
+// inlays: curved colour shells, visible face up, no thicker than maxPocket
+for (const p of kinds('inlay')) {
+  const m = applyPose(p.mesh, p.print);
+  let zmin = Infinity, up = 0, all = 0;
+  for (let i = 2; i < m.V.length; i += 3) zmin = Math.min(zmin, m.V[i]);
+  for (let t = 0; t < m.T.length; t += 3) {
+    const [a, b, c] = [m.T[t] * 3, m.T[t + 1] * 3, m.T[t + 2] * 3];
+    const u = [m.V[b] - m.V[a], m.V[b + 1] - m.V[a + 1], m.V[b + 2] - m.V[a + 2]], v = [m.V[c] - m.V[a], m.V[c + 1] - m.V[a + 1], m.V[c + 2] - m.V[a + 2]];
+    const n = [u[1] * v[2] - u[2] * v[1], u[2] * v[0] - u[0] * v[2], u[0] * v[1] - u[1] * v[0]], l = Math.hypot(...n) / 2;
+    all += l; if (n[2] / (2 * l || 1) > 0.2) up += l;
+  }
+  // shell: about half of its skin looks up (the visible face), the other half down (the glued face)
+  p._up = up / (all || 1);
+  p._thick = p.volume / (all / 2);
+  p._zmin = zmin;
+}
+check(kinds('inlay').every((p) => Math.abs(p._zmin) < 1e-3), 'inlays rest on z = 0');
+check(kinds('inlay').every((p) => p._up > 0.3), `inlays print with the visible face up (min ${Math.min(...kinds('inlay').map((p) => p._up)).toFixed(2)})`);
+check(kinds('inlay').every((p) => p._thick >= DEFAULT_SPLIT.depth * 0.6 && p._thick <= DEFAULT_SPLIT.maxPocket + 0.5), `inlay shells ${Math.min(...kinds('inlay').map((p) => p._thick)).toFixed(2)}–${Math.max(...kinds('inlay').map((p) => p._thick)).toFixed(2)} mm thick`);
+
+// solid part is smaller than its socket by the clearance
+const solid = kinds('solid')[0];
+check(solid.volume < 14 * 10 * 12 && solid.volume > 14 * 10 * 12 * 0.9, `solid shrunk for clearance (${solid.volume.toFixed(0)} mm³)`);
+
+// plate layout keeps items inside the plate and apart
+const sizes = r.parts.map((p) => p.print.size);
+const lay = layoutPlates(sizes, 256, 3);
+let inside = true, overlap = false;
+const rs = (i) => (lay[i].rot ? [sizes[i][1], sizes[i][0]] : sizes[i]);
+lay.forEach((l, i) => { const [sx, sy] = rs(i); if (l.x - sx / 2 < 0 || l.y - sy / 2 < 0 || l.x + sx / 2 > 256 || l.y + sy / 2 > 256) inside = false; });
+for (let i = 0; i < lay.length; i++) for (let j = i + 1; j < lay.length; j++) {
+  if (lay[i].plate !== lay[j].plate) continue;
+  const dx = Math.abs(lay[i].x - lay[j].x) * 2, dy = Math.abs(lay[i].y - lay[j].y) * 2;
+  if (dx < rs(i)[0] + rs(j)[0] && dy < rs(i)[1] + rs(j)[1]) overlap = true;
+}
+check(inside && !overlap, 'plate layout: inside the plate, no overlap');
+
+// numbers engraved on the inlays' hidden face (compare with an unlabelled run)
+const r0 = splitColors(w, model, { labels: false }, () => {});
+const v0 = r0.parts.filter((p) => p.kind === 'inlay').map((p) => p.volume);
+const v1 = kinds('inlay').map((p) => p.volume);
+const engraved = v1.filter((v, i) => v0[i] - v > 0.3).length;
+check(v0.length === v1.length && engraved >= v1.length * 0.5, `numbers engraved on ${engraved}/${v1.length} inlays`);
+
+// export: one 3MF + STL per color plate (parts on the bed), reference assembly, instructions
+const ex = exportFiles(r, { bedW: 120, bedH: 100, title: 'test' });
+const names = ex.files.map((f) => f.name);
+check(names.filter((n) => n.endsWith('.3mf')).length === ex.plates.length + 1 && names.some((n) => n.endsWith('.txt')), `export files: ${names.length}`);
+let bedOk = true, countOk = 0;
+for (const pl of ex.plates) {
+  const f = ex.files.find((x) => x.name === pl.file);
+  const m = read3MF(f.data);
+  countOk += m.parts.length;
+  for (const p of m.parts) for (let i = 0; i < p.V.length; i += 3) if (p.V[i] < -0.01 || p.V[i + 1] < -0.01 || p.V[i] > 120.01 || p.V[i + 1] > 100.01 || p.V[i + 2] < -0.01) bedOk = false;
+  if (m.palette.length !== 1 || m.palette[0] !== r.palette[pl.color]) bedOk = false;
+}
+check(countOk === r.parts.length, `exported 3MFs re-open with all ${countOk} parts`);
+check(bedOk, 'exported parts sit on the bed (inside 120×100, z ≥ 0) with their color');
+
+console.log(fails ? `\n${fails} FAILED` : '\ncolorsplit OK');
+process.exit(fails ? 1 : 0);

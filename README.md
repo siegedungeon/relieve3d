@@ -43,6 +43,7 @@ Al abrir aparece una **pantalla de inicio** para elegir qué crear (botón **Ini
 | Placa para mascota | Nombre + teléfono con argolla para collar |
 | Letrero / placa | Placa con agujeros o imanes |
 | Cortador de galletas | Filo y pestaña a partir de la silueta + sello/marcador interior con el diseño en relieve (impreso al lado, holgura 0,6 mm, espejado para que la galleta salga al derecho) |
+| Separar colores 3D | Abre un **3MF multicolor** (p. ej. de MakerWorld) y lo divide en **piezas de un solo color** para imprimir sin cambios de filamento y pegar (ver abajo) |
 
 Los módulos de texto usan las fuentes más populares y las instaladas en el equipo, con contorno/bordeado opcional.
 
@@ -71,6 +72,17 @@ Los módulos de texto usan las fuentes más populares y las instaladas en el equ
 - **Argolla**: «📍 Ubicar con el mouse» muestra la argolla en vivo pegada al borde más cercano mientras mueves el mouse; clic para fijarla, **Alt** para ubicarla libre, también se puede arrastrar. Estilo redondo o **ranura para cordón/lanyard**.
 - **Acabados**: borde elevado, contorno de acento, canto biselado, **chip NFC oculto** (bolsillo + pausa automática en el 3MF para insertar el chip en Bambu Studio) y **texto grabado atrás** (nombre del empleado, web).
 - **Marca / empresas**: **código QR** en el frente (avisa si queda muy pequeño para escanear), **nombres en lote** (un 3MF por empleado, atrás o al frente), **peso estimado en gramos** para cotizar y **hoja de propuesta PNG** con las 3 versiones lado a lado para enviar al cliente.
+
+### Módulo Separar colores 3D
+
+Convierte un modelo pintado por colores (3MF de Bambu Studio/MakerWorld, objetos por color o pintura por triángulo) en piezas monocolor que encajan a presión. Evita impresiones de 30+ horas por purgas.
+
+- El color **base** (el de mayor área, cambiable) queda como **cuerpo** con cavidades; los colores que son volúmenes propios (p. ej. un moño) salen como **piezas sólidas**; los colores pintados en la superficie salen como **cascarones curvos** (grosor configurable, 1.6 mm por defecto) que se incrustan en el cuerpo.
+- Cada color se divide en **pocas piezas grandes**: solo se corta donde la superficie gira más de lo que permite una inserción recta (*Curvatura por pieza*), con costuras suaves y sin dientes. Holgura de encaje 0.15 mm.
+- Cada incrustación lleva su **número grabado** en la cara oculta (las muy pequeñas no; se ubican con el mapa).
+- **Imprimir** los cascarones con la **cara de color hacia arriba** y **soportes de árbol solo en la cama** bajo la cara oculta; las placas ya salen orientadas así.
+- Exporta un 3MF y un STL por color (placas acomodadas en la cama), el **3MF de ensamble de referencia**, el **mapa de armado** PNG (frente y atrás) e instrucciones.
+- Límites: las franjas que envuelven esferas no pueden salir en una sola pieza (quedarían trabadas); en pliegues ocultos muy cerrados puede perderse ~2 % del color, que se retoca con pintura.
 
 ## Flujo de trabajo (modelos 3D)
 

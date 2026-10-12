@@ -252,3 +252,18 @@ textarea { width: 100%; font: inherit; font-size: 14px; padding: 6px 8px; border
 .hb-list h4 { margin: 8px 0 4px; font-size: 12px; }
 .hb-pc { display: flex; justify-content: space-between; gap: 6px; padding: 1px 0; font-size: 12px; }
 .hb-list { overflow-y: auto; }
+
+/* Separar colores 3D */
+.cs-layout .hb-tabs { align-items: center; }
+.cs-explode { display: flex; align-items: center; gap: 6px; font-size: 12px; color: var(--muted); }
+.cs-explode input { width: 140px; }
+.cs-colors { display: flex; flex-direction: column; gap: 4px; margin-bottom: 6px; }
+.cs-color { display: flex; align-items: center; gap: 6px; font-size: 12px; }
+.cs-color input[type=color] { width: 28px; height: 22px; border: 1px solid var(--border); border-radius: 5px; padding: 0; background: none; }
+.cs-color .cs-name { flex: 1; min-width: 0; width: 80px; padding: 2px 5px; border: 1px solid var(--border); border-radius: 5px; }
+.cs-color label { display: flex; align-items: center; gap: 2px; white-space: nowrap; }
+.cs-sw { display: inline-block; width: 10px; height: 10px; border-radius: 3px; border: 1px solid rgba(0,0,0,.25); margin-right: 5px; vertical-align: -1px; }
+.cs-sum { margin: 2px 0; font-size: 12px; color: var(--text, #111); }
+.cs-pc { cursor: pointer; border-radius: 5px; padding: 2px 4px; }
+.cs-pc:hover { background: #f1f5f9; }
+.cs-pc.sel { background: #dbeafe; }

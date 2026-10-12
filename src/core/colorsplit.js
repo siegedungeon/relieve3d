@@ -1,0 +1,887 @@
+// Color separation for multicolor 3D models.
+// Turns a painted / multi-part model into single-color printable parts that glue back together:
+//  - solid color volumes (separate shells, e.g. a bow) → own part; the base body gets a socket where they sink in
+//  - painted surface areas (e.g. swirls) → a few curved inlay shells (constant thickness along their insertion
+//    axis, the visible face is the original surface) + matching pockets in the body
+// Geometry booleans use manifold-3d (WASM). Units: mm.
+
+export const DEFAULT_SPLIT = {
+  clearance: 0.15, // total gap between an inlay/part and its pocket (mm)
+  depth: 1.6, // minimum inlay shell thickness, measured along the surface normal (mm)
+  maxAngle: 75, // max surface-normal deviation from the insertion axis inside one inlay (deg)
+  maxPocket: 6, // max shell thickness along the insertion axis (steep sides need more to keep `depth`) (mm)
+  minWall: 0.8, // material that must remain under every pocket, along the insertion axis (mm)
+  minSkin: 0.8, // thinnest colour layer kept where the wall is too thin for a full inlay (rims, creases) (mm)
+  minTile: 40, // avoid creating inlay pieces smaller than this (mm²)
+  smooth: 0.3, // edge smoothing radius (mm): removes steps, spikes and slivers
+  minFeature: 0.5, // painted areas thinner than this are dropped (can't be printed)
+  minArea: 2, // painted islands smaller than this (mm²) are dropped
+  baseColor: -1, // -1 = auto (biggest volume)
+  plate: 256, // printer bed size for layout (mm)
+  gap: 3, // spacing between parts on the bed (mm)
+  labels: true, // engrave each inlay's number (mirrored) on its hidden glued face
+};
+
+const ccw = (q) => { let a = 0; for (let i = 0; i < q.length; i++) { const [x1, y1] = q[i], [x2, y2] = q[(i + 1) % q.length]; a += x1 * y2 - x2 * y1; } return a > 0; };
+
+// 7-segment digits as rectangles (box 0.6h × h, origin bottom-left)
+const SEGS = ['abcdef', 'bc', 'abged', 'abgcd', 'fgbc', 'afgcd', 'afgedc', 'abc', 'abcdefg', 'abcdfg'];
+function digitRects(txt, h) {
+  const w = 0.6 * h, s = Math.max(0.6, 0.18 * h), gap = Math.max(0.6, 0.3 * h), H2 = h / 2;
+  const R = { a: [0, h - s, w, h], b: [w - s, H2 - s / 2, w, h], c: [w - s, 0, w, H2 + s / 2], d: [0, 0, w, s], e: [0, 0, s, H2 + s / 2], f: [0, H2 - s / 2, s, h], g: [0, H2 - s / 2, w, H2 + s / 2] };
+  const out = [];
+  [...txt].forEach((ch, i) => {
+    const x0 = i * (w + gap);
+    for (const k of SEGS[+ch]) { const [a, b, c, d] = R[k]; out.push([x0 + a, b, x0 + c, d]); }
+  });
+  return { rects: out, W: txt.length * w + (txt.length - 1) * gap, H: h };
+}
+
+const sub = (a, b) => [a[0] - b[0], a[1] - b[1], a[2] - b[2]];
+const add = (a, b) => [a[0] + b[0], a[1] + b[1], a[2] + b[2]];
+const dot = (a, b) => a[0] * b[0] + a[1] * b[1] + a[2] * b[2];
+const cross = (a, b) => [a[1] * b[2] - a[2] * b[1], a[2] * b[0] - a[0] * b[2], a[0] * b[1] - a[1] * b[0]];
+const norm = (a) => { const l = Math.hypot(a[0], a[1], a[2]) || 1; return [a[0] / l, a[1] / l, a[2] / l]; };
+const scl = (a, s) => [a[0] * s, a[1] * s, a[2] * s];
+
+function frameFor(n) {
+  const ref = Math.abs(n[2]) < 0.9 ? [0, 0, 1] : [1, 0, 0];
+  const u = norm(cross(ref, n));
+  const v = cross(n, u);
+  return { u, v, n };
+}
+// column-major 4x4: local (x,y,z) → world x*u + y*v + z*n + o
+const frameMat = (f, o = [0, 0, 0]) => [f.u[0], f.u[1], f.u[2], 0, f.v[0], f.v[1], f.v[2], 0, f.n[0], f.n[1], f.n[2], 0, o[0], o[1], o[2], 1];
+
+// ---------- mesh helpers ----------
+function shellsOf(V, T) {
+  const nT = T.length / 3;
+  const par = new Int32Array(V.length / 3).map((_, i) => i);
+  const f = (x) => { while (par[x] !== x) { par[x] = par[par[x]]; x = par[x]; } return x; };
+  for (let t = 0; t < nT; t++) {
+    const a = f(T[t * 3]), b = f(T[t * 3 + 1]), c = f(T[t * 3 + 2]);
+    par[b] = a; par[f(c)] = f(a);
+  }
+  const groups = new Map();
+  for (let t = 0; t < nT; t++) {
+    const r = f(T[t * 3]);
+    if (!groups.has(r)) groups.set(r, []);
+    groups.get(r).push(t);
+  }
+  return [...groups.values()];
+}
+
+function triStats(V, T, tris) {
+  let vol = 0, area = 0;
+  for (const t of tris) {
+    const a = T[t * 3] * 3, b = T[t * 3 + 1] * 3, c = T[t * 3 + 2] * 3;
+    const p = [V[a], V[a + 1], V[a + 2]], q = [V[b], V[b + 1], V[b + 2]], r = [V[c], V[c + 1], V[c + 2]];
+    vol += dot(p, cross(q, r)) / 6;
+    area += Math.hypot(...cross(sub(q, p), sub(r, p))) / 2;
+  }
+  return { vol, area };
+}
+
+function subMesh(V, T, tris, flip = false) {
+  const map = new Map();
+  const vp = [], tv = new Uint32Array(tris.length * 3);
+  tris.forEach((t, i) => {
+    for (let k = 0; k < 3; k++) {
+      const vi = T[t * 3 + k];
+      let j = map.get(vi);
+      if (j === undefined) { j = vp.length / 3; map.set(vi, j); vp.push(V[vi * 3], V[vi * 3 + 1], V[vi * 3 + 2]); }
+      tv[i * 3 + (flip && k ? 3 - k : k)] = j;
+    }
+  });
+  return { vertProperties: new Float32Array(vp), triVerts: tv };
+}
+
+function toManifold(w, m, id = -1) {
+  // explicit run id + faceID: keeps the link from boolean results back to the source triangle (and its color)
+  const n = m.triVerts.length;
+  const opt = { numProp: 3, vertProperties: m.vertProperties, triVerts: m.triVerts, faceID: new Uint32Array(n / 3).map((_, i) => i) };
+  if (id >= 0) { opt.runIndex = new Uint32Array([0, n]); opt.runOriginalID = new Uint32Array([id]); }
+  const mesh = new w.Mesh(opt);
+  mesh.merge();
+  const man = new w.Manifold(mesh);
+  return man;
+}
+
+export function manifoldToMesh(man) {
+  const m = man.getMesh();
+  const np = m.numProp;
+  const nV = m.vertProperties.length / np;
+  const V = new Float32Array(nV * 3);
+  for (let i = 0; i < nV; i++) { V[i * 3] = m.vertProperties[i * np]; V[i * 3 + 1] = m.vertProperties[i * np + 1]; V[i * 3 + 2] = m.vertProperties[i * np + 2]; }
+  return { V, T: new Uint32Array(m.triVerts) };
+}
+
+// move every vertex along its (area-weighted) normal; d < 0 shrinks
+function offsetVerts(mesh, d) {
+  const { vertProperties: P, triVerts: T } = mesh;
+  const N = new Float32Array(P.length);
+  for (let t = 0; t < T.length; t += 3) {
+    const a = T[t] * 3, b = T[t + 1] * 3, c = T[t + 2] * 3;
+    const n = cross([P[b] - P[a], P[b + 1] - P[a + 1], P[b + 2] - P[a + 2]], [P[c] - P[a], P[c + 1] - P[a + 1], P[c + 2] - P[a + 2]]);
+    for (const i of [a, b, c]) { N[i] += n[0]; N[i + 1] += n[1]; N[i + 2] += n[2]; }
+  }
+  const out = new Float32Array(P.length);
+  for (let i = 0; i < P.length; i += 3) {
+    const l = Math.hypot(N[i], N[i + 1], N[i + 2]) || 1;
+    out[i] = P[i] + (N[i] / l) * d; out[i + 1] = P[i + 1] + (N[i + 1] / l) * d; out[i + 2] = P[i + 2] + (N[i + 2] / l) * d;
+  }
+  return { vertProperties: out, triVerts: T };
+}
+
+// ---------- analysis ----------
+// model: { palette, names, parts: [{ V, T, tc }] }
+export function analyzeModel(model) {
+  const shells = [];
+  const colorArea = new Array(model.palette.length).fill(0);
+  const colorVol = new Array(model.palette.length).fill(0);
+  for (const p of model.parts) {
+    for (const tris of shellsOf(p.V, p.T)) {
+      const st = triStats(p.V, p.T, tris);
+      const hist = new Array(model.palette.length).fill(0);
+      for (const t of tris) {
+        const a = p.T[t * 3] * 3, b = p.T[t * 3 + 1] * 3, c = p.T[t * 3 + 2] * 3;
+        const ar = Math.hypot(...cross([p.V[b] - p.V[a], p.V[b + 1] - p.V[a + 1], p.V[b + 2] - p.V[a + 2]], [p.V[c] - p.V[a], p.V[c + 1] - p.V[a + 1], p.V[c + 2] - p.V[a + 2]])) / 2;
+        hist[p.tc[t]] += ar;
+      }
+      let dom = 0;
+      hist.forEach((v, i) => { if (v > hist[dom]) dom = i; });
+      hist.forEach((v, i) => { colorArea[i] += v; });
+      colorVol[dom] += Math.abs(st.vol);
+      shells.push({ part: p, tris, vol: st.vol, area: st.area, hist, dom, purity: hist[dom] / (st.area || 1), thickness: Math.abs(st.vol) / (st.area || 1) * 3 });
+    }
+  }
+  let base = 0;
+  colorVol.forEach((v, i) => { if (v > colorVol[base]) base = i; });
+  return { shells, colorArea, colorVol, base };
+}
+
+// ---------- main ----------
+export function splitColors(w, model, options = {}, progress = () => {}) {
+  const o = { ...DEFAULT_SPLIT, ...options };
+  const { Manifold, CrossSection } = w;
+  const ana = analyzeModel(model);
+  const base = o.baseColor >= 0 ? o.baseColor : ana.base;
+  const garbage = [];
+  const keep = (m) => { garbage.push(m); return m; };
+  const warnings = [];
+
+  // 1) classify shells: thick single-color shells of a non-base color become separate solid parts
+  const solids = [], rest = [];
+  for (const s of ana.shells) {
+    if (Math.abs(s.vol) < 1e-6) continue;
+    const isSolid = s.dom !== base && s.purity > 0.9 && s.thickness > 0.6 && Math.abs(s.vol) > 5;
+    (isSolid ? solids : rest).push(s);
+  }
+  progress('Uniendo cuerpo', 0.05);
+  const idToShell = new Map();
+  const bigVol = Math.max(...rest.map((s) => Math.abs(s.vol)));
+  const restMans = rest.map((s) => {
+    const id = Manifold.reserveIDs(1);
+    idToShell.set(id, s); // (asOriginal() would renumber faceIDs by coplanar groups)
+    let sm = subMesh(s.part.V, s.part.T, s.tris, s.vol < 0);
+    // overlays (skins, decals) are grown 0.05 mm so they fuse with the body instead of leaving hair-thin gaps
+    if (Math.abs(s.vol) < bigVol) sm = offsetVerts(sm, 0.05);
+    return keep(toManifold(w, sm, id));
+  });
+  if (!restMans.length) throw new Error('No se encontró un cuerpo base');
+  let M = keep(Manifold.union(restMans));
+  // drop internal voids left between overlapping shells
+  const comps = M.decompose().map(keep);
+  if (comps.length > 1) M = keep(Manifold.union(comps.filter((c) => c.volume() > 0.5)));
+  const solidMans = solids.map((s) => keep(toManifold(w, subMesh(s.part.V, s.part.T, s.tris, s.vol < 0))));
+  const solidUnion = solidMans.length ? keep(Manifold.union(solidMans)) : null;
+
+  // 2) colored surface triangles of the base body
+  progress('Detectando zonas pintadas', 0.12);
+  const mm = M.getMesh();
+  const P = mm.vertProperties, np = mm.numProp, TV = mm.triVerts;
+  const nT = TV.length / 3;
+  const triColor = new Int16Array(nT).fill(base);
+  for (let r = 0; r < mm.runOriginalID.length; r++) {
+    const s = idToShell.get(mm.runOriginalID[r]);
+    if (!s) continue;
+    for (let t = mm.runIndex[r] / 3; t < mm.runIndex[r + 1] / 3; t++) triColor[t] = s.part.tc[s.tris[mm.faceID[t]]];
+  }
+  const vpos = (i) => [P[i * np], P[i * np + 1], P[i * np + 2]];
+  const C = new Float64Array(nT * 3), N = new Float64Array(nT * 3), A = new Float64Array(nT);
+  for (let t = 0; t < nT; t++) {
+    const a = vpos(TV[t * 3]), b = vpos(TV[t * 3 + 1]), c = vpos(TV[t * 3 + 2]);
+    const n = cross(sub(b, a), sub(c, a));
+    const l = Math.hypot(...n);
+    A[t] = l / 2;
+    for (let k = 0; k < 3; k++) { C[t * 3 + k] = (a[k] + b[k] + c[k]) / 3; N[t * 3 + k] = l ? n[k] / l : 0; }
+  }
+  // triangle adjacency through shared (merged) vertices
+  const edgeMap = new Map();
+  const merged = new Uint32Array(P.length / np).map((_, i) => i);
+  if (mm.mergeFromVert) for (let i = 0; i < mm.mergeFromVert.length; i++) merged[mm.mergeFromVert[i]] = mm.mergeToVert[i];
+  const nbr = Array.from({ length: nT }, () => []);
+  for (let t = 0; t < nT; t++) {
+    for (let k = 0; k < 3; k++) {
+      const a = merged[TV[t * 3 + k]], b = merged[TV[t * 3 + (k + 1) % 3]];
+      const key = a < b ? a * 4294967296 + b : b * 4294967296 + a;
+      const o2 = edgeMap.get(key);
+      if (o2 === undefined) edgeMap.set(key, t);
+      else { nbr[t].push(o2); nbr[o2].push(t); }
+    }
+  }
+  // smoothed normals: ignore tiny steps (e.g. the side walls of a 0.4 mm painted skin)
+  const SN = new Float64Array(N);
+  for (let it = 0; it < 12; it++) {
+    const nx = new Float64Array(nT * 3);
+    for (let t = 0; t < nT; t++) {
+      let x = SN[t * 3] * A[t], y = SN[t * 3 + 1] * A[t], z = SN[t * 3 + 2] * A[t];
+      for (const q of nbr[t]) { x += SN[q * 3] * A[q]; y += SN[q * 3 + 1] * A[q]; z += SN[q * 3 + 2] * A[q]; }
+      const l = Math.hypot(x, y, z) || 1;
+      nx[t * 3] = x / l; nx[t * 3 + 1] = y / l; nx[t * 3 + 2] = z / l;
+    }
+    SN.set(nx);
+  }
+  const regions = [];
+  const seen = new Uint8Array(nT);
+  for (let t = 0; t < nT; t++) {
+    if (seen[t] || triColor[t] === base) continue;
+    const col = triColor[t], list = [t];
+    seen[t] = 1;
+    for (let i = 0; i < list.length; i++) for (const q of nbr[list[i]]) if (!seen[q] && triColor[q] === col) { seen[q] = 1; list.push(q); }
+    let area = 0;
+    for (const q of list) area += A[q];
+    if (area < o.minArea) continue;
+    regions.push({ color: col, tris: list, area });
+  }
+
+  // wall thickness under every painted triangle (ray cast inwards) → how deep a pocket can go
+  progress('Midiendo espesores', 0.15);
+  const thickBody = solidUnion ? keep(M.subtract(solidUnion)) : M;
+  const TH = new Float64Array(nT).fill(99);
+  for (const r of regions) for (const t of r.tris) {
+    const c = [C[t * 3], C[t * 3 + 1], C[t * 3 + 2]], n = [SN[t * 3], SN[t * 3 + 1], SN[t * 3 + 2]];
+    const hits = thickBody.rayCast(sub(c, scl(n, 0.02)), sub(c, scl(n, 40)));
+    TH[t] = hits.length ? hits[0].distance * 39.98 + 0.02 : 40; // distance is a fraction of the segment
+  }
+
+  const thList = [];
+  for (const r of regions) for (const t of r.tris) thList.push(TH[t]);
+  thList.sort((a, b) => a - b);
+  const thPct = [0.02, 0.1, 0.5, 0.9].map((q) => +(thList[Math.floor(q * (thList.length - 1))] || 0).toFixed(2));
+
+  // 3) recursive split of each painted region into near-flat tiles
+  let leaves = [], cellSeq = 0, curCell = 0;
+  const cosMax = Math.cos((o.maxAngle * Math.PI) / 180);
+  const stats = (tris, axis = null) => {
+    let n = [0, 0, 0], c = [0, 0, 0], area = 0;
+    for (const t of tris) { const a = A[t]; area += a; for (let k = 0; k < 3; k++) { n[k] += SN[t * 3 + k] * a; c[k] += C[t * 3 + k] * a; } }
+    n = axis || norm(n); c = scl(c, 1 / (area || 1));
+    const angs = tris.map((t) => [SN[t * 3] * n[0] + SN[t * 3 + 1] * n[1] + SN[t * 3 + 2] * n[2], A[t]]).sort((x, y) => x[0] - y[0]);
+    // cos2: steepest face (2 % tail) → no undercut allowed; cos10: sizes the shell (creases may end up thinner)
+    let acc = 0, cos2 = 1, cos10 = 1;
+    for (const [d, a] of angs) { acc += a; if (acc <= area * 0.02) cos2 = d; if (acc <= area * 0.1) cos10 = d; else break; }
+    let cos5 = cos2 >= 0.1 ? cos10 : cos2;
+    let lo = Infinity, hi = -Infinity;
+    for (const t of tris) for (let k = 0; k < 3; k++) { const h = dot(vpos(TV[t * 3 + k]), n); if (h < lo) lo = h; if (h > hi) hi = h; }
+    // shell = surface translated by tn along -n: normal thickness is tn·cos(angle) → steep parts need a larger tn
+    // (thin walls don't force cuts: the back zone keeps minWall there and the shell just gets thinner)
+    const depth = o.depth, tn = Math.min(o.maxPocket, Math.max(depth, depth / Math.max(cos10, 0.05)));
+    // painted faces turned away from the tile axis would print as overhangs under the tile
+    let away = 0;
+    for (const t of tris) if (N[t * 3] * n[0] + N[t * 3 + 1] * n[1] + N[t * 3 + 2] * n[2] < 0.1 && SN[t * 3] * n[0] + SN[t * 3 + 1] * n[1] + SN[t * 3 + 2] * n[2] < 0.5) away += A[t];
+    if (away > area * 0.01) cos5 = Math.min(cos5, cosMax - 0.01);
+    return { n, c, area, cos5, rise: hi - lo, fits: true, depth, tn };
+  };
+  const components = (tris) => {
+    const inSet = new Set(tris), done = new Set(), out = [];
+    for (const t of tris) {
+      if (done.has(t)) continue;
+      const l = [t];
+      done.add(t);
+      for (let i = 0; i < l.length; i++) for (const q of nbr[l[i]]) if (inSet.has(q) && !done.has(q)) { done.add(q); l.push(q); }
+      out.push(l);
+    }
+    return out;
+  };
+  const areaOf = (l) => l.reduce((x, t) => x + A[t], 0);
+  // the inlay slides in along n: nothing of the body may stand above its surface in that direction
+  const columnOk = (tris, st) => {
+    const n = st.n;
+    let bad = 0, tot = 0;
+    const step = Math.max(1, Math.floor(tris.length / 400));
+    for (let i = 0; i < tris.length; i += step) {
+      const t = tris[i];
+      const c = [C[t * 3], C[t * 3 + 1], C[t * 3 + 2]];
+      const hits = thickBody.rayCast(add(c, scl(n, 0.3)), add(c, scl(n, 300)));
+      tot += A[t];
+      if (hits.length) bad += A[t];
+    }
+    return bad <= tot * 0.02;
+  };
+  const splitRec = (tris, planes, region, level, axis = null) => {
+    let st = stats(tris);
+    if (axis) { const sa = stats(tris, axis); if (sa.cos5 >= st.cos5 - 0.02) st = sa; }
+    if (st.area < o.minArea) return;
+    // small pieces are not split further (a few hundredths of overhang or wall are better than slivers)
+    let ok = (st.cos5 >= cosMax && st.fits) || st.area < o.minTile || (st.cos5 >= cosMax && st.area < 2 * o.minTile);
+    if (ok && st.area >= o.minTile && level <= 16 && !columnOk(tris, st)) { ok = false; st.fits = false; }
+    if (ok || level > 16 || tris.length < 8) { leaves.push({ tris, planes, region, st, cell: curCell }); return; }
+    // main direction of normal variation (or of position spread if only the depth fails)
+    const cov = [[0, 0, 0], [0, 0, 0], [0, 0, 0]];
+    const useN = st.cos5 < cosMax;
+    for (const t of tris) {
+      let d = useN ? [SN[t * 3], SN[t * 3 + 1], SN[t * 3 + 2]] : [C[t * 3] - st.c[0], C[t * 3 + 1] - st.c[1], C[t * 3 + 2] - st.c[2]];
+      d = sub(d, scl(st.n, dot(d, st.n)));
+      for (let i = 0; i < 3; i++) for (let j = 0; j < 3; j++) cov[i][j] += d[i] * d[j] * A[t];
+    }
+    let u = [1, 0.3, 0.2];
+    for (let it = 0; it < 40; it++) u = norm([dot(cov[0], u), dot(cov[1], u), dot(cov[2], u)]);
+    u = norm(sub(u, scl(st.n, dot(u, st.n))));
+    // try a few cut planes; keep the one giving the fewest / least fragmented pieces
+    let best = null;
+    for (const dir of [u, norm(cross(st.n, u))]) {
+      const proj = tris.map((t) => [C[t * 3] * dir[0] + C[t * 3 + 1] * dir[1] + C[t * 3 + 2] * dir[2], A[t]]).sort((x, y) => x[0] - y[0]);
+      for (const q of [0.5, 0.38, 0.62]) {
+        let acc2 = 0, d0 = proj[0][0];
+        for (const [p, a] of proj) { acc2 += a; if (acc2 >= st.area * q) { d0 = p; break; } }
+        const pos = [], neg = [];
+        for (const t of tris) (C[t * 3] * dir[0] + C[t * 3 + 1] * dir[1] + C[t * 3 + 2] * dir[2] >= d0 ? pos : neg).push(t);
+        if (!pos.length || !neg.length) continue;
+        const cp = components(pos), cn = components(neg);
+        const tiny = [...cp, ...cn].filter((l) => areaOf(l) < o.minTile).length;
+        const score = (cp.length + cn.length) * 10 + tiny * 40 + Math.abs(q - 0.5) * 20 + (dir === u ? 0 : 6);
+        if (!best || score < best.score) best = { score, dir, d0, cp, cn };
+      }
+    }
+    if (!best) { leaves.push({ tris, planes, region, st, cell: curCell }); return; }
+    // tilt the cut so it bisects the two halves' normals: both tiles then get the same, smallest
+    // overhang on the cut face (only pink|pink seams come from cuts, so moving them is invisible)
+    {
+      const avgN = (ls) => { const v = [0, 0, 0]; for (const l of ls) for (const t of l) for (let k = 0; k < 3; k++) v[k] += SN[t * 3 + k] * A[t]; return norm(v); };
+      const m = norm(add(avgN(best.cp), avgN(best.cn)));
+      const u2 = norm(sub(best.dir, scl(m, dot(best.dir, m))));
+      if (Number.isFinite(u2[0]) && dot(u2, best.dir) > 0.3) {
+        const p0 = add(st.c, scl(best.dir, best.d0 - dot(st.c, best.dir)));
+        const d2 = dot(u2, p0);
+        const pos = [], neg = [];
+        for (const t of tris) (C[t * 3] * u2[0] + C[t * 3 + 1] * u2[1] + C[t * 3 + 2] * u2[2] >= d2 ? pos : neg).push(t);
+        if (pos.length && neg.length) best = { ...best, dir: u2, d0: d2, cp: components(pos), cn: components(neg) };
+      }
+    }
+    for (const comp of best.cp) splitRec(comp, [...planes, { u: best.dir, d: best.d0 }], region, level + 1);
+    for (const comp of best.cn) splitRec(comp, [...planes, { u: scl(best.dir, -1), d: -best.d0 }], region, level + 1);
+  };
+  // few big pieces: pick the fewest insertion directions that cover the region (normal within maxAngle and a free
+  // path out), then split it with planes through the fitted centre (power cells → straight seams, on a sphere
+  // exactly where the normal is closest to each direction). Cells that still fail fall back to splitRec.
+  const DIRS = [];
+  for (let i = 0; i < 600; i++) { const z = 1 - 2 * (i + 0.5) / 600, r = Math.sqrt(1 - z * z), ph = i * 2.399963229728653; DIRS.push([r * Math.cos(ph), r * Math.sin(ph), z]); }
+  const blockedAlong = (tris, d) => {
+    const out = new Set();
+    for (const t of tris) {
+      const c = [C[t * 3], C[t * 3 + 1], C[t * 3 + 2]];
+      if (thickBody.rayCast(add(c, scl(d, 0.3)), add(c, scl(d, 300))).length) out.add(t);
+    }
+    return out;
+  };
+  const coverDirs = (tris, cosC) => {
+    const area = areaOf(tris), left = new Set(tris), dirs = [];
+    const step = Math.max(1, Math.floor(tris.length / 300));
+    while (dirs.length < 8) {
+      let got = 0;
+      for (const t of left) got += A[t];
+      if (got <= area * 0.02) break;
+      const cand = DIRS.map((d) => { let s2 = 0; for (const t of left) if (SN[t * 3] * d[0] + SN[t * 3 + 1] * d[1] + SN[t * 3 + 2] * d[2] >= cosC) s2 += A[t]; return [s2, d]; })
+        .sort((x, y) => y[0] - x[0]).slice(0, 6);
+      let best = null;
+      for (const [, d] of cand) {
+        const cov = [...left].filter((t) => SN[t * 3] * d[0] + SN[t * 3 + 1] * d[1] + SN[t * 3 + 2] * d[2] >= cosC);
+        const bl = blockedAlong(cov.filter((_, i) => i % step === 0), d);
+        let s2 = 0, sb = 0;
+        cov.forEach((t, i) => { s2 += A[t]; if (i % step === 0 && bl.has(t)) sb += A[t] * step; });
+        if (!best || s2 - sb > best.s) best = { s: s2 - sb, d, cov };
+      }
+      if (!best || best.s < o.minTile) break;
+      // centre the direction on what it covers (less extra thickness on its steepest side)
+      let m = [0, 0, 0];
+      for (const t of best.cov) for (let k = 0; k < 3; k++) m[k] += SN[t * 3 + k] * A[t];
+      m = norm(m);
+      const d = best.cov.every((t) => SN[t * 3] * m[0] + SN[t * 3 + 1] * m[1] + SN[t * 3 + 2] * m[2] >= cosC - 0.05) ? m : best.d;
+      dirs.push(d);
+      for (const t of best.cov) left.delete(t);
+    }
+    return dirs;
+  };
+  regions.forEach((r) => {
+    for (const comp of components(r.tris)) {
+      const st = stats(comp);
+      if (st.cos5 >= cosMax && (st.area < o.minTile || columnOk(comp, st))) { leaves.push({ tris: comp, planes: [], region: r, st, cell: cellSeq++ }); continue; }
+      // try a few coverage angles, keep the partition with the fewest pieces (then the fewest crumbs)
+      let best = null;
+      for (const ang of [55, 62, 68, o.maxAngle]) {
+        const cosC = Math.cos((Math.min(ang, o.maxAngle) * Math.PI) / 180), saved = leaves;
+        leaves = [];
+        (() => {
+        const dirs = coverDirs(comp, cosC);
+        if (dirs.length < 2) { curCell = cellSeq++; splitRec(comp, [], r, 0); return; }
+        // each face goes to the free direction it faces best; then a few majority passes clean the borders
+        // (rays on every 3rd facing face; the others take the verdict of their neighbours)
+        const free = dirs.map((d) => {
+          const facing = comp.filter((t) => SN[t * 3] * d[0] + SN[t * 3 + 1] * d[1] + SN[t * 3 + 2] * d[2] > 0.05);
+          const bl = blockedAlong(facing.filter((_, i) => i % 3 === 0), d), probed = new Set(facing.filter((_, i) => i % 3 === 0));
+          for (const t of facing) if (!probed.has(t) && nbr[t].some((q) => bl.has(q))) bl.add(t);
+          return (t) => !bl.has(t);
+        });
+        const lab = new Map();
+        for (const t of comp) {
+          let bi = -1, bv = -Infinity, ai = 0, av = -Infinity;
+          dirs.forEach((d, i) => {
+            const v = SN[t * 3] * d[0] + SN[t * 3 + 1] * d[1] + SN[t * 3 + 2] * d[2];
+            if (v > av) { av = v; ai = i; }
+            if (v > bv && free[i](t)) { bv = v; bi = i; }
+          });
+          lab.set(t, bi >= 0 && bv > 0.05 ? bi : ai);
+        }
+        for (let it = 0; it < 6; it++) {
+          const nl = new Map(lab);
+          for (const t of comp) {
+            const cnt = new Map();
+            for (const q of nbr[t]) if (lab.has(q)) cnt.set(lab.get(q), (cnt.get(lab.get(q)) || 0) + 1);
+            let bl = lab.get(t), bc = cnt.get(bl) || 0;
+            for (const [l, k] of cnt) {
+              const d = dirs[l];
+              if (k > bc && free[l](t) && SN[t * 3] * d[0] + SN[t * 3 + 1] * d[1] + SN[t * 3 + 2] * d[2] > 0.1) { bl = l; bc = k; }
+            }
+            nl.set(t, bl);
+          }
+          for (const [t, l] of nl) lab.set(t, l);
+        }
+        // islands smaller than minTile join the neighbouring cell they share most border with
+        for (let pass = 0; pass < 3; pass++) {
+          const cells = dirs.map(() => []);
+          for (const [t, l] of lab) cells[l].push(t);
+          let moved = 0;
+          cells.forEach((cl, i) => {
+            for (const isl of components(cl)) {
+              if (areaOf(isl) >= o.minTile) continue;
+              const set = new Set(isl), cnt = new Map();
+              for (const t of isl) for (const q of nbr[t]) if (!set.has(q) && lab.has(q)) cnt.set(lab.get(q), (cnt.get(lab.get(q)) || 0) + 1);
+              let bl = -1, bc = 0;
+              const okFor = (l) => isl.filter((t) => free[l](t)).length >= isl.length * 0.9;
+            for (const [l, k] of cnt) if (l !== i && k > bc && okFor(l)) { bl = l; bc = k; }
+              if (bl >= 0) { for (const t of isl) lab.set(t, bl); moved++; }
+            }
+          });
+          if (!moved) break;
+        }
+        // faces still blocked in their own direction (creases under another body part) get a dedicated small
+        // piece inserted along their mean normal when that path is free
+        {
+          const stuck = comp.filter((t) => !free[lab.get(t)](t));
+          for (const sc of components(stuck)) {
+            if (areaOf(sc) < 2) continue;
+            // the direction that frees most of the patch without undercut (every face must face it a little)
+            const sa = areaOf(sc);
+            let m = [0, 0, 0];
+            for (const t of sc) for (let k = 0; k < 3; k++) m[k] += SN[t * 3 + k] * A[t];
+            m = norm(m);
+            let bl = blockedAlong(sc, m), fa = 0;
+            for (const t of sc) if (!bl.has(t)) fa += A[t];
+            for (const d of DIRS) {
+              if (fa >= sa * 0.98) break;
+              let ok = 0, cs = 0;
+              for (const t of sc) { const v = SN[t * 3] * d[0] + SN[t * 3 + 1] * d[1] + SN[t * 3 + 2] * d[2]; if (v >= 0.1) ok += A[t]; cs += v * A[t]; }
+              if (ok < sa * 0.98) continue;
+              const smp = sc.filter((_, i) => i % Math.ceil(sc.length / 40) === 0), sA = areaOf(smp);
+              const b2 = blockedAlong(smp, d);
+              let f2 = 0;
+              for (const t of smp) if (!b2.has(t)) f2 += A[t];
+              f2 *= sa / sA;
+              if (f2 > fa + 0.5) { fa = f2; bl = blockedAlong(sc, d); m = d; }
+            }
+            if (fa < areaOf(sc) * 0.7) continue;
+            const li = dirs.length;
+            dirs.push(m);
+            free.push((t) => !bl.has(t));
+            for (const t of sc) lab.set(t, li);
+          }
+        }
+        for (const t of comp) {
+          if (free[lab.get(t)](t)) continue;
+          let bi = -1, bv = 0;
+          dirs.forEach((d, i) => { const v = SN[t * 3] * d[0] + SN[t * 3 + 1] * d[1] + SN[t * 3 + 2] * d[2]; if (v > bv && free[i](t)) { bv = v; bi = i; } });
+          if (bi >= 0) lab.set(t, bi);
+        }
+        const cells = dirs.map(() => []);
+        for (const [t, l] of lab) cells[l].push(t);
+        dirs.forEach((d, i) => {
+          curCell = cellSeq++;
+          for (const cc of components(cells[i])) splitRec(cc, [], r, 1, d);
+        });
+        })();
+        const big = leaves.filter((l) => l.st.area >= o.minTile).length, score = big * 10 + (leaves.length - big) * 3;
+        if (!best || score < best.score) best = { score, leaves };
+        leaves = saved;
+      }
+      leaves.push(...best.leaves);
+    }
+  });
+  progress(`Generando ${leaves.length} incrustaciones`, 0.2);
+
+  // 4) build tile + pocket cutters
+  const c2 = o.clearance / 2;
+  const SEG = 64;
+  const parts = [];
+  const pockets = [];
+  let thinCount = 0, dropped = 0;
+  const corners = (b) => { const r = []; for (let i = 0; i < 8; i++) r.push([(i & 1 ? b.max : b.min)[0], (i & 2 ? b.max : b.min)[1], (i & 4 ? b.max : b.min)[2]]); return r; };
+  const margin = 1.5;
+  const leafOf = new Int32Array(nT).fill(-1);
+  leaves.forEach((lf, li) => { for (const t of lf.tris) leafOf[t] = li; });
+  const cen = (t) => [C[t * 3], C[t * 3 + 1], C[t * 3 + 2]];
+  // borders between direction cells follow triangle edges (zigzag). A smooth border: every cell's indicator is
+  // diffused over the surface vertices and the border is the iso-line where two cells weigh the same
+  const cellIdx = new Map();
+  leaves.forEach((lf) => { if (!cellIdx.has(lf.cell)) cellIdx.set(lf.cell, cellIdx.size); });
+  const K = cellIdx.size, W = new Map(), vAdj = new Map();
+  for (let t = 0; t < nT; t++) {
+    if (leafOf[t] < 0) continue;
+    const k = cellIdx.get(leaves[leafOf[t]].cell);
+    const vs = [0, 1, 2].map((j) => merged[TV[t * 3 + j]]);
+    vs.forEach((v, j) => {
+      if (!W.has(v)) { W.set(v, new Float32Array(K)); vAdj.set(v, new Set()); }
+      W.get(v)[k] += A[t];
+      vAdj.get(v).add(vs[(j + 1) % 3]); vAdj.get(v).add(vs[(j + 2) % 3]);
+    });
+  }
+  if (K > 1) {
+    for (const w of W.values()) { let sm = 0; for (const x of w) sm += x; for (let k = 0; k < K; k++) w[k] /= sm || 1; }
+    // small cells (crease pieces) would melt away in the diffusion: their inner vertices stay pinned
+    const cellArea = new Float64Array(K);
+    for (let t = 0; t < nT; t++) if (leafOf[t] >= 0) cellArea[cellIdx.get(leaves[leafOf[t]].cell)] += A[t];
+    const pinned = new Map();
+    for (const [v, w] of W) { const k = w.findIndex((x) => x > 0.999); if (k >= 0 && cellArea[k] < o.minTile * 3) pinned.set(v, Float32Array.from(w)); }
+    for (let it = 0; it < 10; it++) {
+      const nw = new Map();
+      for (const [v, w] of W) {
+        const acc = new Float32Array(K);
+        let n = 0;
+        for (const q of vAdj.get(v)) { const wq = W.get(q); if (!wq) continue; n++; for (let k = 0; k < K; k++) acc[k] += wq[k]; }
+        for (let k = 0; k < K; k++) acc[k] = 0.5 * w[k] + (n ? (0.5 * acc[k]) / n : 0.5 * w[k]);
+        nw.set(v, acc);
+      }
+      for (const [v, w] of nw) W.set(v, pinned.get(v) || w);
+    }
+  }
+  const gVert = (k, vi) => {
+    const w = W.get(merged[vi]);
+    if (!w) return -1;
+    let mx = 0;
+    for (let j = 0; j < K; j++) if (j !== k && w[j] > mx) mx = w[j];
+    return w[k] - mx;
+  };
+  // surface pieces of a tile: its triangles clipped exactly by its cut planes and its smooth cell border
+  const clipped = (tris, planes, off, lf = null) => {
+    const out = [];
+    const k = lf && K > 1 ? cellIdx.get(lf.cell) : -1;
+    for (const t of tris) {
+      let poly = [0, 1, 2].map((j) => ({ p: vpos(TV[t * 3 + j]), g: k >= 0 ? gVert(k, TV[t * 3 + j]) : 1 }));
+      const cuts = planes.map((pl) => (q) => dot(q.p, pl.u) - pl.d + off);
+      if (k >= 0 && poly.some((q) => q.g < 0)) cuts.push((q) => q.g);
+      for (const f of cuts) {
+        const res = [];
+        for (let i = 0; i < poly.length; i++) {
+          const a = poly[i], b = poly[(i + 1) % poly.length];
+          const da = f(a), db = f(b);
+          if (da >= 0) res.push(a);
+          if ((da >= 0) !== (db >= 0)) { const s2 = da / (da - db); res.push({ p: add(a.p, scl(sub(b.p, a.p), s2)), g: a.g + (b.g - a.g) * s2 }); }
+        }
+        poly = res;
+        if (poly.length < 3) break;
+      }
+      if (poly.length >= 3) out.push({ t, poly: poly.map((q) => q.p) });
+    }
+    return out;
+  };
+  // 2D shadow of surface pieces seen along `dir` (frame fr)
+  const shadow = (pieces, dir, fr, minFacing) => {
+    const polys = [];
+    for (const { t, poly: P } of pieces) {
+      if (N[t * 3] * dir[0] + N[t * 3 + 1] * dir[1] + N[t * 3 + 2] * dir[2] <= minFacing) continue;
+      const poly = P.map((p) => [dot(p, fr.u), dot(p, fr.v)]);
+      let ar = 0;
+      for (let i = 0; i < poly.length; i++) { const a = poly[i], b = poly[(i + 1) % poly.length]; ar += a[0] * b[1] - b[0] * a[1]; }
+      if (Math.abs(ar) < 1e-9) continue;
+      polys.push(ar > 0 ? poly : poly.reverse());
+    }
+    return polys.length ? keep(new CrossSection(polys, 'Positive')) : null;
+  };
+  const smoothCS = (cs) => keep(keep(keep(keep(cs.offset(o.smooth, 'Round', 2, SEG)).offset(-o.smooth - o.minFeature / 2, 'Round', 2, SEG)).offset(o.minFeature / 2, 'Round', 2, SEG)).simplify(0.01));
+  const T0 = [];
+  leaves.forEach((lf, li) => {
+    const n = lf.st.n, fr = frameFor(n);
+    // footprint: the leaf grown ~margin into its same-colour neighbours (seams are cut later)
+    const regSet = new Set(lf.region.tris);
+    const grown = new Map(lf.tris.map((t) => [t, cen(t)]));
+    const q = [...lf.tris];
+    for (let i = 0; i < q.length; i++) {
+      const src = grown.get(q[i]);
+      for (const nb of nbr[q[i]]) {
+        if (grown.has(nb) || !regSet.has(nb)) continue;
+        const c = cen(nb);
+        if (Math.hypot(c[0] - src[0], c[1] - src[1], c[2] - src[2]) > margin) continue;
+        grown.set(nb, leafOf[nb] === li ? c : src);
+        q.push(nb);
+      }
+    }
+    const nbrLeaves = new Set();
+    for (const t of grown.keys()) if (leafOf[t] >= 0 && leafOf[t] !== li) nbrLeaves.add(leafOf[t]);
+    let hi = -Infinity, lo = Infinity;
+    for (const t of grown.keys()) for (let k = 0; k < 3; k++) hi = Math.max(hi, dot(vpos(TV[t * 3 + k]), n));
+    for (const t of lf.tris) for (let k = 0; k < 3; k++) lo = Math.min(lo, dot(vpos(TV[t * 3 + k]), n));
+    const exact = clipped(grown.keys(), lf.planes, 0, lf);
+    const raw = shadow(clipped(grown.keys(), lf.planes, margin), n, fr, 0.05);
+    if (!raw) return;
+    const fp = smoothCS(raw);
+    if (fp.area() < o.minArea) return;
+    const tn = lf.st.tn;
+    const floor = lo - tn - o.clearance - 0.3;
+    const top = hi + 0.6;
+    const prism = (cs) => keep(keep(cs.extrude(top - floor)).transform(frameMat(fr, scl(n, floor))));
+    // reach of this tile under the surface (its prism can pass below non-adjacent tiles too)
+    const bb = [Infinity, Infinity, Infinity, -Infinity, -Infinity, -Infinity];
+    for (const t of grown.keys()) for (let k = 0; k < 3; k++) { const p = vpos(TV[t * 3 + k]); for (let j = 0; j < 3; j++) { bb[j] = Math.min(bb[j], p[j]); bb[j + 3] = Math.max(bb[j + 3], p[j]); } }
+    const ext = top - floor;
+    for (let j = 0; j < 3; j++) { bb[j] -= ext; bb[j + 3] += ext; }
+    T0[li] = { li, lf, n, floor, top, tn, fp, nbrLeaves, grownSet: new Set(grown.keys()), bb, exact, tileCut: prism(keep(fp.offset(-c2, 'Round', 2, SEG))), pocketCut: prism(keep(fp.offset(c2, 'Round', 2, SEG))) };
+  });
+  // seams between neighbouring tiles of the same colour: a cylinder along the bisector of both
+  // tile axes, so each side gets at most half the angle between them as draft/overhang
+  progress('Cortando uniones entre incrustaciones', 0.4);
+  const TL = T0.filter(Boolean);
+  const boxHit = (a, b) => a[0] <= b[3] && b[0] <= a[3] && a[1] <= b[4] && b[1] <= a[4] && a[2] <= b[5] && b[2] <= a[5];
+  for (let ia = 0; ia < TL.length; ia++) {
+    const A = TL[ia];
+    for (let ib = ia + 1; ib < TL.length; ib++) {
+      const B = TL[ib];
+      if (!boxHit(A.bb, B.bb)) continue;
+      // the seam only exists where both footprints overlap (cells facing far apart must not cut each other)
+      const zone = [...A.grownSet].filter((t) => B.grownSet.has(t));
+      if (!zone.length) continue;
+      let m = add(A.n, B.n);
+      m = Math.hypot(...m) < 0.2 ? A.n : norm(m);
+      const fm = frameFor(m);
+      const PA0 = shadow(A.exact, m, fm, 0.02), PB0 = shadow(B.exact, m, fm, 0.02);
+      if (!PA0 || !PB0) continue;
+      const PA = keep(PA0.simplify(0.05));
+      const PB = keep(smoothCS(PB0).simplify(0.03));
+      const ZS = shadow(zone.map((t) => ({ t, poly: [0, 1, 2].map((k) => vpos(TV[t * 3 + k])) })), m, fm, -0.5);
+      if (!ZS) continue;
+      const zcs = keep(keep(ZS.offset(margin + 1.5, 'Round', 2, 16)).simplify(0.05));
+      let h0 = Infinity, h1 = -Infinity;
+      for (const t of zone) for (let k = 0; k < 3; k++) { const h = dot(vpos(TV[t * 3 + k]), m); h0 = Math.min(h0, h); h1 = Math.max(h1, h); }
+      h0 -= Math.max(A.tn, B.tn) + o.clearance + 3; h1 += 3;
+      const col = (cs) => keep(keep(keep(cs.intersect(zcs)).extrude(h1 - h0)).transform(frameMat(fm, scl(m, h0))));
+      const near = keep(keep(PA.offset(2, 'Square')).simplify(0.1));
+      const pbIn = keep(PB.offset(-c2, 'Round', 2, 16)), pbOut = keep(PB.offset(c2, 'Round', 2, 16));
+      A.tileCut = keep(A.tileCut.subtract(col(pbOut)));
+      A.pocketCut = keep(A.pocketCut.subtract(col(pbIn)));
+      B.tileCut = keep(B.tileCut.subtract(col(keep(near.subtract(pbIn)))));
+      B.pocketCut = keep(B.pocketCut.subtract(col(keep(near.subtract(pbOut)))));
+    }
+  }
+  progress('Recortando incrustaciones', 0.6);
+  for (const X of T0) {
+    if (!X) continue;
+    // curved shell: what lies within tn (along n) of the surface; the pocket is the same plus the clearance
+    const lo = X.floor + X.tn + o.clearance + 0.3;
+    const atSurface = (pc) => { const b = pc.boundingBox(); return [b.min, b.max].some((q) => q) && corners(b).some((q) => dot(q, X.n) >= lo - 0.05); };
+    // back zone: material with less than minWall (+ clearance for the tile) below it along n is not cut, except a
+    // skin of minSkin under the painted surface (rims, creases): the colour must still show there
+    const skin = (d) => keep(M.subtract(keep(M.translate(scl(X.n, -d)))));
+    const back = (d, keepSkin) => keep(keep(M.subtract(keep(M.translate(scl(X.n, d))))).subtract(skin(keepSkin)));
+    let tile = keep(keep(keep(M.intersect(X.tileCut)).subtract(keep(M.translate(scl(X.n, -X.tn))))).subtract(back(o.minWall + o.clearance, o.minSkin)));
+    if (solidUnion) tile = keep(tile.subtract(solidUnion));
+    const pieces = tile.decompose().map(keep).filter((p) => p.volume() > 0.5 && atSurface(p));
+    if (!pieces.length) continue;
+    const pk = keep(keep(keep(M.intersect(X.pocketCut)).subtract(keep(M.translate(scl(X.n, -(X.tn + c2)))))).subtract(back(o.minWall, o.minSkin + c2)));
+    pieces.sort((a, b) => b.volume() - a.volume());
+    // crumbs (< 3 mm³) are not worth printing: their pocket stays filled with the base colour
+    const kept = pieces.filter((pc, i) => i === 0 || pc.volume() >= 3);
+    if (kept.length < pieces.length) dropped += pieces.length - kept.length;
+    // only the pockets of printed pieces are carved (a dropped crumb's spot stays solid base colour)
+    const boxes = kept.map((pc) => pc.boundingBox());
+    const near = (b) => boxes.some((q) => [0, 1, 2].every((j) => b.min[j] <= q.max[j] + o.clearance && q.min[j] <= b.max[j] + o.clearance));
+    const pkParts = pk.decompose().map(keep).filter((pc) => atSurface(pc) && near(pc.boundingBox()));
+    if (pkParts.length) pockets.push(keep(Manifold.union(pkParts)));
+    const full = keep(keep(M.intersect(X.tileCut)).subtract(keep(M.translate(scl(X.n, -X.tn)))));
+    if (tile.volume() < full.volume() * 0.9) thinCount++;
+    for (const pc of kept) parts.push({ kind: 'inlay', color: X.lf.region.color, man: pc, up: X.n, floor: X.floor, area: X.fp.area(), X });
+  }
+
+  if (thinCount) warnings.push(`${thinCount} incrustaciones más delgadas en zonas de pared fina (se deja ${o.minWall} mm de pared)`);
+  if (dropped) warnings.push(`${dropped} migajas de color (< 3 mm³) descartadas: esa zona queda del color base`);
+
+  // 5) body = base minus pockets and minus the solid parts (socket)
+  progress('Tallando cajas en el cuerpo', 0.75);
+  let body = M;
+  if (pockets.length) body = keep(body.subtract(keep(Manifold.union(pockets))));
+  if (solidUnion) body = keep(body.subtract(solidUnion));
+  const bodyPieces = body.decompose().map(keep).filter((p) => p.volume() > 1).sort((a, b) => b.volume() - a.volume());
+  if (bodyPieces.length > 1) warnings.push(`el cuerpo quedó en ${bodyPieces.length} piezas (paredes delgadas)`);
+  for (const bp of bodyPieces) parts.unshift({ kind: 'body', color: base, man: bp, up: [0, 0, 1] });
+
+  // numbers engraved on the flat base of every inlay (same numbering as the part list / assembly map)
+  if (o.labels) {
+    progress('Grabando números', 0.8);
+    let num = 0, done = 0, total = 0;
+    for (const p of parts) {
+      num++;
+      if (p.kind !== 'inlay') continue;
+      total++;
+      const r = engrave(p, String(num));
+      if (r) { p.man = r; done++; }
+    }
+    if (total && done < total) warnings.push(`${total - done} incrustaciones muy pequeñas van sin número grabado: ubícalas con el mapa de armado`);
+  }
+
+  // digits cut into the deepest E mm of the shell (its hidden, glued face), mirrored so they read from behind
+  function engrave(p, txt) {
+    const X = p.X, n = X.n, fr = frameFor(n);
+    const E = Math.min(0.4, X.lf.st.depth * 0.3);
+    if (E < 0.2) return null;
+    const toLocal = [fr.u[0], fr.v[0], n[0], 0, fr.u[1], fr.v[1], n[1], 0, fr.u[2], fr.v[2], n[2], 0, 0, 0, 0, 1];
+    // where the shell has its full thickness: its own deepest layer, seen along n
+    const deep = keep(p.man.intersect(keep(M.translate(scl(n, -(X.tn - E))))));
+    if (deep.volume() < 0.5) return null;
+    const inner = keep(keep(keep(deep.transform(toLocal)).project()).offset(-0.5, 'Round', 2, 16));
+    if (inner.area() < 1.5) return null;
+    const inside = (x, y) => keep(inner.intersect(keep(new CrossSection([[[x - 0.01, y - 0.01], [x + 0.01, y - 0.01], [x + 0.01, y + 0.01], [x - 0.01, y + 0.01]]], 'Positive')))).area() > 1e-5;
+    const centers = [];
+    for (const r of [4, 3, 2.4, 2, 1.7, 1.4, 1.2, 1, 0.8, 0.6, 0.4, 0.2, 0]) {
+      const e = r ? keep(inner.offset(-r, 'Round', 2, 16)) : inner;
+      if (e.area() < 1e-4) continue;
+      for (const q of e.toPolygons().filter((q) => ccw(q))) {
+        let sx = 0, sy = 0;
+        for (const [x, y] of q) { sx += x; sy += y; }
+        const c = [sx / q.length, sy / q.length];
+        centers.push(inside(...c) ? c : q[0]);
+      }
+      if (centers.length) break;
+    }
+    for (const h of [4, 3.5, 3, 2.5]) {
+      const D = digitRects(txt, h);
+      for (const [cx, cy] of centers) for (let ang = 0; ang < 180; ang += 15) {
+        const ca = Math.cos(ang * Math.PI / 180), sa = Math.sin(ang * Math.PI / 180);
+        const place = (x, y) => { const X0 = -(x - D.W / 2), Y0 = y - D.H / 2; return [X0 * ca - Y0 * sa + cx, X0 * sa + Y0 * ca + cy]; };
+        const box = keep(new CrossSection([[place(0, 0), place(D.W, 0), place(D.W, D.H), place(0, D.H)]].map((q) => (ccw(q) ? q : q.reverse())), 'Positive'));
+        if (keep(box.intersect(inner)).area() < box.area() * 0.999) continue;
+        const polys = D.rects.map(([a, b, c, d]) => [place(a, b), place(c, b), place(c, d), place(a, d)]).map((q) => (ccw(q) ? q : q.reverse()));
+        const cs = keep(new CrossSection(polys, 'Positive'));
+        const col = keep(keep(cs.extrude(X.top - X.floor + 2)).transform(frameMat(fr, scl(n, X.floor - 1))));
+        const cut = keep(col.intersect(keep(M.translate(scl(n, -(X.tn - E))))));
+        const res = keep(p.man.subtract(cut));
+        const removed = p.man.volume() - res.volume();
+        if (removed < cs.area() * E * 0.95 || res.decompose().map(keep).length !== 1) continue;
+        return res;
+      }
+    }
+    return null;
+  }
+
+  // 6) solid color parts, shrunk by the clearance so they slide into their socket
+  progress('Piezas sólidas', 0.85);
+  solids.forEach((s) => {
+    const sm = subMesh(s.part.V, s.part.T, s.tris, s.vol < 0);
+    const shr = keep(toManifold(w, offsetVerts(sm, -o.clearance)));
+    const ok = shr.status && shr.status() !== 'NoError' ? null : shr;
+    const man = ok && ok.volume() > 0 ? ok : keep(toManifold(w, sm));
+    parts.push({ kind: 'solid', color: s.dom, man, up: null });
+  });
+
+  // 7) export meshes (assembled pose) + print pose
+  const out = parts.map((p, i) => {
+    const mesh = manifoldToMesh(p.man);
+    // shells always print along their insertion axis: visible face on top (best finish), supports only under the glued face
+    const up = p.kind === 'inlay' ? p.up : p.up || bestUp(mesh);
+    return { kind: p.kind, color: p.color, mesh, up, volume: p.man.volume(), n: p.kind === 'inlay' ? p.up : undefined };
+  });
+  const counters = {};
+  for (const p of out) {
+    counters[p.color] = (counters[p.color] || 0) + 1;
+    p.index = counters[p.color];
+    p.name = `${model.names?.[p.color] || 'Color ' + (p.color + 1)} ${String(p.index).padStart(2, '0')}${p.kind === 'body' ? ' cuerpo' : p.kind === 'solid' ? ' pieza' : ''}`;
+    p.print = printPose(p.mesh, p.up);
+  }
+  for (const g of garbage) { try { g.delete(); } catch { /* already freed */ } }
+  return { parts: out, base, palette: model.palette, names: model.names, warnings, regions: regions.length, tiles: leaves.length, thickness: thPct };
+}
+
+// Orientation with the least unsupported overhang (candidate "up" directions)
+function bestUp(mesh) {
+  const { V, T } = mesh;
+  const cands = [[0, 0, 1], [0, 0, -1], [1, 0, 0], [-1, 0, 0], [0, 1, 0], [0, -1, 0]];
+  let best = cands[0], bestScore = Infinity;
+  for (const up of cands) {
+    let minH = Infinity;
+    for (let i = 0; i < V.length; i += 3) minH = Math.min(minH, V[i] * up[0] + V[i + 1] * up[1] + V[i + 2] * up[2]);
+    let score = 0;
+    for (let t = 0; t < T.length; t += 3) {
+      const a = T[t] * 3, b = T[t + 1] * 3, c = T[t + 2] * 3;
+      const n = cross([V[b] - V[a], V[b + 1] - V[a + 1], V[b + 2] - V[a + 2]], [V[c] - V[a], V[c + 1] - V[a + 1], V[c + 2] - V[a + 2]]);
+      const l = Math.hypot(...n) || 1;
+      const cz = dot(n, up) / l;
+      const h = (V[a] * up[0] + V[a + 1] * up[1] + V[a + 2] * up[2]) - minH;
+      if (cz < -0.7 && h > 0.3) score += l / 2;
+    }
+    if (score < bestScore - 1e-6) { bestScore = score; best = up; }
+  }
+  return best;
+}
+
+// rotation that maps `up` to +Z, then rest on z=0 and center in XY
+export function printPose(mesh, up) {
+  const f = frameFor(up);
+  const { V } = mesh;
+  const R = [f.u, f.v, f.n];
+  let mn = [Infinity, Infinity, Infinity], mx = [-Infinity, -Infinity, -Infinity];
+  for (let i = 0; i < V.length; i += 3) {
+    const p = [V[i], V[i + 1], V[i + 2]];
+    for (let k = 0; k < 3; k++) { const q = dot(R[k], p); if (q < mn[k]) mn[k] = q; if (q > mx[k]) mx[k] = q; }
+  }
+  return { R, t: [-(mn[0] + mx[0]) / 2, -(mn[1] + mx[1]) / 2, -mn[2]], size: [mx[0] - mn[0], mx[1] - mn[1], mx[2] - mn[2]] };
+}
+
+export function applyPose(mesh, pose, dx = 0, dy = 0, rot = false) {
+  const V = new Float32Array(mesh.V.length);
+  for (let i = 0; i < V.length; i += 3) {
+    const p = [mesh.V[i], mesh.V[i + 1], mesh.V[i + 2]];
+    const x = dot(pose.R[0], p) + pose.t[0], y = dot(pose.R[1], p) + pose.t[1];
+    V[i] = (rot ? -y : x) + dx;
+    V[i + 1] = (rot ? x : y) + dy;
+    V[i + 2] = dot(pose.R[2], p) + pose.t[2];
+  }
+  return { V, T: mesh.T };
+}
+
+// Shelf packing of printed footprints on plates of plateW × plateH; returns [{ plate, x, y, rot }] per item
+// (rot = true → the part is turned 90° to fit the bed)
+export function layoutPlates(sizes, plateW = 256, gap = 3, plateH = plateW) {
+  const items = sizes.map((s, i) => {
+    let [w, h] = s, rot = false;
+    if ((w > plateW - 2 * gap || h > w) && h <= plateW - 2 * gap && w <= plateH - 2 * gap) { [w, h] = [h, w]; rot = true; }
+    return { i, w, h, rot };
+  });
+  items.sort((a, b) => b.h - a.h || b.w - a.w);
+  const res = new Array(sizes.length);
+  let p = 0, x = gap, y = gap, rowH = 0;
+  for (const { i, w, h, rot } of items) {
+    if (x + w + gap > plateW && x > gap) { x = gap; y += rowH + gap; rowH = 0; }
+    if (y + h + gap > plateH && (x > gap || y > gap)) { p++; x = gap; y = gap; rowH = 0; }
+    res[i] = { plate: p, x: x + w / 2, y: y + h / 2, rot, fits: w + 2 * gap <= plateW + 1e-6 && h + 2 * gap <= plateH + 1e-6 };
+    x += w + gap;
+    rowH = Math.max(rowH, h);
+  }
+  return res;
+}

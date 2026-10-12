@@ -74,6 +74,10 @@ export const MODULES = [
     id: 'hablador', group: '2d', icon: '🪧', title: 'Hablador acrílico',
     desc: 'Despiece para corte láser (acrílico blanco y negro) desde un mockup: placas QR, NFC, porta tarjetas, logo, base con ranuras y plantilla de pegado.',
   },
+  {
+    id: 'colorsplit', group: '3d', icon: '🎨', title: 'Separar colores 3D',
+    desc: 'Convierte un 3MF multicolor en piezas de un solo color con encajes a presión: se imprimen sin cambios de filamento y se pegan.',
+  },
 ];
 
 export const MIC_PRESETS = {

@@ -2,7 +2,7 @@
 <html lang="es">
 <head>
   <meta charset="utf-8" />
-  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; worker-src 'self' blob:" />
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-inline' 'wasm-unsafe-eval'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; worker-src 'self' blob:" />
   <title>Relieve3D</title>
   <link rel="stylesheet" href="styles.css" />
   <script type="importmap">
@@ -506,6 +506,7 @@
   <!-- STUDIO 2D -->
   <div id="studio" class="studio" hidden></div>
   <div id="hablador" class="studio" hidden></div>
+  <div id="colorsplit" class="studio" hidden></div>
 
   <div id="busy" class="busy" hidden><div class="spinner"></div><span id="busyText">Procesando…</span></div>
   <div id="toast" class="toast" hidden></div>
