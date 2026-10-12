@@ -85,7 +85,8 @@ export class ColorSplitStudio {
         <section class="card">
           <h3>Encajes</h3>
           ${SETTINGS.map(([k, l, t]) => `<label class="row" title="${esc(t)}">${l} <input ${N} data-k="${k}" /></label>`).join('')}
-          <label class="row" title="Número en espejo grabado en la cara oculta (la que se pega) de cada incrustación: coincide con la lista y el mapa de armado">Grabar número bajo cada pieza <input type="checkbox" data-k="labels" /></label>
+          <label class="row" title="Corta el modelo con un plano vertical por la silueta: el cuerpo sale en 2 mitades (frente / atrás) y cada color es una pieza grande que entra recta desde delante o desde atrás. Desactívalo para el modo de muchas piezas curvas">Cortar en mitades frente / atrás <input type="checkbox" data-k="planeCut" /></label>
+      <label class="row" title="Número en espejo grabado en la cara oculta (la que se pega) de cada incrustación: coincide con la lista y el mapa de armado">Grabar número bajo cada pieza <input type="checkbox" data-k="labels" /></label>
         </section>
         <section class="card">
           <h3>Impresora</h3>
@@ -136,6 +137,7 @@ export class ColorSplitStudio {
     const onInput = (e) => {
       const el = e.target;
       if (el.dataset.k === 'labels') { this.opts.labels = el.checked; this.markStale(); return; }
+    if (el.dataset.k === 'planeCut') { this.opts.planeCut = el.checked; this.markStale(); return; }
       if (el.dataset.k) { const v = parseNum(el.value); if (Number.isFinite(v)) { this.opts[el.dataset.k] = v; this.markStale(); } return; }
       if (el.dataset.b) { const v = parseNum(el.value); if (Number.isFinite(v) && v > 0) { this.bed[el.dataset.b] = v; if (this.res) { this.plates = platesFor(this.res, { bedW: this.bed.w, bedH: this.bed.h, gap: this.bed.gap }); this.fillPlates(); if (this.tab === 'plates') this.render(); } } return; }
       const ci = el.dataset.ci;
@@ -320,7 +322,7 @@ export class ColorSplitStudio {
     this.res.parts.forEach((p, i) => {
       counters[p.color] = (counters[p.color] || 0) + 1;
       p.num = i + 1;
-      p.name = `${String(i + 1).padStart(2, '0')} ${this.model.names[p.color]}${p.kind === 'body' ? ' cuerpo' : p.kind === 'solid' ? ' pieza' : ''}`;
+      p.name = `${String(i + 1).padStart(2, '0')} ${this.model.names[p.color]}${p.kind === 'body' ? ' cuerpo' + (p.half === 0 ? ' frente' : p.half === 1 ? ' atrás' : '') : p.kind === 'solid' ? ' pieza' : ''}`;
     });
   }
 
@@ -333,7 +335,7 @@ export class ColorSplitStudio {
       return `<div class="cs-sum"><span class="cs-sw" style="background:${res.palette[c]}"></span><b>${esc(names[c])}</b>: ${parts}</div>`;
     });
     const nPlates = this.plates.length;
-    this.$('summary').innerHTML = `<div class="hb-ok">✓ ${res.parts.length} piezas, ${nPlates} placa(s) de impresión</div>${lines.join('')}<div class="muted small" style="margin-top:6px">Holgura ${this.opts.clearance} mm · cascarones de color de ${this.opts.depth} mm (imprimir con la cara de color arriba y soportes bajo la cara oculta)</div>`;
+    this.$('summary').innerHTML = `<div class="hb-ok">✓ ${res.parts.length} piezas, ${nPlates} placa(s) de impresión</div>${lines.join('')}<div class="muted small" style="margin-top:6px">Holgura ${this.opts.clearance} mm · cascarones de color de ${this.opts.depth} mm ${res.cut ? '(las mitades del cuerpo y las piezas de color se imprimen apoyadas en la cara plana del corte: sin soportes)' : '(imprimir con la cara de color arriba y soportes bajo la cara oculta)'}</div>`;
     this.$('warn').innerHTML = res.warnings.map((w) => `<div class="hb-w">⚠ ${esc(w)}</div>`).join('');
     this.renderList();
   }
@@ -450,7 +452,7 @@ export class ColorSplitStudio {
   }
 
   explodeDir(p, centroid, c) {
-    if (p.kind === 'body') return [0, 0, 0];
+    if (p.kind === 'body') return p.n ? p.n.map((x) => x * 0.5) : [0, 0, 0];
     if (p.kind === 'inlay' && p.n) return p.n;
     const d = [centroid.x - c.x, centroid.y - c.y, centroid.z - c.z];
     const l = Math.hypot(...d) || 1;

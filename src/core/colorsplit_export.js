@@ -110,6 +110,22 @@ export function instructions(res, opts, plates) {
   L.push(`Holgura de encaje: ${opts.clearance} mm en total (${(opts.clearance / 2).toFixed(2)} mm por lado)`, '');
   L.push('IMPRESIÓN', '');
   for (const pl of plates) L.push(`  ${names(pl.color)} — placa ${pl.plate + 1}: ${pl.items.length} pieza(s)${pl.items.some((i) => !i.fits) ? '  ⚠ hay piezas más grandes que la cama' : ''}`);
+  if (res.cut) {
+    L.push('',
+      '  • El modelo va cortado por un plano vertical en dos mitades: FRENTE y ATRÁS. Cada archivo ya trae las piezas',
+      '    orientadas: las mitades del cuerpo se apoyan en su cara plana del corte (sin soportes) y las piezas de color',
+      '    con la cara visible ARRIBA; las que llegan al corte se apoyan también en esa cara plana.',
+      '  • Si alguna pieza de color tiene la cara oculta curva sin tocar la cama, activa soportes tipo árbol "solo en la cama".',
+      '  • Usa capas de 0.12–0.16 mm para las piezas de color (la superficie curva sale más lisa).',
+      '  • Si las piezas entran muy duras sube la holgura a 0.2 mm; si quedan flojas bájala a 0.1 mm y vuelve a generar.', '');
+    L.push('ARMADO', '',
+      '  1. Presenta cada pieza de color en su mitad SIN pegamento: entra recta, empujando hacia la mitad (de frente en',
+      '     la mitad delantera, desde atrás en la trasera). Cada forma sólo encaja en su lugar (usa el mapa de armado).',
+      '  2. Pégalas con una gota de cianoacrilato (gel) en el fondo del bolsillo, no en los bordes.',
+      '  3. Con las dos mitades completas, lija plana la cara del corte si hace falta y pega FRENTE con ATRÁS',
+      '     (cianoacrilato o epóxico de 5 min), alineando los bordes de las franjas.',
+      '  4. Las piezas sólidas (ej. el moño) entran en su asiento; pégalas al final.', '');
+  } else {
   L.push('',
     '  • Cada archivo ya trae las piezas en su mejor orientación: la cara de color (visible) queda ARRIBA.',
     '  • Las incrustaciones son cascarones curvos que copian la superficie: su cara oculta (la que se pega)',
@@ -125,6 +141,7 @@ export function instructions(res, opts, plates) {
     '  3. Pega con una gota de cianoacrilato (gel) en el fondo del bolsillo, no en los bordes, para que no rebose.',
     '     Para PETG/PLA también sirve pegamento para plásticos tipo epóxico de 5 minutos.',
     '  4. Las piezas sólidas (ej. el moño) entran en su asiento en el cuerpo; pégalas al final.', '');
+  }
   if (res.warnings?.length) { L.push('AVISOS', ''); for (const w of res.warnings) L.push('  • ' + w); L.push(''); }
   L.push('LISTA DE PIEZAS', '');
   for (const p of res.parts) L.push(`  ${p.name.padEnd(28)} ${p.kind === 'body' ? 'cuerpo' : p.kind === 'solid' ? 'sólida' : 'incrustación'}  ${p.print.size.map((x) => x.toFixed(1)).join(' × ')} mm  ${p.volume.toFixed(1)} mm³`);

@@ -64,7 +64,10 @@ const r = splitColors(w, model, {}, () => {});
 console.log(`  ${((Date.now() - t0) / 1000).toFixed(1)} s, ${r.parts.length} parts, warnings: ${r.warnings.join(' | ') || '-'}`);
 const kinds = (k, c) => r.parts.filter((p) => p.kind === k && (c == null || p.color === c));
 check(r.base === WHITE, `base color = white (${r.base})`);
-check(kinds('body').length === 1, `one body (${kinds('body').length})`);
+check(r.cut ? kinds('body').length === 2 : kinds('body').length === 1, `${r.cut ? 'front/back halves' : 'one body'} (${kinds('body').length})`);
+if (r.cut) check(kinds('body').every((p) => p.half === 0 || p.half === 1) && new Set(kinds('body').map((p) => p.half)).size === 2, 'one body half per side of the cut');
+// with the cut every colour piece slides in along ±cut axis
+if (r.cut) check(kinds('inlay').every((p) => Math.abs(p.n[0] * r.cut.axis[0] + p.n[1] * r.cut.axis[1] + p.n[2] * r.cut.axis[2]) > 0.999), 'inlays slide in along the cut axis');
 check(kinds('solid', GREEN).length === 1, `green block → one solid part (${kinds('solid', GREEN).length})`);
 check(kinds('inlay', PINK).length >= 2 && kinds('inlay', PINK).length <= 40, `pink inlays: ${kinds('inlay', PINK).length}`);
 check(r.parts.every((p) => (p.kind === 'body' ? p.color === WHITE : p.color !== WHITE)), 'every part is single-color');
@@ -72,8 +75,20 @@ check(r.parts.every((p) => (p.kind === 'body' ? p.color === WHITE : p.color !== 
 // watertight + positive volume
 const mans = r.parts.map((p) => toMan(p.mesh));
 check(mans.every((m) => m.status() === 'NoError' && m.volume() > 0.3), 'all parts are valid closed solids');
-// (zero-volume fins can appear when the float32 mesh is re-welded with tolerance; they aren't printable matter)
-check(mans.every((m) => m.decompose().filter((q) => q.volume() > 0.01).length === 1), 'each part is a single connected piece');
+// (zero-volume fins, or sub-mm³ whiskers pinched to a body half at the cut face, can split off when the float32 mesh is
+// re-welded with tolerance; they aren't printable matter)
+const comps = mans.map((m) => m.decompose().filter((q) => q.volume() > 1).length);
+check(comps.every((c) => c === 1), `each part is a single connected piece (${comps.join(',')})`);
+if (r.cut) {
+  // every inlay slides straight out of its half along n without hitting it
+  let worst = 0;
+  r.parts.forEach((p, i) => {
+    if (p.kind !== 'inlay') return;
+    const h = r.parts.findIndex((b) => b.kind === 'body' && b.n.every((x, k) => Math.abs(x - p.n[k]) < 1e-6));
+    for (const t of [0.3, 1, 2, 4, 8, 16]) worst = Math.max(worst, mans[i].translate(p.n.map((x) => x * t)).intersect(mans[h]).volume());
+  });
+  check(worst < 0.5, `inlays slide straight out of their half (max hit ${worst.toFixed(2)} mm³)`);
+}
 
 // no part overlaps another (clearance keeps them apart)
 let maxOv = 0;
@@ -107,7 +122,7 @@ for (const p of kinds('inlay')) {
   p._zmin = zmin;
 }
 check(kinds('inlay').every((p) => Math.abs(p._zmin) < 1e-3), 'inlays rest on z = 0');
-check(kinds('inlay').every((p) => p._up > 0.3), `inlays print with the visible face up (min ${Math.min(...kinds('inlay').map((p) => p._up)).toFixed(2)})`);
+check(kinds('inlay').every((p) => p._up > (r.cut ? 0.2 : 0.3)), `inlays print with the visible face up (min ${Math.min(...kinds('inlay').map((p) => p._up)).toFixed(2)})`);
 check(kinds('inlay').every((p) => p._thick >= DEFAULT_SPLIT.depth * 0.6 && p._thick <= DEFAULT_SPLIT.maxPocket + 0.5), `inlay shells ${Math.min(...kinds('inlay').map((p) => p._thick)).toFixed(2)}–${Math.max(...kinds('inlay').map((p) => p._thick)).toFixed(2)} mm thick`);
 
 // solid part is smaller than its socket by the clearance
