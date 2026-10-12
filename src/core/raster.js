@@ -168,23 +168,29 @@ export function liftCounters(L, W, H, minArea = 4) {
     }
     lab.push(l); area.push(a); touch.push(t); box.push([x0, y0, x1, y1]);
   }
-  const n = lab.length, nb = Array.from({ length: n }, () => new Set());
+  const n = lab.length, nb = Array.from({ length: n }, () => new Set()), con = Array.from({ length: n }, () => new Map());
+  const link = (a, b) => { nb[a].add(b); nb[b].add(a); con[a].set(b, (con[a].get(b) || 0) + 1); con[b].set(a, (con[b].get(a) || 0) + 1); };
   for (let i = 0; i < N; i++) {
     const c = comp[i];
     if (c < 0) continue;
     const x = i % W;
-    if (x < W - 1 && comp[i + 1] >= 0 && comp[i + 1] !== c) { nb[c].add(comp[i + 1]); nb[comp[i + 1]].add(c); }
-    if (i + W < N && comp[i + W] >= 0 && comp[i + W] !== c) { nb[c].add(comp[i + W]); nb[comp[i + W]].add(c); }
+    if (x < W - 1 && comp[i + 1] >= 0 && comp[i + 1] !== c) link(c, comp[i + 1]);
+    if (i + W < N && comp[i + W] >= 0 && comp[i + W] !== c) link(c, comp[i + W]);
   }
   const lift = new Uint8Array(n);
   let cnt = 0;
   for (let c = 0; c < n; c++) {
-    if (touch[c] || nb[c].size !== 1 || area[c] < minArea) continue;
-    const [e] = nb[c];
+    if (touch[c] || !nb[c].size || area[c] < minArea) continue;
+    // enclosing part: the neighbour sharing most of the boundary; anti-aliased fringe specks of a third colour
+    // (light pink between a pink letter and its white counter) are ignored or may share a small part of it
+    const tiny = Math.max(4, 0.05 * area[c]);
+    let e = -1, tot = 0;
+    for (const [d, k] of con[c]) { if (area[d] <= tiny) continue; tot += k; if (e < 0 || k > con[c].get(e)) e = d; }
+    if (e < 0 || con[c].get(e) < 0.8 * tot || [...nb[c]].some((d) => d !== e && area[d] > tiny && (touch[d] || area[d] > area[c]))) continue;
     if (lab[e] === lab[c] || area[c] > area[e]) continue;
-    // counters are compact; long hairlines inside a colour are not
+    // counters have a body (slanted script counters included); 1-px slivers and long hairlines inside a colour do not
     const bc = box[c], bw = bc[2] - bc[0] + 1, bh = bc[3] - bc[1] + 1;
-    if (Math.min(bw, bh) < 0.2 * Math.max(bw, bh) || area[c] < 0.3 * bw * bh) continue;
+    if (Math.min(bw, bh) < 3 || area[c] < 2 * Math.max(bw, bh) || area[c] < 0.12 * bw * bh) continue;
     // same colour as a part lying outside the enclosing part (not another letter inside it) → see-through counter
     const be = box[e], inside = (b) => b[0] > be[0] && b[1] > be[1] && b[2] < be[2] && b[3] < be[3];
     if ([...nb[e]].some((d) => d !== c && lab[d] === lab[c] && (touch[d] || !inside(box[d])))) { lift[c] = 1; cnt++; }
