@@ -5,6 +5,8 @@ const { autoUpdater } = require('electron-updater');
 
 let win;
 let updateReadyToInstall = false;
+let updateVersion = '';
+let installingUpdate = false;
 
 function sendUpdateStatus(payload) {
   if (win && !win.isDestroyed()) win.webContents.send('update-status', payload);
@@ -15,7 +17,9 @@ function setupAutoUpdates() {
   if (!app.isPackaged) return;
 
   autoUpdater.autoDownload = true;
-  autoUpdater.autoInstallOnAppQuit = true;
+  // The built-in install-on-quit runs the installer silently without relaunching and kills any window opened
+  // meanwhile, which looks like a crash. Closing with a ready update is handled in createWindow instead.
+  autoUpdater.autoInstallOnAppQuit = false;
 
   autoUpdater.on('checking-for-update', () => sendUpdateStatus({ state: 'checking' }));
   autoUpdater.on('update-available', (info) => sendUpdateStatus({ state: 'available', version: info.version }));
@@ -23,6 +27,7 @@ function setupAutoUpdates() {
   autoUpdater.on('download-progress', (p) => sendUpdateStatus({ state: 'downloading', percent: Math.round(p.percent) }));
   autoUpdater.on('update-downloaded', (info) => {
     updateReadyToInstall = true;
+    updateVersion = info.version;
     sendUpdateStatus({ state: 'ready', version: info.version });
   });
   autoUpdater.on('error', (err) => sendUpdateStatus({ state: 'error', message: err.message }));
@@ -34,8 +39,13 @@ function setupAutoUpdates() {
 
 ipcMain.handle('install-update', () => {
   // silent install + relaunch: otherwise the window just closes and the app does not come back
-  if (updateReadyToInstall) setImmediate(() => autoUpdater.quitAndInstall(true, true));
+  if (updateReadyToInstall) installUpdateAndRelaunch();
 });
+
+function installUpdateAndRelaunch() {
+  installingUpdate = true;
+  setImmediate(() => autoUpdater.quitAndInstall(true, true));
+}
 
 function createWindow() {
   win = new BrowserWindow({
@@ -53,6 +63,16 @@ function createWindow() {
     },
   });
   Menu.setApplicationMenu(null);
+  win.on('close', (e) => {
+    if (!updateReadyToInstall || installingUpdate || process.env.R3D_TEST_FILE || process.env.R3D_SCREENSHOT) return;
+    const r = dialog.showMessageBoxSync(win, {
+      type: 'info', title: 'Relieve3D', noLink: true, defaultId: 0, cancelId: 1,
+      message: `Hay una actualización lista (versión ${updateVersion}).`,
+      detail: 'Se instala en unos segundos y Relieve3D vuelve a abrirse solo. No lo abras mientras tanto.',
+      buttons: ['Actualizar y volver a abrir', 'Cerrar sin actualizar'],
+    });
+    if (r === 0) { e.preventDefault(); installUpdateAndRelaunch(); }
+  });
   win.webContents.on('render-process-gone', (_e, d) => {
     console.error('render-process-gone', d.reason);
     if (d.reason !== 'clean-exit' && !win.isDestroyed()) setTimeout(() => !win.isDestroyed() && win.reload(), 500);
