@@ -105,12 +105,27 @@ export function instructions(res, opts, plates) {
   const body = res.parts.filter((p) => p.kind === 'body');
   const solids = res.parts.filter((p) => p.kind === 'solid');
   const inlays = res.parts.filter((p) => p.kind === 'inlay');
+  const covers = res.parts.filter((p) => p.kind === 'cover');
   L.push(`SEPARACIÓN DE COLORES — ${opts.title || 'modelo'}`, '');
-  L.push(`Piezas: ${res.parts.length}  (cuerpo: ${body.length}, piezas sólidas: ${solids.length}, incrustaciones: ${inlays.length})`);
+  L.push(`Piezas: ${res.parts.length}  (${res.covers ? `base: ${body.length}, covers: ${covers.length}` : `cuerpo: ${body.length}, incrustaciones: ${inlays.length}`}, piezas sólidas: ${solids.length})`);
   L.push(`Holgura de encaje: ${opts.clearance} mm en total (${(opts.clearance / 2).toFixed(2)} mm por lado)`, '');
   L.push('IMPRESIÓN', '');
   for (const pl of plates) L.push(`  ${names(pl.color)} — placa ${pl.plate + 1}: ${pl.items.length} pieza(s)${pl.items.some((i) => !i.fits) ? '  ⚠ hay piezas más grandes que la cama' : ''}`);
-  if (res.cut) {
+  if (res.covers) {
+    L.push('',
+      '  • La BASE (color principal) es una sola pieza entera con rebajes poco profundos donde van los otros colores.',
+      '    Imprímela como viene (Z hacia arriba); si el slicer marca voladizos activa soportes "solo en la cama".',
+      '  • Cada COVER es una tapa delgada que copia la superficie: viene con la cara de color ARRIBA; su cara de abajo',
+      '    es curva → soportes tipo árbol "solo en la cama". Esa cara se pega y no se ve.',
+      '  • Usa capas de 0.12–0.16 mm para los covers (la superficie curva sale más lisa).',
+      '  • Si los covers entran muy duros sube la holgura a 0.2 mm; si quedan flojos bájala a 0.1 mm y vuelve a generar.', '');
+    L.push('ARMADO', '',
+      '  1. Retira los soportes y lija suave la cara de abajo de cada cover (lija 400) para que asiente parejo.',
+      '  2. Presenta cada cover en su rebaje SIN pegamento: cada forma sólo calza en su lugar (usa el mapa de armado).',
+      '  3. Pega con cianoacrilato en gel o epóxico de 5 min, en gotas pequeñas en el fondo del rebaje (no en los bordes),',
+      '     y presiona unos segundos: el borde queda a ras con la base y la figura queda igual al modelo original.',
+      '  4. Las piezas sólidas (ej. el moño) entran en su asiento en la base; pégalas al final.', '');
+  } else if (res.cut) {
     L.push('',
       '  • El modelo va cortado por un plano vertical en dos mitades: FRENTE y ATRÁS. Cada archivo ya trae las piezas',
       '    orientadas: las mitades del cuerpo se apoyan en su cara plana del corte (sin soportes) y las piezas de color',
@@ -144,7 +159,7 @@ export function instructions(res, opts, plates) {
   }
   if (res.warnings?.length) { L.push('AVISOS', ''); for (const w of res.warnings) L.push('  • ' + w); L.push(''); }
   L.push('LISTA DE PIEZAS', '');
-  for (const p of res.parts) L.push(`  ${p.name.padEnd(28)} ${p.kind === 'body' ? 'cuerpo' : p.kind === 'solid' ? 'sólida' : 'incrustación'}  ${p.print.size.map((x) => x.toFixed(1)).join(' × ')} mm  ${p.volume.toFixed(1)} mm³`);
+  for (const p of res.parts) L.push(`  ${p.name.padEnd(28)} ${p.kind === 'body' ? (res.covers ? 'base' : 'cuerpo') : p.kind === 'solid' ? 'sólida' : p.kind === 'cover' ? 'cover' : 'incrustación'}  ${p.print.size.map((x) => x.toFixed(1)).join(' × ')} mm  ${p.volume.toFixed(1)} mm³`);
   return L.join('\r\n');
 }
 

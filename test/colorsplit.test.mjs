@@ -60,7 +60,8 @@ const toMan = (m) => {
   return new Manifold(mesh);
 };
 const t0 = Date.now();
-const r = splitColors(w, model, {}, () => {});
+const r = splitColors(w, model, { mode: 'inlays' }, () => {});
+console.log('— inlays mode');
 console.log(`  ${((Date.now() - t0) / 1000).toFixed(1)} s, ${r.parts.length} parts, warnings: ${r.warnings.join(' | ') || '-'}`);
 const kinds = (k, c) => r.parts.filter((p) => p.kind === k && (c == null || p.color === c));
 check(r.base === WHITE, `base color = white (${r.base})`);
@@ -143,11 +144,51 @@ for (let i = 0; i < lay.length; i++) for (let j = i + 1; j < lay.length; j++) {
 check(inside && !overlap, 'plate layout: inside the plate, no overlap');
 
 // numbers engraved on the inlays' hidden face (compare with an unlabelled run)
-const r0 = splitColors(w, model, { labels: false }, () => {});
+const r0 = splitColors(w, model, { labels: false, mode: 'inlays' }, () => {});
 const v0 = r0.parts.filter((p) => p.kind === 'inlay').map((p) => p.volume);
 const v1 = kinds('inlay').map((p) => p.volume);
 const engraved = v1.filter((v, i) => v0[i] - v > 0.3).length;
 check(v0.length === v1.length && engraved >= v1.length * 0.5, `numbers engraved on ${engraved}/${v1.length} inlays`);
+
+// covers mode (default): the base stays ONE intact piece, each extra colour is a thin cover glued on top
+console.log('— covers mode');
+const t1 = Date.now();
+const rc = splitColors(w, model, {}, () => {});
+console.log(`  ${((Date.now() - t1) / 1000).toFixed(1)} s, ${rc.parts.length} parts, warnings: ${rc.warnings.join(' | ') || '-'}`);
+const ck = (k, c) => rc.parts.filter((p) => p.kind === k && (c == null || p.color === c));
+check(rc.covers && !rc.cut, 'covers mode is the default');
+check(ck('body').length === 1 && ck('body')[0].color === WHITE, `one intact white base (${ck('body').length})`);
+check(ck('solid', GREEN).length === 1, 'green block → one solid part');
+check(ck('cover', PINK).length >= 1 && ck('cover', PINK).length <= 6, `pink covers: ${ck('cover', PINK).length}`);
+check(ck('inlay').length === 0, 'no inlays in covers mode');
+const cm = rc.parts.map((p) => toMan(p.mesh));
+check(cm.every((m) => m.status() === 'NoError' && m.volume() > 0.3), 'covers mode: all parts are valid closed solids');
+check(cm[rc.parts.indexOf(ck('body')[0])].decompose().filter((q) => q.volume() > 1).length === 1, 'base is a single connected piece');
+let cOv = 0;
+for (let i = 0; i < cm.length; i++) for (let j = i + 1; j < cm.length; j++) cOv = Math.max(cOv, cm[i].intersect(cm[j]).volume());
+check(cOv < 0.01, `covers mode: no overlaps (max ${cOv.toFixed(4)} mm³)`);
+const cTotal = cm.reduce((a, m) => a + m.volume(), 0);
+check(cTotal < orig && cTotal > orig * 0.97, `covers mode: reassembled volume ${cTotal.toFixed(0)} vs ${orig.toFixed(0)} mm³`);
+const cMiss = toMan({ V: model.parts[0].V, T: model.parts[0].T }).add(toMan({ V: model.parts[1].V, T: model.parts[1].T })).subtract(Manifold.union(cm)).volume();
+check(cMiss < orig * 0.03, `covers mode: uncovered volume ${cMiss.toFixed(1)} mm³`);
+// covers are thin skins, printed visible face up
+for (const p of ck('cover')) {
+  const m = applyPose(p.mesh, p.print);
+  let zmin = Infinity, up = 0, all = 0;
+  for (let i = 2; i < m.V.length; i += 3) zmin = Math.min(zmin, m.V[i]);
+  for (let t = 0; t < m.T.length; t += 3) {
+    const [a, b, c] = [m.T[t] * 3, m.T[t + 1] * 3, m.T[t + 2] * 3];
+    const u = [m.V[b] - m.V[a], m.V[b + 1] - m.V[a + 1], m.V[b + 2] - m.V[a + 2]], v = [m.V[c] - m.V[a], m.V[c + 1] - m.V[a + 1], m.V[c + 2] - m.V[a + 2]];
+    const n = [u[1] * v[2] - u[2] * v[1], u[2] * v[0] - u[0] * v[2], u[0] * v[1] - u[1] * v[0]], l = Math.hypot(...n) / 2;
+    all += l; if (n[2] / (2 * l || 1) > 0.2) up += l;
+  }
+  p._up = up / (all || 1); p._thick = p.volume / (all / 2); p._zmin = zmin;
+}
+check(ck('cover').every((p) => Math.abs(p._zmin) < 1e-3 && p._up > 0.2), `covers rest on z = 0, visible face up (min ${Math.min(...ck('cover').map((p) => p._up)).toFixed(2)})`);
+check(ck('cover').every((p) => p._thick <= DEFAULT_SPLIT.depth + 0.6), `covers ${Math.min(...ck('cover').map((p) => p._thick)).toFixed(2)}–${Math.max(...ck('cover').map((p) => p._thick)).toFixed(2)} mm thick`);
+const exc = exportFiles(rc, { bedW: 120, bedH: 100, title: 'test' });
+const txt = new TextDecoder().decode(exc.files.find((f) => f.name.endsWith('.txt')).data);
+check(/covers: \d+/.test(txt) && /COVER/.test(txt), 'covers instructions exported');
 
 // export: one 3MF + STL per color plate (parts on the bed), reference assembly, instructions
 const ex = exportFiles(r, { bedW: 120, bedH: 100, title: 'test' });
