@@ -33,7 +33,8 @@ function setupAutoUpdates() {
 }
 
 ipcMain.handle('install-update', () => {
-  if (updateReadyToInstall) autoUpdater.quitAndInstall();
+  // silent install + relaunch: otherwise the window just closes and the app does not come back
+  if (updateReadyToInstall) setImmediate(() => autoUpdater.quitAndInstall(true, true));
 });
 
 function createWindow() {
@@ -52,6 +53,10 @@ function createWindow() {
     },
   });
   Menu.setApplicationMenu(null);
+  win.webContents.on('render-process-gone', (_e, d) => {
+    console.error('render-process-gone', d.reason);
+    if (d.reason !== 'clean-exit' && !win.isDestroyed()) setTimeout(() => !win.isDestroyed() && win.reload(), 500);
+  });
   win.loadFile(path.join(__dirname, 'src', 'index.html'));
   win.webContents.setWindowOpenHandler(({ url }) => { shell.openExternal(url); return { action: 'deny' }; });
   win.webContents.on('before-input-event', (e, input) => {

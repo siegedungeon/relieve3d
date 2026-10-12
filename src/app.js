@@ -1864,7 +1864,7 @@ window.api?.onTestImage(({ name, bytes }) => loadImageFile(new File([bytes], nam
 // auto-update status (from GitHub Releases vía electron-updater)
 const stUpdate = $('stUpdate');
 if (stUpdate) {
-  stUpdate.addEventListener('click', () => { if (stUpdate.dataset.ready === '1') window.api.installUpdate(); });
+  stUpdate.addEventListener('click', () => { if (stUpdate.dataset.ready === '1') { stUpdate.textContent = 'Instalando… Relieve3D se cerrará y volverá a abrirse sola'; window.api.installUpdate(); } });
   window.api?.onUpdateStatus((d) => {
     stUpdate.hidden = false;
     stUpdate.dataset.ready = d.state === 'ready' ? '1' : '0';
