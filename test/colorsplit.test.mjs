@@ -1,7 +1,7 @@
 // Color separation: synthetic multicolor 3MF (painted sphere + solid colored block sunk into it)
 // → single-color parts that are watertight, don't overlap, rebuild the original and lie on the bed.
 import Module from 'manifold-3d';
-import { paintedSphere3MF } from './fixtures/painted_sphere.mjs';
+import { paintedSphere3MF, paintedBox3MF } from './fixtures/painted_sphere.mjs';
 import { read3MF } from '../src/core/threemf_read.js';
 import { splitColors, layoutPlates, applyPose, DEFAULT_SPLIT } from '../src/core/colorsplit.js';
 import { exportFiles } from '../src/core/colorsplit_export.js';
@@ -171,6 +171,15 @@ const coverM = ck('cover').map((p) => toMan(p.mesh));
 check(ck('cover').every((p) => p.volume >= DEFAULT_SPLIT.minCover), `no cover crumbs (min ${Math.min(...ck('cover').map((p) => p.volume)).toFixed(0)} mm³)`);
 check(coverM.every((m) => m.decompose().filter((q) => q.volume() > 0.5).length === 1), 'every cover is one connected piece (no loose shards)');
 check(!rc.warnings.some((t) => /piezas \(paredes/.test(t)), 'no "base split" warning for a single object');
+// a colour border on a sharp edge (painted top face of a box) is already exact: the cover reaches the edge itself
+{
+  const rb = splitColors(w, read3MF(paintedBox3MF()), {}, () => {});
+  const cv = rb.parts.filter((p) => p.kind === 'cover');
+  const lo = [Infinity, Infinity], hi = [-Infinity, -Infinity];
+  for (const p of cv) for (let i = 0; i < p.mesh.V.length; i += 3) for (let k = 0; k < 2; k++) { lo[k] = Math.min(lo[k], p.mesh.V[i + k]); hi[k] = Math.max(hi[k], p.mesh.V[i + k]); }
+  const gap = Math.max(lo[0], lo[1], 40 - hi[0], 30 - hi[1]);
+  check(cv.length === 1 && gap < 0.02, `crease border: top cover reaches the box edges (${cv.length} cover, gap ${gap.toFixed(3)} mm)`);
+}
 const exc = exportFiles(rc, { bedW: 120, bedH: 100, title: 'test' });
 const txt = new TextDecoder().decode(exc.files.find((f) => f.name.endsWith('.txt')).data);
 check(/covers: \d+/.test(txt) && /COVER/.test(txt), 'covers instructions exported');

@@ -131,4 +131,5 @@ npm run dist       # genera el instalador en dist/
 
 Cada error corregido queda cubierto por una prueba en `test/` (falla con el código anterior). Las pruebas E2E (`test/e2e/`) abren la app, recorren el módulo entero y exportan; capturas y archivos quedan en `test/out/e2e/`. Para probar un archivo propio: `node test/e2e/run.mjs colorsplit "C:\ruta\modelo.3mf"` (o `logo imagen.png`, `hablador mockup.png`).
 
+Comparación original vs resultado (separar colores 3D): `node test/tools/compare.mjs "C:\ruta\modelo.3mf"` separa el modelo, lo renderiza desde 10 vistas junto al original y reporta el % de superficie visible que difiere, con recortes PNG de cada zona en `test/out/compare/`. Los bordes de color que coinciden con una arista viva (borde inferior, borde de un orificio) se respetan exactos: la cubierta llega hasta la arista.
 Estructura: `main.js` (proceso Electron), `preload.js`, `src/core/` (procesamiento de imagen, geometría y exportadores, sin dependencias del DOM), `src/view2d.js`, `src/viewer3d.js`, `src/app.js` (interfaz).

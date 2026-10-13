@@ -39,3 +39,28 @@ export function paintedSphere3MF() {
 </model>`;
   return zipSync({ '3D/3dmodel.model': strToU8(xml), '[Content_Types].xml': strToU8('<Types/>') });
 }
+
+// White 40×30×20 box (2 mm grid) whose whole top face is pink: the colour border runs exactly along a sharp edge.
+export function paintedBox3MF() {
+  const V = [], F = [], P = [], idx = new Map();
+  const S = [40, 30, 20], g = 2;
+  const vid = (p) => { const k = p.map((x) => x.toFixed(3)).join(','); if (!idx.has(k)) { idx.set(k, V.length); V.push(p); } return idx.get(k); };
+  for (let ax = 0; ax < 3; ax++) for (const side of [0, 1]) {
+    const u = (ax + 1) % 3, v = (ax + 2) % 3, nu = S[u] / g, nv = S[v] / g;
+    const pt = (i, j) => { const p = [0, 0, 0]; p[ax] = side * S[ax]; p[u] = i * g; p[v] = j * g; return vid(p); };
+    for (let i = 0; i < nu; i++) for (let j = 0; j < nv; j++) {
+      const a = pt(i, j), b = pt(i + 1, j), c = pt(i + 1, j + 1), d = pt(i, j + 1);
+      if (side) F.push([a, b, c], [a, c, d]); else F.push([a, c, b], [a, d, c]);
+      P.push(ax === 2 && side ? 1 : 0, ax === 2 && side ? 1 : 0);
+    }
+  }
+  const xml = `<?xml version="1.0" encoding="UTF-8"?>
+<model unit="millimeter" xmlns="http://schemas.microsoft.com/3dmanufacturing/core/2015/02">
+<resources>
+<basematerials id="1"><base name="Blanco" displaycolor="#F4F4F4"/><base name="Rosa" displaycolor="#E8AFCF"/></basematerials>
+<object id="2" type="model" pid="1" pindex="0"><mesh><vertices>${V.map((p) => `<vertex x="${p[0]}" y="${p[1]}" z="${p[2]}"/>`).join('')}</vertices><triangles>${F.map((f, i) => `<triangle v1="${f[0]}" v2="${f[1]}" v3="${f[2]}" pid="1" p1="${P[i]}"/>`).join('')}</triangles></mesh></object>
+</resources>
+<build><item objectid="2"/></build>
+</model>`;
+  return zipSync({ '3D/3dmodel.model': strToU8(xml), '[Content_Types].xml': strToU8('<Types/>') });
+}

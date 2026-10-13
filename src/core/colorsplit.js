@@ -1044,14 +1044,59 @@ function heapDijkstra(nV, off, adj, len, dist) {
   return dist;
 }
 
+// Splits the vertices of F (in place) along edges that are both a colour border and a sharp crease (> ~37°).
+// Returns, for every new vertex, the vertex it copies.
+function creaseSplit(F, nT, nV, triColor, N, cosMax = 0.8) {
+  const eT = new Map();
+  for (let t = 0; t < nT; t++) for (let k = 0; k < 3; k++) {
+    const a = F[t * 3 + k], b = F[t * 3 + (k + 1) % 3], key = Math.min(a, b) * 4294967296 + Math.max(a, b);
+    const l = eT.get(key);
+    if (l) l.push(t); else eT.set(key, [t]);
+  }
+  const nd = (s, t) => N[s * 3] * N[t * 3] + N[s * 3 + 1] * N[t * 3 + 1] + N[s * 3 + 2] * N[t * 3 + 2];
+  const cut = new Set();
+  for (const [key, l] of eT) {
+    if (l.length !== 2) continue;
+    const [s, t] = l;
+    if (triColor[s] === triColor[t] || nd(s, t) >= cosMax) continue;
+    cut.add(key);
+  }
+  if (!cut.size) return [];
+  const vt = new Map();
+  for (const key of cut) for (const v of [Math.floor(key / 4294967296), key % 4294967296]) if (!vt.has(v)) vt.set(v, []);
+  for (let t = 0; t < nT; t++) for (let k = 0; k < 3; k++) { const l = vt.get(F[t * 3 + k]); if (l) l.push(t); }
+  const dup = [], F0 = F.slice();
+  for (const [v, tris] of vt) {
+    // fans of triangles around v joined across edges that are not cut
+    const par = tris.map((_, i) => i), find = (i) => (par[i] === i ? i : (par[i] = find(par[i])));
+    const other = (t) => [0, 1, 2].map((k) => F0[t * 3 + k]).filter((u) => u !== v);
+    for (let i = 0; i < tris.length; i++) for (let j = i + 1; j < tris.length; j++) {
+      const oi = other(tris[i]), oj = other(tris[j]);
+      for (const u of oi) if (oj.includes(u) && !cut.has(Math.min(u, v) * 4294967296 + Math.max(u, v))) par[find(i)] = find(j);
+    }
+    const roots = [...new Set(tris.map((_, i) => find(i)))];
+    for (const r of roots.slice(1)) {
+      const nv = nV + dup.length;
+      dup.push(v);
+      tris.forEach((t, i) => { if (find(i) === r) for (let k = 0; k < 3; k++) if (F[t * 3 + k] === v) F[t * 3 + k] = nv; });
+    }
+  }
+  return dup;
+}
+
 function buildCovers(ctx) {
   const { w, o, M, mm, TV, nT, A, N, SN, triColor, merged, base, solidUnion, TH, keep, warnings, progress, cutAxis, thickBody } = ctx;
   const { Manifold } = w;
-  const np = mm.numProp, nV = mm.vertProperties.length / np;
-  const X = new Float64Array(nV * 3);
-  for (let i = 0; i < nV; i++) for (let k = 0; k < 3; k++) X[i * 3 + k] = mm.vertProperties[i * np + k];
+  const np = mm.numProp, nV0 = mm.vertProperties.length / np;
   const F = new Uint32Array(nT * 3);
   for (let i = 0; i < nT * 3; i++) F[i] = merged[TV[i]];
+  // a colour border lying on a sharp edge (bottom rim, rim of a hole, a step) is already exact: the surface is split
+  // there so fields, smoothing and normals of one side never leak to the other, and the cover keeps the whole face
+  const dup = creaseSplit(F, nT, nV0, triColor, N);
+  const nV = nV0 + dup.length;
+  const X = new Float64Array(nV * 3), vOrig = new Int32Array(nV);
+  for (let i = 0; i < nV0; i++) { vOrig[i] = i; for (let k = 0; k < 3; k++) X[i * 3 + k] = mm.vertProperties[i * np + k]; }
+  dup.forEach((s, j) => { vOrig[nV0 + j] = s; for (let k = 0; k < 3; k++) X[(nV0 + j) * 3 + k] = X[s * 3 + k]; });
   const used = new Uint8Array(nV);
   for (let i = 0; i < F.length; i++) used[F[i]] = 1;
   // undirected edges (CSR)
@@ -1316,12 +1361,17 @@ function buildCovers(ctx) {
   // front/back seam: one vertical plane per separate body (each object of the file), placed where the fewest
   // painted faces look the wrong way (through the middle of round parts) -> straight seams, like a mould parting line
   const isl = new Int32Array(nV).fill(-1), planeH = [];
+  const twins = new Map();
+  for (let v = nV0; v < nV; v++) { const s = vOrig[v]; if (!twins.has(s)) twins.set(s, [s]); twins.get(s).push(v); }
   let nIsl = 0;
   for (let v = 0; v < nV; v++) {
     if (!used[v] || isl[v] >= 0) continue;
     const q = [v];
     isl[v] = nIsl;
-    for (let i = 0; i < q.length; i++) for (let k = off[q[i]]; k < off[q[i] + 1]; k++) { const u = adj[k]; if (isl[u] < 0) { isl[u] = nIsl; q.push(u); } }
+    for (let i = 0; i < q.length; i++) {
+      for (let k = off[q[i]]; k < off[q[i] + 1]; k++) { const u = adj[k]; if (isl[u] < 0) { isl[u] = nIsl; q.push(u); } }
+      for (const u of twins.get(vOrig[q[i]]) || []) if (isl[u] < 0) { isl[u] = nIsl; q.push(u); }
+    }
     nIsl++;
   }
   const axI = cutAxis ? (cutAxis[0] ? 0 : 1) : 0, axS = cutAxis ? cutAxis[axI] : 1;
@@ -1375,6 +1425,7 @@ function buildCovers(ctx) {
       front = rest2;
     }
     let d = smooth(signedDist(phi), SMOOTH);
+   
     d = morph(d, o.coverFeature / 2);
     // colour guessed under a solid part may not spill onto visible base-colour surface (max 1.2 mm from real paint)
     const dv = new Float64Array(nV).fill(Infinity);
@@ -1402,6 +1453,7 @@ function buildCovers(ctx) {
         if ((un[v * 3] * pn[s * 3] + un[v * 3 + 1] * pn[s * 3 + 1] + un[v * 3 + 2] * pn[s * 3 + 2]) / l < 0.5) d[v] = Math.min(d[v], -dv[v]);
       }
     }
+   
     // walls thinner than minSkin + 0.2 whose other face is visible and not this colour (a fin beside a bow tab): a
     // cover there would go right through and show on the other side, so that spot keeps the base colour
     if (thickBody) {
@@ -1436,8 +1488,15 @@ function buildCovers(ctx) {
       }
       for (let v = 0; v < nV; v++) if (thin[v] < Infinity) d[v] = Math.min(d[v], (thin[v] - THIN) * 2);
     }
+   
     const D = refine(d);
     d = D.v;
+    // the other face of a split crease is never part of this colour's patch
+    if (twins.size) {
+      const isC = new Uint8Array(nV);
+      for (let t = 0; t < nT; t++) if (triColor[t] === col) for (let k = 0; k < 3; k++) isC[F[t * 3 + k]] = 1;
+      for (const g of twins.values()) if (g.some((u) => isC[u])) for (const u of g) if (!isC[u]) d[u] = Math.min(d[u], -0.3);
+    }
     // normals of the painted surface only: at sharp rims (holes, edges) the unpainted side must not bend them
     const NC = new Float64Array(VN);
     const nw = new Float64Array(nV * 3), hasC = new Uint8Array(nV);
@@ -1459,6 +1518,15 @@ function buildCovers(ctx) {
         nx[v * 3] = x / l; nx[v * 3 + 1] = y / l; nx[v * 3 + 2] = z / l;
       }
       NC.set(nx);
+    }
+    // on a split crease the cover wall runs along the bisector (a mitre): neither face is thinned to a knife edge
+    for (const g of twins.values()) {
+      const m = [0, 0, 0];
+      for (const u of g) for (let j = 0; j < 3; j++) m[j] += RN[u * 3 + j];
+      // a knife edge (faces > ~105° apart) has no useful bisector: keep the painted normal there
+      if (Math.hypot(...m) < 0.6 * g.length) continue;
+      const q = norm(m);
+      for (const u of g) if (hasC[u]) for (let j = 0; j < 3; j++) NC[u * 3 + j] = q[j];
     }
     D.n = NC;
     for (let v = 0; v < nV; v++) if (Math.abs(d[v]) < 1e-5) d[v] = -1e-5;
@@ -1598,9 +1666,9 @@ function buildCovers(ctx) {
     if (done.length) man = keep(man.subtract(keep(Manifold.union(done))));
     // a cover face lying on visible model surface outside its own patch is the cover showing through a wall thinner
     // than itself (a ledge or fin beside a tab): that bit is cut off and stays in the base colour
-    {
-      const mzTop = M.boundingBox().max[2] + 5;
-      const mesh = man.getMesh(), np = mesh.numProp, P = mesh.vertProperties, T = mesh.triVerts, cut = [];
+    const mzTop = M.boundingBox().max[2] + 5;
+    const pokeCut = (m0) => {
+      const mesh = m0.getMesh(), np = mesh.numProp, P = mesh.vertProperties, T = mesh.triVerts, cut = [];
       for (let i = 0; i < T.length; i += 3) {
         const q = [0, 1, 2].map((k) => [P[T[i + k] * np], P[T[i + k] * np + 1], P[T[i + k] * np + 2]]);
         const nn = cross(sub(q[1], q[0]), sub(q[2], q[0])), l = Math.hypot(...nn);
@@ -1609,21 +1677,32 @@ function buildCovers(ctx) {
         const u = nearestV(c, n);
         if (u < 0 || dvis[u] > 0) continue;
         const pu = [X[u * 3] - c[0], X[u * 3 + 1] - c[1], X[u * 3 + 2] - c[2]];
-        // h is distance-like: well outside the patch even at the face itself
-        if (Math.abs(dot(pu, n)) > 0.08 || pc.h.raw[u] + Math.hypot(...pu) > -0.1) continue;
+        // h is distance-like: well outside the patch even at the face itself (any copy of a vertex on a split crease)
+        if (Math.abs(dot(pu, n)) > 0.08 || Math.max(...(twins.get(vOrig[u]) || [u]).map((x) => pc.h.raw[x])) + Math.hypot(...pu) > -0.1) continue;
+        // lying on that surface, not just touching it along an edge (the mitre of a cover at a split crease)
+        if (RN[u * 3] * n[0] + RN[u * 3 + 1] * n[1] + RN[u * 3 + 2] * n[2] < 0.9) continue;
         // on the outside of the model (not a face of an overlapping shell buried inside it)
         const qo = [X[u * 3] + RN[u * 3] * 0.1, X[u * 3 + 1] + RN[u * 3 + 1] * 0.1, X[u * 3 + 2] + RN[u * 3 + 2] * 0.1];
         if (M.rayCast(qo, [qo[0] + 0.0123, qo[1] + 0.0071, mzTop]).length % 2) continue;
+        // the face itself is exposed (just outside it is outside the model), not buried under a skin of base
+        const qf = add(c, scl(n, 0.03));
+        if (M.rayCast(qf, [qf[0] + 0.0123, qf[1] + 0.0071, mzTop]).length % 2) continue;
         const g = q.map((p) => add(p, scl(sub(p, c), 0.15 / Math.max(0.05, Math.hypot(...sub(p, c))))));
         cut.push(Manifold.hull([...g.map((p) => add(p, scl(n, 0.1))), ...g.map((p) => sub(p, scl(n, 0.6)))]));
       }
-      if (cut.length) {
-        const U = keep(Manifold.union(cut.map(keep)));
-        back.push(keep(man.intersect(U)));
-        man = keep(man.subtract(U));
-      }
+      // many hits mean the shell just hugs a split crease, not a thin wall: unioning them all is unstable
+      if (!cut.length || cut.length > 40) return [m0];
+      const U = keep(Manifold.union(cut.map(keep)));
+      back.push(keep(m0.intersect(U)));
+      return keep(m0.subtract(U)).decompose().map(keep);
+    };
+    // crumbs and the zero-volume sheets a boolean leaves along shared faces go to the base before anything else
+    const comps = [];
+    for (const c0 of man.decompose().map(keep)) {
+      if (c0.volume() < o.minCover) { if (c0.volume() > 1) crumbs++; back.push(c0); continue; }
+      comps.push(...pokeCut(c0));
     }
-    const comps = man.decompose().map(keep).sort((a, b) => b.volume() - a.volume());
+    comps.sort((a, b) => b.volume() - a.volume());
     for (const cm of comps) {
       if (cm.volume() < o.minCover) { if (cm.volume() > 1) crumbs++; back.push(cm); continue; }
       parts.push({ kind: 'cover', color: pc.color, man: cm, up: pc.axis, n: pc.axis, half: pc.side });
