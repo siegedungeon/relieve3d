@@ -206,8 +206,19 @@ export function liftCounters(L, W, H, minArea = 4) {
     const { labels: hl, comps } = components(hole, W, H, false);
     const col = new Int32Array(comps.length).fill(-1);
     for (let i = 0; i < N; i++) if (hl[i] >= 0 && mark[i] >= 0 && col[hl[i]] < 0) col[hl[i]] = mark[i];
-    const kept = new Uint8Array(N);
-    for (let i = 0; i < N; i++) if (hl[i] >= 0 && col[hl[i]] >= 0) { L[i] = col[hl[i]]; kept[i] = 1; }
+    // nested lifted parts (a letter on a sticker face and the counter inside that letter) share one hole: each pixel
+    // gets back its own colour; pixels the hole gained (widening) take the colour of the nearest lifted pixel
+    const kept = new Uint8Array(N), src = new Uint8Array(N);
+    let gained = false;
+    for (let i = 0; i < N; i++) {
+      if (hl[i] < 0 || col[hl[i]] < 0) continue;
+      kept[i] = 1;
+      if (mark[i] >= 0) { L[i] = mark[i]; src[i] = 1; } else gained = true;
+    }
+    if (gained) {
+      const { index: I } = edt(src, W, H, true);
+      for (let i = 0; i < N; i++) if (kept[i] && !src[i]) L[i] = I[i] >= 0 ? mark[I[i]] : col[hl[i]];
+    }
     return kept;
   };
   return { n: cnt, restore };

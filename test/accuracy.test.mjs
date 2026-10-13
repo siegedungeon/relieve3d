@@ -1,6 +1,7 @@
 // Vectorization accuracy: synthetic anti-aliased images with analytic boundaries.
 // Measures how far the traced contour vertices fall from the true edge (in source pixels).
 import { processImage } from '../src/core/processing.js';
+import { liftCounters } from '../src/core/raster.js';
 
 const SS = 8; // supersampling for the anti-aliased reference render
 function render(W, H, shapes, bg = [255, 255, 255]) {
@@ -139,6 +140,22 @@ function res0(res, p) { return res.palette[p.cluster].hex !== '#ffffff'; }
   expect(plain.palette.length === 3, 'near-identical colours are not split when the count is forced');
 }
 function polyArea(p) { let a = 0; for (let i = 0; i < p.length; i++) { const q = p[(i + 1) % p.length]; a += p[i][0] * q[1] - q[0] * p[i][1]; } return a / 2; }
+// sticker logo (the "A" of CLAY): black outline on the background, white face, black letter, white counter inside
+// the letter. Letter and counter are both lifted and share one hole: each must get its own colour back
+{
+  const W = 200, H = 200, L = new Int32Array(W * H).fill(-1);
+  for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) {
+    const i = y * W + x, inBox = (a, b, c, d) => x >= a && x < c && y >= b && y < d;
+    if (inBox(2, 2, 198, 198)) L[i] = 1;
+    if (inBox(6, 6, 194, 194)) L[i] = 0;
+    if (inBox(60, 60, 140, 140)) L[i] = 1;
+    if (inBox(92, 92, 108, 108)) L[i] = 0;
+  }
+  const lifted = liftCounters(L, W, H);
+  lifted.restore();
+  console.log(`sticker counters: lifted ${lifted.n}, counter ${L[100 * W + 100]}, letter ${L[65 * W + 100]}`);
+  expect(L[100 * W + 100] === 0 && L[65 * W + 100] === 1, 'counter inside a letter on a sticker face keeps its own colour');
+}
 
 if (fail) { console.log(`accuracy: ${fail} check(s) failed`); process.exit(1); }
 console.log('accuracy OK');
