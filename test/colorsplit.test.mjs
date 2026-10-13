@@ -1,7 +1,7 @@
 // Color separation: synthetic multicolor 3MF (painted sphere + solid colored block sunk into it)
 // → single-color parts that are watertight, don't overlap, rebuild the original and lie on the bed.
 import Module from 'manifold-3d';
-import { paintedSphere3MF, paintedBox3MF } from './fixtures/painted_sphere.mjs';
+import { paintedSphere3MF, paintedBox3MF, paintedWedge3MF } from './fixtures/painted_sphere.mjs';
 import { read3MF } from '../src/core/threemf_read.js';
 import { splitColors, layoutPlates, applyPose, DEFAULT_SPLIT } from '../src/core/colorsplit.js';
 import { exportFiles } from '../src/core/colorsplit_export.js';
@@ -123,7 +123,9 @@ console.log(`  ${((Date.now() - t1) / 1000).toFixed(1)} s, ${rc.parts.length} pa
 const ck = (k, c) => rc.parts.filter((p) => p.kind === k && (c == null || p.color === c));
 check(rc.covers && !rc.cut, 'covers mode is the default');
 check(ck('body').length === 1 && ck('body')[0].color === WHITE, `one intact white base (${ck('body').length})`);
-check(ck('solid', GREEN).length === 1, 'green block → one solid part');
+// a solid colour part (the green block) is not printed solid: a white core fused to the base + front/back covers
+const gc = ck('cover', GREEN);
+check(ck('solid').length === 0 && gc.length === 2 && gc.every((p) => p.fromSolid), `green block → white core + 2 green covers (${gc.length})`);
 check(ck('cover', PINK).length >= 1 && ck('cover', PINK).length <= 6, `pink covers: ${ck('cover', PINK).length}`);
 check(ck('inlay').length === 0, 'no inlays in covers mode');
 const cm = rc.parts.map((p) => toMan(p.mesh));
@@ -149,7 +151,17 @@ for (const p of ck('cover')) {
   }
   p._up = up / (all || 1); p._thick = p.volume / (all / 2); p._zmin = zmin;
 }
-check(ck('cover').every((p) => Math.abs(p._zmin) < 1e-3 && p._up > 0.2), `covers rest on z = 0, visible face up (min ${Math.min(...ck('cover').map((p) => p._up)).toFixed(2)})`);
+check(ck('cover').every((p) => Math.abs(p._zmin) < 1e-3 && (p.fromSolid || p._up > 0.2)), `covers rest on z = 0, visible face up (min ${Math.min(...ck('cover').filter((p) => !p.fromSolid).map((p) => p._up)).toFixed(2)})`);
+{
+  // the base holds the block's core, and each green cover slides straight off it along its axis (no undercut)
+  const bodyM = cm[rc.parts.indexOf(ck('body')[0])];
+  const blockM = toMan({ V: model.parts[1].V, T: model.parts[1].T });
+  const coreV = bodyM.intersect(blockM).volume();
+  check(coreV > 14 * 10 * 12 * 0.3, `base keeps a core inside the block (${coreV.toFixed(0)} mm³)`);
+  let hit = 0;
+  for (const p of gc) { const m = toMan(p.mesh); for (const d of [0.5, 2, 5, 10, 15]) hit = Math.max(hit, m.translate(p.n.map((x) => x * d)).intersect(bodyM).volume()); }
+  check(hit < 0.05, `green covers slide off the core along their axis (max hit ${hit.toFixed(3)} mm³)`);
+}
 check(ck('cover').every((p) => p._thick <= DEFAULT_SPLIT.depth + 0.6), `covers ${Math.min(...ck('cover').map((p) => p._thick)).toFixed(2)}–${Math.max(...ck('cover').map((p) => p._thick)).toFixed(2)} mm thick`);
 // the pink stripe wraps around the sphere: it is split front/back by ONE straight vertical plane (a clean seam,
 // no saw teeth), so both halves are separated by a flat gap no wider than the clearance
@@ -179,6 +191,14 @@ check(!rc.warnings.some((t) => /piezas \(paredes/.test(t)), 'no "base split" war
   for (const p of cv) for (let i = 0; i < p.mesh.V.length; i += 3) for (let k = 0; k < 2; k++) { lo[k] = Math.min(lo[k], p.mesh.V[i + k]); hi[k] = Math.max(hi[k], p.mesh.V[i + k]); }
   const gap = Math.max(lo[0], lo[1], 40 - hi[0], 30 - hi[1]);
   check(cv.length === 1 && gap < 0.02, `crease border: top cover reaches the box edges (${cv.length} cover, gap ${gap.toFixed(3)} mm)`);
+}
+{
+  // knife edge: the cover runs out to the tip of a wedge instead of leaving base-colour notches along it
+  const rw = splitColors(w, read3MF(paintedWedge3MF()), {}, () => {});
+  const cv = rw.parts.filter((p) => p.kind === 'cover');
+  let lo = Infinity;
+  for (const p of cv) for (let i = 0; i < p.mesh.V.length; i += 3) lo = Math.min(lo, p.mesh.V[i]);
+  check(cv.length >= 1 && lo < 0.1, `knife edge: wedge cover reaches the tip (${cv.length} cover, gap ${lo.toFixed(3)} mm)`);
 }
 const exc = exportFiles(rc, { bedW: 120, bedH: 100, title: 'test' });
 const txt = new TextDecoder().decode(exc.files.find((f) => f.name.endsWith('.txt')).data);

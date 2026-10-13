@@ -64,3 +64,34 @@ export function paintedBox3MF() {
 </model>`;
   return zipSync({ '3D/3dmodel.model': strToU8(xml), '[Content_Types].xml': strToU8('<Types/>') });
 }
+
+// White 45 deg wedge (prism 20x20 in xz, 30 long in y, 0.25 x 1 mm grid) whose sloped face is pink: the paint runs out to a
+// knife edge at x = 0 (the far face there is the white bottom, at 45 deg - not a parallel thin wall).
+export function paintedWedge3MF() {
+  const V = [], F = [], P = [], idx = new Map(), L = 30, n = 80, g = 0.25;
+  const vid = (p) => { const k = p.map((x) => x.toFixed(3)).join(','); if (!idx.has(k)) { idx.set(k, V.length); V.push(p); } return idx.get(k); };
+  const tri = (a, b, c, out, pink) => {
+    const [A, B, C] = [V[a], V[b], V[c]];
+    const u = B.map((x, i) => x - A[i]), v = C.map((x, i) => x - A[i]);
+    const nn = [u[1] * v[2] - u[2] * v[1], u[2] * v[0] - u[0] * v[2], u[0] * v[1] - u[1] * v[0]];
+    F.push(nn[0] * out[0] + nn[1] * out[1] + nn[2] * out[2] > 0 ? [a, b, c] : [a, c, b]); P.push(pink);
+  };
+  const rect = (pt, nu, nv, out, pink) => { for (let i = 0; i < nu; i++) for (let j = 0; j < nv; j++) { const a = pt(i, j), b = pt(i + 1, j), c = pt(i + 1, j + 1), d = pt(i, j + 1); tri(a, b, c, out, pink); tri(a, c, d, out, pink); } };
+  rect((i, j) => vid([i * g, j, 0]), n, L, [0, 0, -1], 0);
+  rect((i, j) => vid([n * g, j, i * g]), n, L, [1, 0, 0], 0);
+  rect((i, j) => vid([i * g, j, i * g]), n, L, [-1, 0, 1], 1);
+  for (const y of [0, L]) for (let i = 0; i < n; i++) for (let j = 0; j <= i; j++) {
+    const out = [0, y ? 1 : -1, 0];
+    tri(vid([i * g, y, j * g]), vid([(i + 1) * g, y, j * g]), vid([(i + 1) * g, y, (j + 1) * g]), out, 0);
+    if (j < i) tri(vid([i * g, y, j * g]), vid([(i + 1) * g, y, (j + 1) * g]), vid([i * g, y, (j + 1) * g]), out, 0);
+  }
+  const xml = `<?xml version="1.0" encoding="UTF-8"?>
+<model unit="millimeter" xmlns="http://schemas.microsoft.com/3dmanufacturing/core/2015/02">
+<resources>
+<basematerials id="1"><base name="Blanco" displaycolor="#F4F4F4"/><base name="Rosa" displaycolor="#E8AFCF"/></basematerials>
+<object id="2" type="model" pid="1" pindex="0"><mesh><vertices>${V.map((p) => `<vertex x="${p[0]}" y="${p[1]}" z="${p[2]}"/>`).join('')}</vertices><triangles>${F.map((f, i) => `<triangle v1="${f[0]}" v2="${f[1]}" v3="${f[2]}" pid="1" p1="${P[i]}"/>`).join('')}</triangles></mesh></object>
+</resources>
+<build><item objectid="2"/></build>
+</model>`;
+  return zipSync({ '3D/3dmodel.model': strToU8(xml), '[Content_Types].xml': strToU8('<Types/>') });
+}

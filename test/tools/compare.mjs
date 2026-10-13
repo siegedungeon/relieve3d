@@ -34,7 +34,7 @@ if (flag('reuse') && fs.existsSync(cache)) parts = JSON.parse(fs.readFileSync(ca
 else {
   const w = await Module(); w.setup();
   const t0 = Date.now();
-  const opts = flag('mode') ? { mode: flag('mode') } : {};
+  const opts = { ...(flag('mode') ? { mode: flag('mode') } : {}), ...(flag('opts') ? JSON.parse(flag('opts')) : {}) };
   const r = splitColors(w, model, opts, () => {});
   console.log(`split ${((Date.now() - t0) / 1000).toFixed(1)} s, ${r.parts.length} parts, warnings: ${r.warnings.join(' | ') || '-'}`);
   parts = r.parts.map((p) => ({ kind: p.kind, color: p.color, V: Array.from(p.mesh.V, (x) => Math.round(x * 1e4) / 1e4), T: Array.from(p.mesh.T) }));

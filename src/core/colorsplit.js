@@ -25,6 +25,7 @@ export const DEFAULT_SPLIT = {
   labels: true, // engrave each inlay's number (mirrored) on its hidden glued face
   minCover: 20, // covers: colour pieces smaller than this (mm³) are not printed, the base keeps that spot
   minFragment: 100, // plane mode: detached inlay fragments below this volume (mm³) are not printed
+  solidCovers: true, // covers mode: a solid colour part (a bow) gets a base-colour core fused to the base + glued colour covers
   planeCut: true, // cut everything by a vertical plane into a front and a back half: every colour piece slides in
   //                 straight from the front or from the back, and the pieces split exactly at the cut
 };
@@ -289,7 +290,8 @@ export function splitColors(w, model, options = {}, progress = () => {}) {
       cutAxis[axI] = sN > 0 ? 1 : -1;
     }
     const parts = buildCovers({ w, o, M, mm, TV, nT, A, N, SN, triColor, merged, base, solidUnion, TH, keep, warnings, progress, cutAxis, thickBody });
-    return finishParts({ w, o, model, parts, solids, base, keep, garbage, warnings, progress, info: { regions: regions.length, tiles: parts.filter((p) => p.kind === 'cover').length, thickness: thPct, covers: true, cut: null } });
+    const cored = o.solidCovers && solidUnion ? coverSolids({ w, o, M, solids, solidMans, parts, cutAxis: cutAxis || [0, 1, 0], keep, progress }) : [];
+    return finishParts({ w, o, model, parts, solids: solids.filter((s) => !cored.includes(s)), base, keep, garbage, warnings, progress, info: { regions: regions.length, tiles: parts.filter((p) => p.kind === 'cover').length, thickness: thPct, covers: true, cut: null } });
   }
 
   // front/back cut: the thinnest horizontal axis, front = the side the paint faces; the plane goes where the fewest
@@ -987,6 +989,180 @@ export function splitColors(w, model, options = {}, progress = () => {}) {
   return finishParts({ w, o, model, parts, solids, base, keep, garbage, warnings, progress, info: { regions: regions.length, tiles: leaves.length, thickness: thPct, cut: cut && { axis: cut.ax, at: cut.h0 * cut.ax[cut.axI] } } });
 }
 
+// voxel grid over bb (node spacing h) for the solid-part cores
+function voxGrid(bb, h) {
+  const n = [0, 1, 2].map((k) => Math.max(2, Math.ceil((bb.max[k] - bb.min[k]) / h) + 1));
+  return { n, o: bb.min, h, N: n[0] * n[1] * n[2] };
+}
+
+// inside / outside of a closed mesh at every grid node (parity of the crossings along z columns)
+function voxelize(G, mesh) {
+  const [nx, ny, nz] = G.n, o0 = G.o, h = G.h, ins = new Uint8Array(G.N);
+  const np = mesh.numProp, P = mesh.vertProperties, T = mesh.triVerts;
+  const cols = new Array(nx * ny).fill(null);
+  const jx = 1.3e-4, jy = 0.7e-4; // keeps the column lines off mesh edges
+  for (let t = 0; t < T.length; t += 3) {
+    const a = T[t] * np, b = T[t + 1] * np, c = T[t + 2] * np;
+    const ax = P[a], ay = P[a + 1], bx = P[b], by = P[b + 1], cx = P[c], cy = P[c + 1];
+    const i0 = Math.max(0, Math.ceil((Math.min(ax, bx, cx) - o0[0] - jx) / h)), i1 = Math.min(nx - 1, Math.floor((Math.max(ax, bx, cx) - o0[0] - jx) / h));
+    const j0 = Math.max(0, Math.ceil((Math.min(ay, by, cy) - o0[1] - jy) / h)), j1 = Math.min(ny - 1, Math.floor((Math.max(ay, by, cy) - o0[1] - jy) / h));
+    if (i0 > i1 || j0 > j1) continue;
+    const d = (bx - ax) * (cy - ay) - (cx - ax) * (by - ay);
+    if (Math.abs(d) < 1e-12) continue;
+    for (let i = i0; i <= i1; i++) for (let j = j0; j <= j1; j++) {
+      const x = o0[0] + i * h + jx, y = o0[1] + j * h + jy;
+      const u = ((bx - x) * (cy - y) - (cx - x) * (by - y)) / d, v = ((cx - x) * (ay - y) - (ax - x) * (cy - y)) / d, wq = 1 - u - v;
+      if (u < 0 || v < 0 || wq < 0) continue;
+      const k = i + j * nx;
+      (cols[k] || (cols[k] = [])).push(u * P[a + 2] + v * P[b + 2] + wq * P[c + 2]);
+    }
+  }
+  for (let k = 0; k < cols.length; k++) {
+    const zs = cols[k];
+    if (!zs) continue;
+    zs.sort((p, q) => p - q);
+    for (let m = 0; m + 1 < zs.length; m += 2) {
+      const k0 = Math.max(0, Math.ceil((zs[m] - o0[2]) / h)), k1 = Math.min(nz - 1, Math.floor((zs[m + 1] - o0[2]) / h));
+      for (let z = k0; z <= k1; z++) ins[k + z * nx * ny] = 1;
+    }
+  }
+  return ins;
+}
+
+// distance (mm) from every node in `mask` to the nearest node outside it, minus half a node (exact EDT, separable)
+function edt(G, mask) {
+  const [nx, ny, nz] = G.n, NN = G.N, D = new Float64Array(NN);
+  for (let i = 0; i < NN; i++) D[i] = mask[i] ? 1e20 : 0;
+  const L = Math.max(nx, ny, nz), f = new Float64Array(L), dd = new Float64Array(L), v = new Int32Array(L), zz = new Float64Array(L + 1);
+  const pass = (len, cnt, idx) => {
+    for (let c = 0; c < cnt; c++) {
+      for (let q = 0; q < len; q++) f[q] = D[idx(c, q)];
+      let k = 0;
+      v[0] = 0; zz[0] = -Infinity; zz[1] = Infinity;
+      for (let q = 1; q < len; q++) {
+        let sx = ((f[q] + q * q) - (f[v[k]] + v[k] * v[k])) / (2 * q - 2 * v[k]);
+        while (sx <= zz[k]) { k--; sx = ((f[q] + q * q) - (f[v[k]] + v[k] * v[k])) / (2 * q - 2 * v[k]); }
+        k++; v[k] = q; zz[k] = sx; zz[k + 1] = Infinity;
+      }
+      k = 0;
+      for (let q = 0; q < len; q++) { while (zz[k + 1] < q) k++; const r = v[k]; dd[q] = (q - r) * (q - r) + f[r]; }
+      for (let q = 0; q < len; q++) D[idx(c, q)] = dd[q];
+    }
+  };
+  pass(nx, ny * nz, (c, q) => q + c * nx);
+  pass(ny, nx * nz, (c, q) => (c % nx) + q * nx + Math.floor(c / nx) * nx * ny);
+  pass(nz, nx * ny, (c, q) => c + q * nx * ny);
+  for (let i = 0; i < NN; i++) D[i] = mask[i] ? (Math.sqrt(D[i]) - 0.5) * G.h : 0;
+  return D;
+}
+
+// trilinear lookup of a node field (value `out` beyond the grid)
+function sampler(G, F, out) {
+  const [nx, ny, nz] = G.n, o0 = G.o, h = G.h, sy = nx, sz = nx * ny;
+  return (p) => {
+    const fx = (p[0] - o0[0]) / h, fy = (p[1] - o0[1]) / h, fz = (p[2] - o0[2]) / h;
+    if (fx < 0 || fy < 0 || fz < 0 || fx > nx - 1 || fy > ny - 1 || fz > nz - 1) return out;
+    const i = Math.min(nx - 2, Math.floor(fx)), j = Math.min(ny - 2, Math.floor(fy)), k = Math.min(nz - 2, Math.floor(fz));
+    const u = fx - i, v = fy - j, w = fz - k, b = i + j * nx + k * sz;
+    const l = (q) => F[q] * (1 - u) + F[q + 1] * u;
+    return (l(b) * (1 - v) + l(b + sy) * v) * (1 - w) + (l(b + sz) * (1 - v) + l(b + sz + sy) * v) * w;
+  };
+}
+
+// covers mode, solid colour parts (a bow): the inside becomes a base-colour core fused to the base, the colour is a
+// shell of cover thickness cut by one vertical plane into a front and a back cover that slide onto the core
+function coverSolids({ w, o, M, solids, solidMans, parts, cutAxis, keep, progress }) {
+  const { Manifold } = w;
+  progress('Covers: núcleo de las piezas sólidas', 0.8);
+  const t = o.depth, c = Math.max(0.05, o.clearance / 2);
+  const ai = cutAxis[0] ? 0 : cutAxis[1] ? 1 : 2, sg = cutAxis[ai] > 0 ? 1 : -1;
+  const bodyIdx = parts.map((p, i) => (p.kind === 'body' ? i : -1)).filter((i) => i >= 0);
+  const cored = [], cores = [];
+  for (const S of keep(Manifold.union(solidMans)).decompose().map(keep)) {
+    if (S.volume() < 5) continue;
+    const own = solids.filter((s, i) => keep(solidMans[i].intersect(S)).volume() > 1e-3);
+    const vol = new Map();
+    own.forEach((s) => vol.set(s.dom, (vol.get(s.dom) || 0) + Math.abs(s.vol)));
+    const color = [...vol].sort((a, b) => b[1] - a[1])[0][0];
+    const b0 = S.boundingBox(), pad = t + 2;
+    const bb = { min: b0.min.map((x) => x - pad), max: b0.max.map((x) => x + pad) };
+    const h = Math.max(0.15, Math.cbrt(((bb.max[0] - bb.min[0]) * (bb.max[1] - bb.min[1]) * (bb.max[2] - bb.min[2])) / 6e6));
+    const G = voxGrid(bb, h), [nx, ny, nz] = G.n, st = [1, nx, nx * ny];
+    const ext = [0, 1, 2].map((k) => bb.max[k] - bb.min[k] + 2 * pad);
+    const Mb = keep(M.intersect(keep(Manifold.cube(ext).translate(bb.min.map((x) => x - pad)))));
+    const inS = voxelize(G, S.getMesh()), inM = voxelize(G, Mb.getMesh()), inU = inS.map((x, i) => x | inM[i]);
+    // depth inside solid + base: where the solid sinks into the base the core runs on into it
+    const DU = edt(G, inU);
+    for (let i = 0; i < G.N; i++) if (!inU[i]) DU[i] = -h;
+    // each half slides off along its own direction: out along the axis, or up when the base sits behind it.
+    // Core in front of its own cover (an undercut) goes to the cover instead
+    const mid = (dot(b0.min, cutAxis) + dot(b0.max, cutAxis)) / 2;
+    const isFront = (i) => (G.o[ai] + (Math.floor(i / st[ai]) % G.n[ai]) * h) * sg > mid;
+    const isCov = (i, half) => inS[i] && !inM[i] && DU[i] < t && isFront(i) === (half === 0);
+    // scan every line along axis k in direction s (+1/-1), calling f(i) in order
+    const scan = (k, s, start, f) => {
+      const n2 = [0, 1, 2].filter((j) => j !== k), len = G.n[k];
+      for (let a = 0; a < G.n[n2[0]]; a++) for (let b = 0; b < G.n[n2[1]]; b++) {
+        const b0i = a * st[n2[0]] + b * st[n2[1]];
+        start();
+        for (let q = 0; q < len; q++) f(b0i + (s > 0 ? q : len - 1 - q) * st[k]);
+      }
+    };
+    const dirs = [];
+    for (const half of [0, 1]) {
+      const opts = [[ai, half === 0 ? sg : -sg], [2, 1]];
+      let best = null;
+      for (const [k, s] of opts) {
+        let seenM = false, blocked = 0;
+        scan(k, -s, () => { seenM = false; }, (i) => { if (inM[i] && !inS[i]) seenM = true; else if (seenM && isCov(i, half)) blocked++; });
+        if (!best || blocked < best.blocked * 0.7) best = { k, s, blocked };
+      }
+      dirs.push(best);
+    }
+    const forbid = new Uint8Array(G.N);
+    let nForbid = 0;
+    dirs.forEach(({ k, s }, half) => {
+      let flag = false;
+      scan(k, s, () => { flag = false; }, (i) => {
+        if (!inS[i] || inM[i]) return;
+        if (DU[i] < t) { if (isCov(i, half)) flag = true; } else if (flag && !forbid[i]) { forbid[i] = 1; nForbid++; }
+      });
+    });
+    const fDepth = sampler(G, DU, -h);
+    let sdf = (p) => fDepth(p) - t - c;
+    if (nForbid) {
+      const Fin = edt(G, forbid), Fout = edt(G, forbid.map((x) => 1 - x));
+      for (let i = 0; i < G.N; i++) Fin[i] = forbid[i] ? -Fin[i] : Fout[i];
+      const fShadow = sampler(G, Fin, h);
+      sdf = (p) => Math.min(fDepth(p) - t - c, fShadow(p));
+    }
+    const edge = Math.max(0.35, h * 1.5);
+    const cav = keep(keep(Manifold.levelSet(sdf, bb, edge, -c)).intersect(S));
+    const core = keep(keep(Manifold.levelSet(sdf, bb, edge, 0)).intersect(S));
+    // only core islands fused to the base: a loose island stays colour (a cover could not hold it in place)
+    const keepC = core.decompose().map(keep).filter((q) => q.volume() > 1 && keep(q.intersect(M)).volume() > 0.5);
+    if (!keepC.length) continue;
+    const cavK = cav.decompose().map(keep).filter((q) => keepC.some((k) => keep(q.intersect(k)).volume() > 1e-3));
+    const shellM = keep(keep(S.subtract(keep(Manifold.union(cavK)))).subtract(M));
+    // front / back covers: one straight vertical cut through the middle of the part
+    shellM.splitByPlane(cutAxis, mid).forEach((half, si) => {
+      keep(half);
+      const up = [0, 0, 0];
+      up[dirs[si].k] = dirs[si].s;
+      for (const q of half.decompose().map(keep)) if (q.volume() >= 0.3) parts.push({ kind: 'cover', color, man: q, up, n: up, half: si, solidCover: true });
+    });
+    cored.push(...own);
+    cores.push(...keepC);
+  }
+  // the cores join the base piece they sink into
+  for (const k of cores) {
+    let bi = bodyIdx[0], bv = -1;
+    for (const i of bodyIdx) { const v = keep(parts[i].man.intersect(k)).volume(); if (v > bv) { bv = v; bi = i; } }
+    if (bi != null) parts[bi].man = keep(parts[bi].man.add(k));
+  }
+  return cored;
+}
+
 function finishParts({ w, o, model, parts, solids, base, keep, garbage, warnings, progress, info }) {
   // 6) solid color parts, shrunk by the clearance so they slide into their socket
   progress('Piezas sólidas', 0.85);
@@ -1003,7 +1179,7 @@ function finishParts({ w, o, model, parts, solids, base, keep, garbage, warnings
     const mesh = manifoldToMesh(p.man);
     // shells always print along their insertion axis: visible face on top (best finish), supports only under the glued face
     const up = p.kind === 'inlay' || p.kind === 'cover' ? p.up : p.up || bestUp(mesh);
-    return { kind: p.kind, color: p.color, mesh, up, volume: p.man.volume(), n: p.kind === 'inlay' || p.kind === 'cover' ? p.up : p.n, half: p.half };
+    return { kind: p.kind, color: p.color, mesh, up, volume: p.man.volume(), n: p.kind === 'inlay' || p.kind === 'cover' ? p.up : p.n, half: p.half, fromSolid: !!p.solidCover };
   });
   const counters = {};
   for (const p of out) {
@@ -1481,7 +1657,10 @@ function buildCovers(ctx) {
             if (!outside(sub(c, scl(dn, L + 0.05)))) continue;
             // the far face looks the other way
             const u = nearestV(sub(c, scl(dn, L)), scl(dn, -1));
-            if (u >= 0 && dv[u] > 0.05 && dvis[u] === 0) thin[v] = Math.min(thin[v], L);
+            // only a wall with (nearly) parallel faces; the tip of a wedge (knife edge) is taken whole by the cover
+            // instead of chopping notches into the paint along it
+            const par = u >= 0 && -(RN[u * 3] * dn[0] + RN[u * 3 + 1] * dn[1] + RN[u * 3 + 2] * dn[2]) > 0.85;
+            if (par && dv[u] > 0.05 && dvis[u] === 0) thin[v] = Math.min(thin[v], L);
             break;
           }
         }
@@ -1646,7 +1825,7 @@ function buildCovers(ctx) {
   const recesses = pieces.map((pc) => shell(pc.r, 0.4)).filter(Boolean);
   let body = M;
   if (recesses.length) body = keep(body.subtract(keep(Manifold.union(recesses))));
-  if (solidUnion) body = keep(body.subtract(solidUnion));
+  if (solidUnion && !o.solidCovers) body = keep(body.subtract(solidUnion));
   let bodyPieces = body.decompose().map(keep).filter((p) => p.volume() > 1).sort((a, b) => b.volume() - a.volume());
   const slivers = bodyPieces.filter((p, i) => i > 0 && p.volume() < 10);
   if (slivers.length) { bodyPieces = bodyPieces.filter((p) => !slivers.includes(p)); warnings.push(`${slivers.length} astillas del color base (< 10 mm³) no se imprimen`); }
