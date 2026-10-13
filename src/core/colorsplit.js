@@ -1115,6 +1115,8 @@ function coverSolids({ w, o, M, solids, solidMans, parts, cutAxis, keep, progres
     // depth inside solid + base: where the solid sinks into the base the core runs on into it
     const DU = edt(G, inU);
     for (let i = 0; i < G.N; i++) if (!inU[i]) DU[i] = -h;
+    // the voxel distance steps in h: smoothed, the core's outline follows the part's shape instead of a staircase
+    blur(G, DU, 3);
     const scan = (k, s, start, f) => {
       const n2 = [0, 1, 2].filter((j) => j !== k), len = G.n[k];
       for (let a = 0; a < G.n[n2[0]]; a++) for (let b = 0; b < G.n[n2[1]]; b++) {
@@ -1853,7 +1855,7 @@ function buildCovers(ctx) {
   // closed shell between the surface patch {h > 0} (pushed e out) and its copy t(v) inside, walls along the normals
   const shell = (H, e = 0.4, extra = 0, fixed = null) => {
     const h = H.v, VN = H.n || VNg;
-    const key = new Map(), P2 = [], NN = [], TT = [], tops = [];
+    const key = new Map(), P2 = [], NN = [], TT = [], tops = [], rim = [];
     const vid = (k, a, b, s) => {
       let i = key.get(k);
       if (i !== undefined) return i;
@@ -1861,6 +1863,7 @@ function buildCovers(ctx) {
       key.set(k, i);
       for (let j = 0; j < 3; j++) { P2.push(X[a * 3 + j] + (X[b * 3 + j] - X[a * 3 + j]) * s); NN.push(VN[a * 3 + j] + (VN[b * 3 + j] - VN[a * 3 + j]) * s); }
       TT.push(fixed ?? tv[a] + (tv[b] - tv[a]) * s + extra);
+      rim.push(k >= nV);
       return i;
     };
     for (let t = 0; t < nT; t++) {
@@ -1884,6 +1887,31 @@ function buildCovers(ctx) {
     const n0 = P2.length / 3, VP = new Float32Array(n0 * 6);
     const UN = new Float64Array(n0 * 3);
     for (let i = 0; i < n0; i++) { const nv = norm([NN[i * 3], NN[i * 3 + 1], NN[i * 3 + 2]]); UN[i * 3] = nv[0]; UN[i * 3 + 1] = nv[1]; UN[i * 3 + 2] = nv[2]; }
+    // the inner face is smoothed over the patch: thickness and normals vary per mesh vertex (coarse triangles, wall
+    // thickness samples), and offsetting each vertex on its own leaves a faceted, saw-toothed floor under the cover
+    const nb = Array.from({ length: n0 }, () => []);
+    for (let i = 0; i < tops.length; i += 3) for (let k = 0; k < 3; k++) { const a = tops[i + k], b = tops[i + (k + 1) % 3]; nb[a].push(b); nb[b].push(a); }
+    // never thicker than allowed at any vertex (walls, folds): each round takes the min of itself and the local mean
+    const smoothT = (R) => {
+      for (let r = 0; r < R; r++) {
+        const nx = TT.slice();
+        for (let i = 0; i < n0; i++) { let s2 = TT[i]; for (const j of nb[i]) s2 += TT[j]; nx[i] = Math.min(TT[i], s2 / (nb[i].length + 1)); }
+        for (let i = 0; i < n0; i++) TT[i] = nx[i];
+      }
+    };
+    // (not on the patch border: the walls there - a plane seam, a mitre - keep their exact direction)
+    for (let r = 0; r < 3; r++) {
+      const nx = new Float64Array(UN);
+      for (let i = 0; i < n0; i++) {
+        if (rim[i]) continue;
+        const m = [UN[i * 3], UN[i * 3 + 1], UN[i * 3 + 2]];
+        for (const j of nb[i]) if (UN[j * 3] * UN[i * 3] + UN[j * 3 + 1] * UN[i * 3 + 1] + UN[j * 3 + 2] * UN[i * 3 + 2] > 0.7) for (let k = 0; k < 3; k++) m[k] += UN[j * 3 + k];
+        const q = norm(m);
+        nx[i * 3] = q[0]; nx[i * 3 + 1] = q[1]; nx[i * 3 + 2] = q[2];
+      }
+      UN.set(nx);
+    }
+    smoothT(4);
     // the inner copy may not fold over (normals converging at a knife edge / tight concave spot): where an inner
     // triangle turns against its top triangle, the offset there shrinks until it does not (no self-intersecting
     // shell -> no spikes left by the boolean)
@@ -1895,11 +1923,14 @@ function buildCovers(ctx) {
         const pt = (v) => [P2[v * 3], P2[v * 3 + 1], P2[v * 3 + 2]], pi = (v) => sub(pt(v), scl([UN[v * 3], UN[v * 3 + 1], UN[v * 3 + 2]], TT[v]));
         const nt = cross(sub(pt(q[1]), pt(q[0])), sub(pt(q[2]), pt(q[0]))), ni = cross(sub(pi(q[1]), pi(q[0])), sub(pi(q[2]), pi(q[0])));
         const lt = Math.hypot(...nt), li = Math.hypot(...ni);
-        if (lt < 1e-12) continue;
+        // slivers (an edge cut next to a vertex) have no meaningful orientation: they would shrink the shell to nothing
+        const le = Math.max(Math.hypot(...sub(pt(q[1]), pt(q[0]))), Math.hypot(...sub(pt(q[2]), pt(q[1]))), Math.hypot(...sub(pt(q[0]), pt(q[2]))));
+        if (lt < 1e-12 || lt / le < 0.05) continue;
         if (dot(nt, ni) < 0.2 * lt * li || li < 0.02 * lt) { bad++; for (const v of q) shrink[v] = 1; }
       }
       if (!bad) break;
       for (let v = 0; v < n0; v++) if (shrink[v]) TT[v] *= 0.6;
+      smoothT(2);
     }
     for (let i = 0; i < n0; i++) {
       for (let j = 0; j < 3; j++) { VP[i * 3 + j] = P2[i * 3 + j] + UN[i * 3 + j] * e; VP[(n0 + i) * 3 + j] = P2[i * 3 + j] - UN[i * 3 + j] * TT[i]; }
@@ -1925,7 +1956,7 @@ function buildCovers(ctx) {
   const parts = [];
   // one recess per cover piece (a single shell for a whole colour can fold onto itself where two painted
   // surfaces meet at a tight angle, e.g. ear against head, and the boolean then leaves patches uncut)
-  const recesses = pieces.map((pc) => shell(pc.r, 0.4)).filter(Boolean);
+  const recOf = pieces.map((pc) => shell(pc.r, 0.4)), recesses = recOf.filter(Boolean);
   let body = M;
   if (recesses.length) body = keep(body.subtract(keep(Manifold.union(recesses))));
   if (solidUnion && !o.solidCovers) body = keep(body.subtract(solidUnion));
@@ -1944,6 +1975,7 @@ function buildCovers(ctx) {
     const sh = shell(pc.h, 0.4);
     if (!sh) { failed++; return; }
     let man = keep(sh.intersect(M));
+    if (recOf[i]) man = keep(man.intersect(recOf[i]));
     if (solidUnion) man = keep(man.subtract(solidUnion));
     if (done.length) man = keep(man.subtract(keep(Manifold.union(done))));
     // a cover face lying on visible model surface outside its own patch is the cover showing through a wall thinner

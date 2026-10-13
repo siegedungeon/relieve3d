@@ -5,7 +5,7 @@ import { PNG } from 'pngjs';
 
 const args = process.argv.slice(2), flag = (k, d) => { const a = args.find((x) => x.startsWith(`--${k}`)); return a ? (a.includes('=') ? a.split('=')[1] : true) : d; };
 const [src, dst] = args.filter((a) => !a.startsWith('--'));
-const MM = +flag('px', 0.06), CELL = 520;
+const MM = +flag('px', 0.06), CELL = +flag('cell', 520);
 const DIRS = { front: [0, 1, 0], back: [0, -1, 0], top: [0, 0, -1], bottom: [0, 0, 1], left: [1, 0, 0], right: [-1, 0, 0] };
 const views = String(flag('views', 'front,back,top')).split(',');
 const only = flag('only') ? String(flag('only')).split(',').map(Number) : null;
@@ -21,7 +21,7 @@ parts.forEach((p, row) => {
   const V = p.V, T = p.T, nv = V.length / 3;
   const c = [0, 1, 2].map((k) => { let a = Infinity, b = -Infinity; for (let i = k; i < V.length; i += 3) { a = Math.min(a, V[i]); b = Math.max(b, V[i]); } return (a + b) / 2; });
   views.forEach((vn, col) => {
-    const L = norm(DIRS[vn]), up = Math.abs(L[2]) > 0.9 ? [0, 1, 0] : [0, 0, 1], R = norm(cross(L, up)), U = cross(R, L);
+    const L = norm(DIRS[vn] || vn.split(';').map(Number)), up = Math.abs(L[2]) > 0.9 ? [0, 1, 0] : [0, 0, 1], R = norm(cross(L, up)), U = cross(R, L);
     let ext = 0;
     for (let i = 0; i < nv; i++) { const q = [V[i * 3] - c[0], V[i * 3 + 1] - c[1], V[i * 3 + 2] - c[2]]; ext = Math.max(ext, Math.abs(dot(q, R)), Math.abs(dot(q, U))); }
     const s = Math.min(1 / MM, (CELL / 2 - 10) / ext);

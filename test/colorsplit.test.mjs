@@ -1,7 +1,7 @@
 // Color separation: synthetic multicolor 3MF (painted sphere + solid colored block sunk into it)
 // → single-color parts that are watertight, don't overlap, rebuild the original and lie on the bed.
 import Module from 'manifold-3d';
-import { paintedSphere3MF, paintedBox3MF, paintedWedge3MF, paintedFloatingBall3MF } from './fixtures/painted_sphere.mjs';
+import { paintedSphere3MF, paintedBox3MF, paintedWedge3MF, paintedFloatingBall3MF, paintedRoughShell3MF, paintedWing3MF } from './fixtures/painted_sphere.mjs';
 import { read3MF } from '../src/core/threemf_read.js';
 import { splitColors, layoutPlates, applyPose, DEFAULT_SPLIT } from '../src/core/colorsplit.js';
 import { exportFiles } from '../src/core/colorsplit_export.js';
@@ -228,6 +228,42 @@ check(!rc.warnings.some((t) => /piezas \(paredes/.test(t)), 'no "base split" war
     }
   }
   check(under < 0.4 && far < 0.3, `knife edge: no cover on the white underside (${under.toFixed(2)} mm², up to x ${far.toFixed(2)} mm)`);
+}
+{
+  // irregular mesh (slivers, noisy normals and wall thickness): the cover floor is smoothed over the patch instead of
+  // offsetting each vertex on its own, and slivers do not collapse it -> no spikes, no near-zero spots in the covers
+  const rr = splitColors(w, read3MF(paintedRoughShell3MF()), {}, () => {});
+  const th = [];
+  for (const p of rr.parts.filter((q) => q.kind === 'cover')) {
+    const m = toMan(p.mesh);
+    for (let a = 0; a < 360; a += 1.5) for (let z = -4; z <= 4; z += 0.5) {
+      const r = Math.sqrt(400 - z * z), d = [(Math.cos((a * Math.PI) / 180) * r) / 20, (Math.sin((a * Math.PI) / 180) * r) / 20, z / 20];
+      const hits = m.rayCast(d.map((x) => x * 20.5), d.map((x) => x * 15)).map((h) => h.distance * 5.5).sort((x, y) => x - y);
+      if (hits.length >= 2) th.push(hits[hits.length - 1] - hits[0]);
+    }
+  }
+  th.sort((x, y) => x - y);
+  const p1 = th[Math.floor(th.length * 0.01)];
+  check(th.length > 1000 && p1 > 0.4, `rough mesh: cover floors stay smooth (thickness p1 ${p1.toFixed(2)} mm, ${th.length} samples)`);
+  // thin bow wing: the core's outline follows the wing, not the voxel staircase (few sharp folds in the core)
+  const rw2 = splitColors(w, read3MF(paintedWing3MF()), {}, () => {});
+  const { V, T } = rw2.parts.find((p) => p.kind === 'body').mesh;
+  const N = [], A2 = [], em = new Map();
+  let sharp = 0;
+  for (let t = 0; t < T.length / 3; t++) {
+    const a = T[t * 3] * 3, b = T[t * 3 + 1] * 3, c = T[t * 3 + 2] * 3;
+    const u = [0, 1, 2].map((k) => V[b + k] - V[a + k]), v = [0, 1, 2].map((k) => V[c + k] - V[a + k]);
+    const n = [u[1] * v[2] - u[2] * v[1], u[2] * v[0] - u[0] * v[2], u[0] * v[1] - u[1] * v[0]], l = Math.hypot(...n) || 1;
+    N.push(n.map((x) => x / l)); A2.push(l / 2);
+    if ((V[a + 2] + V[b + 2] + V[c + 2]) / 3 < 12) continue;
+    for (let k = 0; k < 3; k++) {
+      const p = T[t * 3 + k], q = T[t * 3 + ((k + 1) % 3)], key = Math.min(p, q) * 1e7 + Math.max(p, q);
+      if (!em.has(key)) { em.set(key, t); continue; }
+      const o2 = em.get(key);
+      if (A2[o2] > 1e-3 && A2[t] > 1e-3 && N[o2][0] * N[t][0] + N[o2][1] * N[t][1] + N[o2][2] * N[t][2] < 0.5) sharp++;
+    }
+  }
+  check(sharp < 160, `thin wing: smooth core outline, no voxel staircase (${sharp} folds > 60°)`);
 }
 const exc = exportFiles(rc, { bedW: 120, bedH: 100, title: 'test' });
 const txt = new TextDecoder().decode(exc.files.find((f) => f.name.endsWith('.txt')).data);

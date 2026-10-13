@@ -113,3 +113,42 @@ export function paintedFloatingBall3MF() {
 </model>`;
   return zipSync({ '3D/3dmodel.model': strToU8(xml), '[Content_Types].xml': strToU8('<Types/>') });
 }
+
+// Hollow white sphere (outer r 20, wall ~2.2 mm) with an irregular mesh (vertices jittered along the surface: slivers, noisy
+// normals and wall thickness, like a real exported model) and a pink band |z| < 6: the cover floors must stay smooth.
+export function paintedRoughShell3MF() {
+  let seed = 7;
+  const rnd = () => (seed = (seed * 16807) % 2147483647) / 2147483647;
+  const out = icosphere(20, 4), inn = icosphere(17.8, 3);
+  out.V = out.V.map((p) => { const q = p.map((x) => x + (rnd() - 0.5) * 2.4); const l = Math.hypot(...q); return q.map((x) => (x / l) * 20); });
+  inn.V = inn.V.map((p) => { const k = (17.8 + (rnd() - 0.5)) / Math.hypot(...p); return p.map((x) => x * k); });
+  const V = [...out.V, ...inn.V], F = [...out.F, ...inn.F.map(([a, b, c]) => [a + out.V.length, c + out.V.length, b + out.V.length])];
+  const paint = (f, i) => { const z = f.reduce((a, j) => a + V[j][2], 0) / 3; return i < out.F.length && Math.abs(z) < 6 ? 1 : 0; };
+  const xml = `<?xml version="1.0" encoding="UTF-8"?>
+<model unit="millimeter" xmlns="http://schemas.microsoft.com/3dmanufacturing/core/2015/02">
+<resources>
+<basematerials id="1"><base name="Blanco" displaycolor="#F4F4F4"/><base name="Rosa" displaycolor="#E8AFCF"/></basematerials>
+<object id="2" type="model" pid="1" pindex="0"><mesh><vertices>${V.map((p) => `<vertex x="${p[0]}" y="${p[1]}" z="${p[2]}"/>`).join('')}</vertices><triangles>${F.map((f, i) => `<triangle v1="${f[0]}" v2="${f[1]}" v3="${f[2]}" pid="1" p1="${paint(f, i)}"/>`).join('')}</triangles></mesh></object>
+</resources>
+<build><item objectid="2"/></build>
+</model>`;
+  return zipSync({ '3D/3dmodel.model': strToU8(xml), '[Content_Types].xml': strToU8('<Types/>') });
+}
+
+// White 40x30x10 base with a thin green wing (ellipsoid 28 x 6.4 x 20, turned 29 deg) standing on it, like a bow's loop:
+// its base-colour core is a thin plate whose outline must not follow the voxel grid (staircase).
+export function paintedWing3MF() {
+  const base = box([0, 0, 5], [40, 30, 10]), wing = icosphere(1, 4), ca = Math.cos(0.5), sa = Math.sin(0.5);
+  wing.V = wing.V.map(([x, y, z]) => [x * 14 * ca - y * 3.2 * sa, x * 14 * sa + y * 3.2 * ca, z * 10 + 19.5]);
+  const meshXML = (m) => `<mesh><vertices>${m.V.map((p) => `<vertex x="${p[0]}" y="${p[1]}" z="${p[2]}"/>`).join('')}</vertices><triangles>${m.F.map((f) => `<triangle v1="${f[0]}" v2="${f[1]}" v3="${f[2]}"/>`).join('')}</triangles></mesh>`;
+  const xml = `<?xml version="1.0" encoding="UTF-8"?>
+<model unit="millimeter" xmlns="http://schemas.microsoft.com/3dmanufacturing/core/2015/02">
+<resources>
+<basematerials id="1"><base name="Blanco" displaycolor="#F4F4F4"/><base name="Verde" displaycolor="#8ADFBD"/></basematerials>
+<object id="2" type="model" pid="1" pindex="0">${meshXML(base)}</object>
+<object id="3" type="model" pid="1" pindex="1">${meshXML(wing)}</object>
+</resources>
+<build><item objectid="2"/><item objectid="3"/></build>
+</model>`;
+  return zipSync({ '3D/3dmodel.model': strToU8(xml), '[Content_Types].xml': strToU8('<Types/>') });
+}
