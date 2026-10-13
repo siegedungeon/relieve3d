@@ -25,6 +25,8 @@ export const DEFAULT_SPLIT = {
   labels: true, // engrave each inlay's number (mirrored) on its hidden glued face
   minCover: 20, // covers: colour pieces smaller than this (mm³) are not printed, the base keeps that spot
   minFragment: 100, // plane mode: detached inlay fragments below this volume (mm³) are not printed
+  solidDepth: 1.6, // covers mode: thickness of the colour cover over a solid part (the rest is base-colour core) (mm)
+  bridgeInset: 2.5, // covers mode: the post joining a solid part's core to the base stays this far inside its silhouette (mm)
   solidCovers: true, // covers mode: a solid colour part (a bow) gets a base-colour core fused to the base + glued colour covers
   planeCut: true, // cut everything by a vertical plane into a front and a back half: every colour piece slides in
   //                 straight from the front or from the back, and the pieces split exactly at the cut
@@ -1090,7 +1092,7 @@ function blur(G, F, passes = 2) {
 function coverSolids({ w, o, M, solids, solidMans, parts, cutAxis, keep, progress }) {
   const { Manifold } = w;
   progress('Covers: núcleo de las piezas sólidas', 0.8);
-  const t = o.depth, c = Math.max(0.05, o.clearance / 2), BRIDGE = 12;
+  const t = o.solidDepth ?? o.depth, c = Math.max(0.05, o.clearance / 2), BRIDGE = 12;
   const ai = cutAxis[0] ? 0 : cutAxis[1] ? 1 : 2, sg = cutAxis[ai] > 0 ? 1 : -1;
   const bodyIdx = parts.map((p, i) => (p.kind === 'body' ? i : -1)).filter((i) => i >= 0);
   const cored = [], cores = [];
@@ -1198,6 +1200,17 @@ function coverSolids({ w, o, M, solids, solidMans, parts, cutAxis, keep, progres
     const bS = { min: b0.min.map((x) => x - 0.5), max: b0.max.map((x) => x + 0.5) };
     const cav = keep(keep(Manifold.levelSet(sdf, bS, edge, -c)).intersect(S));
     let core = keep(keep(Manifold.levelSet(sdf, bS, edge, 0)).intersect(S));
+    // the bridge stays a post hidden under the part: pulled back from the part's silhouette (seen from the side, a
+    // white fill there hides the base colour behind the gap, and it meets the base at a grazing angle -> sierras)
+    for (let p = 0, q0 = Math.round(o.bridgeInset / h); p < q0; p++) for (const k of [0, 1, 2]) {
+      if (k === dir.k) continue;
+      const src = bridge.slice(), sk = st[k];
+      for (let i = 0; i < G.N; i++) {
+        if (!src[i]) continue;
+        const q = Math.floor(i / sk) % G.n[k];
+        if (q === 0 || q === G.n[k] - 1 || !src[i - sk] || !src[i + sk]) bridge[i] = 0;
+      }
+    }
     if (bridge.some((x) => x)) {
       const fB = sampler(G, signed(bridge), -h);
       const br = keep(keep(keep(Manifold.levelSet(fB, boxOf(bridge), edge, 0)).subtract(S)).subtract(M));
@@ -1838,7 +1851,7 @@ function buildCovers(ctx) {
   }
 
   // closed shell between the surface patch {h > 0} (pushed e out) and its copy t(v) inside, walls along the normals
-  const shell = (H, e = 0.4, extra = 0) => {
+  const shell = (H, e = 0.4, extra = 0, fixed = null) => {
     const h = H.v, VN = H.n || VNg;
     const key = new Map(), P2 = [], NN = [], TT = [], tops = [];
     const vid = (k, a, b, s) => {
@@ -1847,7 +1860,7 @@ function buildCovers(ctx) {
       i = P2.length / 3;
       key.set(k, i);
       for (let j = 0; j < 3; j++) { P2.push(X[a * 3 + j] + (X[b * 3 + j] - X[a * 3 + j]) * s); NN.push(VN[a * 3 + j] + (VN[b * 3 + j] - VN[a * 3 + j]) * s); }
-      TT.push(tv[a] + (tv[b] - tv[a]) * s + extra);
+      TT.push(fixed ?? tv[a] + (tv[b] - tv[a]) * s + extra);
       return i;
     };
     for (let t = 0; t < nT; t++) {
@@ -1936,8 +1949,11 @@ function buildCovers(ctx) {
     // a cover face lying on visible model surface outside its own patch is the cover showing through a wall thinner
     // than itself (a ledge or fin beside a tab): that bit is cut off and stays in the base colour
     const mzTop = M.boundingBox().max[2] + 5;
+    // colour field (not the piece's own field: the other half of a cover split at the plane is not foreign surface)
+    const colD = fields.find((f) => f.color === pc.color).d.v;
+    const rawAt = (v) => Math.max(...(twins.get(vOrig[v]) || [v]).map((x) => colD[x]));
     const pokeCut = (m0) => {
-      const mesh = m0.getMesh(), np = mesh.numProp, P = mesh.vertProperties, T = mesh.triVerts, cut = [];
+      const mesh = m0.getMesh(), np = mesh.numProp, P = mesh.vertProperties, T = mesh.triVerts, seeds = new Set();
       for (let i = 0; i < T.length; i += 3) {
         const q = [0, 1, 2].map((k) => [P[T[i + k] * np], P[T[i + k] * np + 1], P[T[i + k] * np + 2]]);
         const nn = cross(sub(q[1], q[0]), sub(q[2], q[0])), l = Math.hypot(...nn);
@@ -1956,14 +1972,31 @@ function buildCovers(ctx) {
         // the face itself is exposed (just outside it is outside the model), not buried under a skin of base
         const qf = add(c, scl(n, 0.03));
         if (M.rayCast(qf, [qf[0] + 0.0123, qf[1] + 0.0071, mzTop]).length % 2) continue;
-        const g = q.map((p) => add(p, scl(sub(p, c), 0.15 / Math.max(0.05, Math.hypot(...sub(p, c))))));
-        cut.push(Manifold.hull([...g.map((p) => add(p, scl(n, 0.1))), ...g.map((p) => sub(p, scl(n, 0.6)))]));
+        seeds.add(u);
       }
-      // many hits mean the shell just hugs a split crease, not a thin wall: unioning them all is unstable
-      if (!cut.length || cut.length > 40) return [m0];
-      const U = keep(Manifold.union(cut.map(keep)));
-      back.push(keep(m0.intersect(U)));
-      return keep(m0.subtract(U)).decompose().map(keep);
+      if (!seeds.size) return [m0];
+      // ONE smooth cut: a thin shell under that foreign surface (a few rings around the hits, so it reaches the crease
+      // where both surfaces meet), bounded by the cover's own smooth border field -> a clean edge, no per-triangle teeth
+      const inQ = new Uint8Array(nV);
+      let ring = [...seeds];
+      for (const v of ring) inQ[v] = 1;
+      for (let r = 0; r < 3; r++) {
+        const nx = [];
+        for (const v of ring) {
+          for (let k = off[v]; k < off[v + 1]; k++) if (!inQ[adj[k]]) { inQ[adj[k]] = 1; nx.push(adj[k]); }
+          for (const u of twins.get(vOrig[v]) || []) if (!inQ[u]) { inQ[u] = 1; nx.push(u); }
+        }
+        ring = nx;
+      }
+      const fv = new Float64Array(nV).fill(-1);
+      for (let v = 0; v < nV; v++) if (inQ[v] && dvis[v] === 0) fv[v] = 0.35 - rawAt(v) || -1e-6;
+      const cutSh = shell({ v: fv, at: (a, b, s2) => fv[a] + (fv[b] - fv[a]) * s2 }, 0.3, 0, 0.6);
+      if (!cutSh) return [m0];
+      const inn = keep(m0.intersect(cutSh));
+      // most of the cover inside the cut: it just hugs a split crease (mitre), not a thin wall
+      if (inn.volume() > 0.3 * m0.volume()) return [m0];
+      back.push(inn);
+      return keep(m0.subtract(cutSh)).decompose().map(keep);
     };
     // crumbs and the zero-volume sheets a boolean leaves along shared faces go to the base before anything else
     const comps = [];

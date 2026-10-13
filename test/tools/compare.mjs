@@ -20,6 +20,8 @@ const MM = +flag('mm', 0.1), TOL = 2, MINPX = 6;
 const VIEWS = {
   front: [0, 1, 0], back: [0, -1, 0], left: [1, 0, 0], right: [-1, 0, 0], top: [0, 0, -1], bottom: [0, 0, 1],
   front_l: [0.6, 0.6, -0.5], front_r: [-0.6, 0.6, -0.5], back_l: [0.6, -0.6, -0.5], back_r: [-0.6, -0.6, -0.5],
+  // grazing views into the crevices under / behind parts sitting on the body (a bow on a ball)
+  under_f: [0, 0.6, 0.8], under_b: [0, -0.6, 0.8], over_b: [0, -0.6, -0.8], over_f: [0, 0.6, -0.8],
 };
 const views = String(flag('views', Object.keys(VIEWS).join(','))).split(',');
 

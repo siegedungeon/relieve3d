@@ -215,6 +215,19 @@ check(!rc.warnings.some((t) => /piezas \(paredes/.test(t)), 'no "base split" war
   let lo = Infinity;
   for (const p of cv) for (let i = 0; i < p.mesh.V.length; i += 3) lo = Math.min(lo, p.mesh.V[i]);
   check(cv.length >= 1 && lo < 0.1, `knife edge: wedge cover reaches the tip (${cv.length} cover, gap ${lo.toFixed(3)} mm)`);
+  // ...but it doesn't poke through the white underside: one smooth cut keeps the cover off the foreign visible surface
+  // (per-triangle cuts left green teeth on it and jagged white bits in the base -> sierras)
+  let under = 0, far = 0;
+  for (const p of cv) {
+    const { V, T } = p.mesh;
+    for (let i = 0; i < T.length; i += 3) {
+      const a = T[i] * 3, b = T[i + 1] * 3, c = T[i + 2] * 3;
+      const u = [0, 1, 2].map((k) => V[b + k] - V[a + k]), v = [0, 1, 2].map((k) => V[c + k] - V[a + k]);
+      const n = [u[1] * v[2] - u[2] * v[1], u[2] * v[0] - u[0] * v[2], u[0] * v[1] - u[1] * v[0]], l = Math.hypot(...n);
+      if (n[2] / (l || 1) < -0.99 && (V[a + 2] + V[b + 2] + V[c + 2]) / 3 < 0.01) { under += l / 2; far = Math.max(far, V[a], V[b], V[c]); }
+    }
+  }
+  check(under < 0.4 && far < 0.3, `knife edge: no cover on the white underside (${under.toFixed(2)} mm², up to x ${far.toFixed(2)} mm)`);
 }
 const exc = exportFiles(rc, { bedW: 120, bedH: 100, title: 'test' });
 const txt = new TextDecoder().decode(exc.files.find((f) => f.name.endsWith('.txt')).data);
