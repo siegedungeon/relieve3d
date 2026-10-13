@@ -37,8 +37,28 @@ else {
   const opts = { ...(flag('mode') ? { mode: flag('mode') } : {}), ...(flag('opts') ? JSON.parse(flag('opts')) : {}) };
   const r = splitColors(w, model, opts, () => {});
   console.log(`split ${((Date.now() - t0) / 1000).toFixed(1)} s, ${r.parts.length} parts, warnings: ${r.warnings.join(' | ') || '-'}`);
-  parts = r.parts.map((p) => ({ kind: p.kind, color: p.color, V: Array.from(p.mesh.V, (x) => Math.round(x * 1e4) / 1e4), T: Array.from(p.mesh.T) }));
+  parts = r.parts.map((p) => ({ kind: p.kind, color: p.color, n: p.n, fromSolid: p.fromSolid, backCover: p.backCover, V: Array.from(p.mesh.V, (x) => Math.round(x * 1e4) / 1e4), T: Array.from(p.mesh.T) }));
   fs.writeFileSync(cache, JSON.stringify(parts));
+}
+let fit = [];
+// ---- fit: the covers of solid parts (a bow) slide straight off the base's core along their direction, 10 mm clear
+// (thin covers sit in flush recesses and are pressed in, so they are not checked)
+{
+  const w = await Module(); w.setup();
+  const toM = (p) => new w.Manifold(new w.Mesh({ numProp: 3, vertProperties: Float32Array.from(p.V), triVerts: Uint32Array.from(p.T) }));
+  const body = parts.filter((p) => p.kind === 'body').map(toM), B = body.length > 1 ? w.Manifold.union(body) : body[0];
+  const rows = [];
+  parts.forEach((p, i) => {
+    if (p.kind !== 'cover' || !p.n || !p.fromSolid) return;
+    const m = toM(p);
+    let hit = 0;
+    for (const d of [0.3, 1, 3, 6, 10]) { const t = m.translate(p.n.map((x) => x * d)), I = t.intersect(B); hit = Math.max(hit, I.volume()); t.delete(); I.delete(); }
+    m.delete();
+    rows.push({ i, hit, solid: !!p.fromSolid, back: !!p.backCover });
+  });
+  const bad = rows.filter((r) => r.hit > 2);
+  console.log(`fit: ${rows.length} solid-part covers, ${bad.length} catch on the base` + (bad.length ? ': ' + bad.map((r) => `#${r.i}${r.solid ? (r.back ? ' (moño atrás)' : ' (moño)') : ''} ${r.hit.toFixed(2)} mm³`).join(', ') : ''));
+  fit = rows;
 }
 const orig = model.parts.map((p) => ({ V: p.V, T: p.T, tc: p.tc }));
 // colour parts win depth ties (a cover face lying on the base's surface is a cover showing there)
@@ -157,6 +177,7 @@ for (const v of views) {
   });
   console.log(`${v.padEnd(8)} ${report.views[v].mismatchPct}% (${report.views[v].mismatchMM2} mm², ${d.clusters.length} zonas)`);
 }
+report.fit = fit;
 report.mismatchPct = +((100 * totalBad) / Math.max(1, totalCov)).toFixed(3);
 fs.writeFileSync(path.join(out, 'report.json'), JSON.stringify(report, null, 1));
 console.log(`TOTAL ${report.mismatchPct}% of the visible surface differs → ${out}`);

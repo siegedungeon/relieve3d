@@ -95,3 +95,21 @@ export function paintedWedge3MF() {
 </model>`;
   return zipSync({ '3D/3dmodel.model': strToU8(xml), '[Content_Types].xml': strToU8('<Types/>') });
 }
+
+// White 40x30x10 base with a green ball (r 8) barely touching it (sunk 0.5 mm, like a bow's knot over the head): the base holds
+// the ball's core, and the ball's single cover has to lift off its round core.
+export function paintedFloatingBall3MF() {
+  const base = box([0, 0, 5], [40, 30, 10]), ball = icosphere(8, 3);
+  ball.V = ball.V.map(([x, y, z]) => [x, y, z + 17.5]);
+  const meshXML = (m) => `<mesh><vertices>${m.V.map((p) => `<vertex x="${p[0]}" y="${p[1]}" z="${p[2]}"/>`).join('')}</vertices><triangles>${m.F.map((f) => `<triangle v1="${f[0]}" v2="${f[1]}" v3="${f[2]}"/>`).join('')}</triangles></mesh>`;
+  const xml = `<?xml version="1.0" encoding="UTF-8"?>
+<model unit="millimeter" xmlns="http://schemas.microsoft.com/3dmanufacturing/core/2015/02">
+<resources>
+<basematerials id="1"><base name="Blanco" displaycolor="#F4F4F4"/><base name="Verde" displaycolor="#8ADFBD"/></basematerials>
+<object id="2" type="model" pid="1" pindex="0">${meshXML(base)}</object>
+<object id="3" type="model" pid="1" pindex="1">${meshXML(ball)}</object>
+</resources>
+<build><item objectid="2"/><item objectid="3"/></build>
+</model>`;
+  return zipSync({ '3D/3dmodel.model': strToU8(xml), '[Content_Types].xml': strToU8('<Types/>') });
+}

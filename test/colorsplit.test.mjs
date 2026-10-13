@@ -1,7 +1,7 @@
 // Color separation: synthetic multicolor 3MF (painted sphere + solid colored block sunk into it)
 // → single-color parts that are watertight, don't overlap, rebuild the original and lie on the bed.
 import Module from 'manifold-3d';
-import { paintedSphere3MF, paintedBox3MF, paintedWedge3MF } from './fixtures/painted_sphere.mjs';
+import { paintedSphere3MF, paintedBox3MF, paintedWedge3MF, paintedFloatingBall3MF } from './fixtures/painted_sphere.mjs';
 import { read3MF } from '../src/core/threemf_read.js';
 import { splitColors, layoutPlates, applyPose, DEFAULT_SPLIT } from '../src/core/colorsplit.js';
 import { exportFiles } from '../src/core/colorsplit_export.js';
@@ -123,9 +123,10 @@ console.log(`  ${((Date.now() - t1) / 1000).toFixed(1)} s, ${rc.parts.length} pa
 const ck = (k, c) => rc.parts.filter((p) => p.kind === k && (c == null || p.color === c));
 check(rc.covers && !rc.cut, 'covers mode is the default');
 check(ck('body').length === 1 && ck('body')[0].color === WHITE, `one intact white base (${ck('body').length})`);
-// a solid colour part (the green block) is not printed solid: a white core fused to the base + front/back covers
-const gc = ck('cover', GREEN);
-check(ck('solid').length === 0 && gc.length === 2 && gc.every((p) => p.fromSolid), `green block → white core + 2 green covers (${gc.length})`);
+// a solid colour part (the green block) is not printed solid: a white core fused to the base + ONE green cover
+// (a cap over it, not split in halves); thin back covers only where its back is left exposed
+const gc = ck('cover', GREEN), gcFront = gc.filter((p) => !p.backCover);
+check(ck('solid').length === 0 && gcFront.length === 1 && gc.length <= 3 && gc.every((p) => p.fromSolid), `green block → white core + 1 green cap (${gcFront.length} cap, ${gc.length - gcFront.length} back)`);
 check(ck('cover', PINK).length >= 1 && ck('cover', PINK).length <= 6, `pink covers: ${ck('cover', PINK).length}`);
 check(ck('inlay').length === 0, 'no inlays in covers mode');
 const cm = rc.parts.map((p) => toMan(p.mesh));
@@ -193,6 +194,21 @@ check(!rc.warnings.some((t) => /piezas \(paredes/.test(t)), 'no "base split" war
   check(cv.length === 1 && gap < 0.02, `crease border: top cover reaches the box edges (${cv.length} cover, gap ${gap.toFixed(3)} mm)`);
 }
 {
+  // round colour part barely touching the base (a bow's knot over the head): the base holds its core, the part is ONE
+  // front cover (plus a back cover where its back is exposed) and every cover lifts straight off the core: no film of
+  // cover left under the core, no back skin left on the front cover, locking it in place
+  {
+    const fb = read3MF(paintedFloatingBall3MF());
+    const rf = splitColors(w, fb, {}, () => {});
+    const body = rf.parts.filter((p) => p.kind === 'body'), cv = rf.parts.filter((p) => p.kind === 'cover');
+    const bM = toMan(body[0].mesh), ballM = toMan({ V: fb.parts[1].V, T: fb.parts[1].T });
+    const pieces = bM.decompose().filter((q) => q.volume() > 1).length, coreV = bM.intersect(ballM).volume();
+    check(body.length === 1 && pieces === 1 && coreV > 300, `ball: the base holds its core (${pieces} piece, core ${coreV.toFixed(0)} mm³)`);
+    const cap = cv.filter((p) => !p.backCover);
+    let hit = 0;
+    for (const p of cv) { const m = toMan(p.mesh); for (const d of [0.3, 1, 2, 4, 8, 16]) hit = Math.max(hit, m.translate(p.n.map((x) => x * d)).intersect(bM).volume()); }
+    check(cap.length === 1 && cv.length <= 3 && hit < 0.05, `ball: one cover (+${cv.length - cap.length} back) lifts off the core (max hit ${hit.toFixed(3)} mm³)`);
+  }
   // knife edge: the cover runs out to the tip of a wedge instead of leaving base-colour notches along it
   const rw = splitColors(w, read3MF(paintedWedge3MF()), {}, () => {});
   const cv = rw.parts.filter((p) => p.kind === 'cover');

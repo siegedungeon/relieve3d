@@ -1052,8 +1052,9 @@ function edt(G, mask) {
   pass(nx, ny * nz, (c, q) => q + c * nx);
   pass(ny, nx * nz, (c, q) => (c % nx) + q * nx + Math.floor(c / nx) * nx * ny);
   pass(nz, nx * ny, (c, q) => c + q * nx * ny);
-  for (let i = 0; i < NN; i++) D[i] = mask[i] ? (Math.sqrt(D[i]) - 0.5) * G.h : 0;
-  return D;
+  const R = new Float32Array(NN);
+  for (let i = 0; i < NN; i++) R[i] = mask[i] ? (Math.sqrt(D[i]) - 0.5) * G.h : 0;
+  return R;
 }
 
 // trilinear lookup of a node field (value `out` beyond the grid)
@@ -1069,12 +1070,27 @@ function sampler(G, F, out) {
   };
 }
 
-// covers mode, solid colour parts (a bow): the inside becomes a base-colour core fused to the base, the colour is a
-// shell of cover thickness cut by one vertical plane into a front and a back cover that slide onto the core
+// box blur (3 taps per axis, `passes` times) of a node field: softens the steps of fields built from voxel masks
+function blur(G, F, passes = 2) {
+  const st = [1, G.n[0], G.n[0] * G.n[1]], tmp = new Float32Array(F.length);
+  for (let p = 0; p < passes; p++) for (let k = 0; k < 3; k++) {
+    const s = st[k];
+    for (let i = 0; i < F.length; i++) {
+      const c = Math.floor(i / s) % G.n[k];
+      tmp[i] = (F[c > 0 ? i - s : i] + F[i] + F[c < G.n[k] - 1 ? i + s : i]) / 3;
+    }
+    F.set(tmp);
+  }
+  return F;
+}
+
+// covers mode, solid colour parts (a bow): the base colour gets the whole shape (a core fused to the base, plus a
+// bridge filling the gap between the part's back and the base behind it, so it is glued over a wide face), and the
+// colour is ONE cover: a cap of cover thickness over the side seen from its slide direction, glued onto the core
 function coverSolids({ w, o, M, solids, solidMans, parts, cutAxis, keep, progress }) {
   const { Manifold } = w;
   progress('Covers: núcleo de las piezas sólidas', 0.8);
-  const t = o.depth, c = Math.max(0.05, o.clearance / 2);
+  const t = o.depth, c = Math.max(0.05, o.clearance / 2), BRIDGE = 12;
   const ai = cutAxis[0] ? 0 : cutAxis[1] ? 1 : 2, sg = cutAxis[ai] > 0 ? 1 : -1;
   const bodyIdx = parts.map((p, i) => (p.kind === 'body' ? i : -1)).filter((i) => i >= 0);
   const cored = [], cores = [];
@@ -1084,22 +1100,19 @@ function coverSolids({ w, o, M, solids, solidMans, parts, cutAxis, keep, progres
     const vol = new Map();
     own.forEach((s) => vol.set(s.dom, (vol.get(s.dom) || 0) + Math.abs(s.vol)));
     const color = [...vol].sort((a, b) => b[1] - a[1])[0][0];
-    const b0 = S.boundingBox(), pad = t + 2;
+    const b0 = S.boundingBox(), pad = t + 2, padB = BRIDGE + 2;
     const bb = { min: b0.min.map((x) => x - pad), max: b0.max.map((x) => x + pad) };
+    // room behind the part for the bridge (along both slide candidates)
+    bb.min[ai] = Math.min(bb.min[ai], b0.min[ai] - (sg > 0 ? padB : 0)); bb.max[ai] = Math.max(bb.max[ai], b0.max[ai] + (sg < 0 ? padB : 0));
+    bb.min[2] = Math.min(bb.min[2], b0.min[2] - padB);
     const h = Math.max(0.15, Math.cbrt(((bb.max[0] - bb.min[0]) * (bb.max[1] - bb.min[1]) * (bb.max[2] - bb.min[2])) / 6e6));
-    const G = voxGrid(bb, h), [nx, ny, nz] = G.n, st = [1, nx, nx * ny];
+    const G = voxGrid(bb, h), [nx, ny] = G.n, st = [1, nx, nx * ny];
     const ext = [0, 1, 2].map((k) => bb.max[k] - bb.min[k] + 2 * pad);
     const Mb = keep(M.intersect(keep(Manifold.cube(ext).translate(bb.min.map((x) => x - pad)))));
     const inS = voxelize(G, S.getMesh()), inM = voxelize(G, Mb.getMesh()), inU = inS.map((x, i) => x | inM[i]);
     // depth inside solid + base: where the solid sinks into the base the core runs on into it
     const DU = edt(G, inU);
     for (let i = 0; i < G.N; i++) if (!inU[i]) DU[i] = -h;
-    // each half slides off along its own direction: out along the axis, or up when the base sits behind it.
-    // Core in front of its own cover (an undercut) goes to the cover instead
-    const mid = (dot(b0.min, cutAxis) + dot(b0.max, cutAxis)) / 2;
-    const isFront = (i) => (G.o[ai] + (Math.floor(i / st[ai]) % G.n[ai]) * h) * sg > mid;
-    const isCov = (i, half) => inS[i] && !inM[i] && DU[i] < t && isFront(i) === (half === 0);
-    // scan every line along axis k in direction s (+1/-1), calling f(i) in order
     const scan = (k, s, start, f) => {
       const n2 = [0, 1, 2].filter((j) => j !== k), len = G.n[k];
       for (let a = 0; a < G.n[n2[0]]; a++) for (let b = 0; b < G.n[n2[1]]; b++) {
@@ -1108,49 +1121,108 @@ function coverSolids({ w, o, M, solids, solidMans, parts, cutAxis, keep, progres
         for (let q = 0; q < len; q++) f(b0i + (s > 0 ? q : len - 1 - q) * st[k]);
       }
     };
-    const dirs = [];
-    for (const half of [0, 1]) {
-      const opts = [[ai, half === 0 ? sg : -sg], [2, 1]];
-      let best = null;
-      for (const [k, s] of opts) {
-        let seenM = false, blocked = 0;
-        scan(k, -s, () => { seenM = false; }, (i) => { if (inM[i] && !inS[i]) seenM = true; else if (seenM && isCov(i, half)) blocked++; });
-        if (!best || blocked < best.blocked * 0.7) best = { k, s, blocked };
-      }
-      dirs.push(best);
-    }
-    const forbid = new Uint8Array(G.N);
-    let nForbid = 0;
-    dirs.forEach(({ k, s }, half) => {
-      let flag = false;
-      scan(k, s, () => { flag = false; }, (i) => {
-        if (!inS[i] || inM[i]) return;
-        if (DU[i] < t) { if (isCov(i, half)) flag = true; } else if (flag && !forbid[i]) { forbid[i] = 1; nForbid++; }
+    // walking each line from the outside in (against the slide direction): the cap is the colour met before the
+    // first deep (>= t) node or base node; everything after it is core; the empty gap after the part up to the base
+    // (<= BRIDGE mm) is the bridge
+    const carve = (k, s, out) => {
+      let flag = false, gap = null, tail = null, white = 0, extN = 0, extL = [], run = [], wasS = false;
+      const maxGap = Math.round(BRIDGE / h);
+      // the shallow colour just before the part's back face: a back cover if nothing (no base) is right behind it.
+      // `back` marks a thick region (the back half of the line through the part, and a bit past it) so its blurred
+      // level set survives; the back cover is the cap inside it
+      const endTail = () => {
+        if (tail && out) {
+          for (const g of tail) out.force[g] = 0;
+          for (const g of extL) out.force[g] = 0;
+          for (let q = run.length >> 1; q < run.length; q++) out.back[run[q]] = 1;
+          for (const g of [...tail, ...extL]) out.back[g] = 1;
+        }
+        tail = null;
+      };
+      // the core mask runs on a few nodes past the part (clipped to it later): its level set then reaches the part's
+      // surface instead of fading just inside it, which would leave a film of cap under the core locking the cap in
+      const extend = (i) => { if (extN > 0 && out) { out.force[i] = 1; extL.push(i); extN--; } };
+      scan(k, -s, () => { endTail(); flag = false; gap = null; tail = null; extN = 0; extL = []; run = []; wasS = false; }, (i) => {
+        if (inM[i] && !inS[i]) { wasS = false; extend(i); if (gap && out) for (const g of gap) out.bridge[g] = 1; gap = null; tail = null; flag = true; return; }
+        if (inS[i]) {
+          if (gap && !wasS) { gap = null; tail = null; } // the part again behind a short gap: that tail is hidden
+          extN = 0; extL = [];
+          if (!wasS) run = [];
+          wasS = true;
+          if (DU[i] >= t) { flag = true; tail = null; }
+          if (flag) {
+            if (out) out.force[i] = 1;
+            run.push(i);
+            if (DU[i] < t && !inM[i]) { if (!out) white++; (tail || (tail = [])).push(i); } else tail = null;
+          }
+          gap = flag ? [] : null;
+          if (flag) extN = 8;
+          return;
+        }
+        wasS = false;
+        extend(i);
+        if (gap) { gap.push(i); if (gap.length > maxGap) { gap = null; endTail(); } }
       });
-    });
-    const fDepth = sampler(G, DU, -h);
-    let sdf = (p) => fDepth(p) - t - c;
-    if (nForbid) {
-      const Fin = edt(G, forbid), Fout = edt(G, forbid.map((x) => 1 - x));
-      for (let i = 0; i < G.N; i++) Fin[i] = forbid[i] ? -Fin[i] : Fout[i];
-      const fShadow = sampler(G, Fin, h);
-      sdf = (p) => Math.min(fDepth(p) - t - c, fShadow(p));
+      return white;
+    };
+    const cands = [[ai, sg], [2, 1]].map(([k, s]) => ({ k, s, white: carve(k, s, null) }));
+    const dir = cands[1].white < cands[0].white * 0.7 ? cands[1] : cands[0];
+    const force = new Uint8Array(G.N), bridge = new Uint8Array(G.N), back = new Uint8Array(G.N);
+    carve(dir.k, dir.s, { force, bridge, back });
+    // widen the back region sideways (not along the slide): its blurred edge has to reach past the core's silhouette,
+    // or the back of the outermost lines stays on the front cap, behind the core, locking it
+    for (let p = 0; p < 4; p++) for (const k of [0, 1, 2]) {
+      if (k === dir.k) continue;
+      const src = back.slice(), sk = st[k];
+      for (let i = 0; i < G.N; i++) {
+        if (src[i]) continue;
+        const q = Math.floor(i / sk) % G.n[k];
+        if ((q > 0 && src[i - sk]) || (q < G.n[k] - 1 && src[i + sk])) back[i] = 1;
+      }
     }
+    // signed, blurred mask fields (positive inside) -> smooth level sets
+    const signed = (mask) => {
+      const Fin = edt(G, mask), Fout = edt(G, mask.map((x) => 1 - x));
+      for (let i = 0; i < G.N; i++) Fin[i] = mask[i] ? Fin[i] : -Fout[i];
+      return blur(G, Fin, 5);
+    };
+    const fDepth = sampler(G, DU, -h), fForce = sampler(G, signed(force), -h);
+    const sdf = (p) => Math.max(fDepth(p) - t - c, fForce(p));
     const edge = Math.max(0.35, h * 1.5);
-    const cav = keep(keep(Manifold.levelSet(sdf, bb, edge, -c)).intersect(S));
-    const core = keep(keep(Manifold.levelSet(sdf, bb, edge, 0)).intersect(S));
+    // level sets only over the nodes they can be positive at (memory)
+    const boxOf = (mask) => {
+      const lo = [Infinity, Infinity, Infinity], hi = [-Infinity, -Infinity, -Infinity];
+      for (let i = 0; i < G.N; i++) if (mask[i]) { const q = [i % nx, Math.floor(i / nx) % ny, Math.floor(i / st[2])]; for (let k = 0; k < 3; k++) { lo[k] = Math.min(lo[k], q[k]); hi[k] = Math.max(hi[k], q[k]); } }
+      return { min: lo.map((x, k) => G.o[k] + x * h - 1), max: hi.map((x, k) => G.o[k] + x * h + 1) };
+    };
+    const bS = { min: b0.min.map((x) => x - 0.5), max: b0.max.map((x) => x + 0.5) };
+    const cav = keep(keep(Manifold.levelSet(sdf, bS, edge, -c)).intersect(S));
+    let core = keep(keep(Manifold.levelSet(sdf, bS, edge, 0)).intersect(S));
+    if (bridge.some((x) => x)) {
+      const fB = sampler(G, signed(bridge), -h);
+      const br = keep(keep(keep(Manifold.levelSet(fB, boxOf(bridge), edge, 0)).subtract(S)).subtract(M));
+      const brK = br.decompose().map(keep).filter((q) => q.volume() > 1);
+      if (brK.length) core = keep(core.add(keep(Manifold.union(brK))));
+    }
     // only core islands fused to the base: a loose island stays colour (a cover could not hold it in place)
     const keepC = core.decompose().map(keep).filter((q) => q.volume() > 1 && keep(q.intersect(M)).volume() > 0.5);
     if (!keepC.length) continue;
     const cavK = cav.decompose().map(keep).filter((q) => keepC.some((k) => keep(q.intersect(k)).volume() > 1e-3));
-    const shellM = keep(keep(S.subtract(keep(Manifold.union(cavK)))).subtract(M));
-    // front / back covers: one straight vertical cut through the middle of the part
-    shellM.splitByPlane(cutAxis, mid).forEach((half, si) => {
-      keep(half);
-      const up = [0, 0, 0];
-      up[dirs[si].k] = dirs[si].s;
-      for (const q of half.decompose().map(keep)) if (q.volume() >= 0.3) parts.push({ kind: 'cover', color, man: q, up, n: up, half: si, solidCover: true });
-    });
+    const capM = keep(keep(S.subtract(keep(Manifold.union(cavK)))).subtract(M));
+    const up = [0, 0, 0];
+    up[dir.k] = dir.s;
+    // back covers (slide on from behind) apart from the front cap
+    let backM = null;
+    if (back.some((x) => x)) {
+      const fBk = sampler(G, signed(back), -h);
+      backM = keep(capM.intersect(keep(Manifold.levelSet(fBk, boxOf(back), edge, 0))));
+    }
+    const front = backM ? keep(capM.subtract(backM)) : capM;
+    for (const q of front.decompose().map(keep)) if (q.volume() >= 0.3) parts.push({ kind: 'cover', color, man: q, up, n: up, solidCover: true });
+    if (backM) {
+      const dn = scl(up, -1);
+      for (const q of backM.decompose().map(keep)) if (q.volume() >= 0.3) parts.push({ kind: 'cover', color, man: q, up: dn, n: dn, solidCover: true, back: true });
+    }
     cored.push(...own);
     cores.push(...keepC);
   }
@@ -1179,7 +1251,7 @@ function finishParts({ w, o, model, parts, solids, base, keep, garbage, warnings
     const mesh = manifoldToMesh(p.man);
     // shells always print along their insertion axis: visible face on top (best finish), supports only under the glued face
     const up = p.kind === 'inlay' || p.kind === 'cover' ? p.up : p.up || bestUp(mesh);
-    return { kind: p.kind, color: p.color, mesh, up, volume: p.man.volume(), n: p.kind === 'inlay' || p.kind === 'cover' ? p.up : p.n, half: p.half, fromSolid: !!p.solidCover };
+    return { kind: p.kind, color: p.color, mesh, up, volume: p.man.volume(), n: p.kind === 'inlay' || p.kind === 'cover' ? p.up : p.n, half: p.half, fromSolid: !!p.solidCover, backCover: !!p.back };
   });
   const counters = {};
   for (const p of out) {
@@ -1797,9 +1869,27 @@ function buildCovers(ctx) {
     }
     if (!tops.length) return null;
     const n0 = P2.length / 3, VP = new Float32Array(n0 * 6);
+    const UN = new Float64Array(n0 * 3);
+    for (let i = 0; i < n0; i++) { const nv = norm([NN[i * 3], NN[i * 3 + 1], NN[i * 3 + 2]]); UN[i * 3] = nv[0]; UN[i * 3 + 1] = nv[1]; UN[i * 3 + 2] = nv[2]; }
+    // the inner copy may not fold over (normals converging at a knife edge / tight concave spot): where an inner
+    // triangle turns against its top triangle, the offset there shrinks until it does not (no self-intersecting
+    // shell -> no spikes left by the boolean)
+    for (let it = 0; it < 12; it++) {
+      let bad = 0;
+      const shrink = new Uint8Array(n0);
+      for (let i = 0; i < tops.length; i += 3) {
+        const q = [tops[i], tops[i + 1], tops[i + 2]];
+        const pt = (v) => [P2[v * 3], P2[v * 3 + 1], P2[v * 3 + 2]], pi = (v) => sub(pt(v), scl([UN[v * 3], UN[v * 3 + 1], UN[v * 3 + 2]], TT[v]));
+        const nt = cross(sub(pt(q[1]), pt(q[0])), sub(pt(q[2]), pt(q[0]))), ni = cross(sub(pi(q[1]), pi(q[0])), sub(pi(q[2]), pi(q[0])));
+        const lt = Math.hypot(...nt), li = Math.hypot(...ni);
+        if (lt < 1e-12) continue;
+        if (dot(nt, ni) < 0.2 * lt * li || li < 0.02 * lt) { bad++; for (const v of q) shrink[v] = 1; }
+      }
+      if (!bad) break;
+      for (let v = 0; v < n0; v++) if (shrink[v]) TT[v] *= 0.6;
+    }
     for (let i = 0; i < n0; i++) {
-      const nv = norm([NN[i * 3], NN[i * 3 + 1], NN[i * 3 + 2]]);
-      for (let j = 0; j < 3; j++) { VP[i * 3 + j] = P2[i * 3 + j] + nv[j] * e; VP[(n0 + i) * 3 + j] = P2[i * 3 + j] - nv[j] * TT[i]; }
+      for (let j = 0; j < 3; j++) { VP[i * 3 + j] = P2[i * 3 + j] + UN[i * 3 + j] * e; VP[(n0 + i) * 3 + j] = P2[i * 3 + j] - UN[i * 3 + j] * TT[i]; }
     }
     const dir = new Set();
     for (let i = 0; i < tops.length; i += 3) for (let k = 0; k < 3; k++) dir.add(tops[i + k] * 4194304 + tops[i + (k + 1) % 3]);
