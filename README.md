@@ -125,7 +125,10 @@ Convierte un modelo pintado por colores (3MF de Bambu Studio/MakerWorld, objetos
 npm install        # instala dependencias (y copia complementos de Three.js a src/vendor)
 npm start          # ejecuta la app
 npm test           # pruebas del pipeline y de mallas cerradas (watertight)
+npm run test:e2e   # flujo completo en la app real: separar colores 3D, logo y hablador
 npm run dist       # genera el instalador en dist/
 ```
+
+Cada error corregido queda cubierto por una prueba en `test/` (falla con el código anterior). Las pruebas E2E (`test/e2e/`) abren la app, recorren el módulo entero y exportan; capturas y archivos quedan en `test/out/e2e/`. Para probar un archivo propio: `node test/e2e/run.mjs colorsplit "C:\ruta\modelo.3mf"` (o `logo imagen.png`, `hablador mockup.png`).
 
 Estructura: `main.js` (proceso Electron), `preload.js`, `src/core/` (procesamiento de imagen, geometría y exportadores, sin dependencias del DOM), `src/view2d.js`, `src/viewer3d.js`, `src/app.js` (interfaz).

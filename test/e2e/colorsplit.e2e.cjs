@@ -1,0 +1,51 @@
+// E2E: "Separar colores 3D" — open a multicolor 3MF, split it, inspect views and plates, export.
+// Run through test/e2e/run.mjs (env: E2E_DIR output folder, E2E_INPUT 3MF file, R3D_AUTOSAVE_DIR export folder).
+const fs = require('fs');
+const path = require('path');
+module.exports = async ({ win, run, shot, wait }) => {
+  const D = process.env.E2E_DIR, exp = process.env.R3D_AUTOSAVE_DIR;
+  const errs = [];
+  win.webContents.on('console-message', (e) => { if ((e.level === 'error' || e.level >= 3) && !/WebGLProgram|disk_cache/.test(e.message)) errs.push(e.message); });
+  const log = (...a) => console.log('[e2e]', ...a);
+  const ok = (c, m) => log(c ? 'ok  ' : 'FAIL', m);
+  const S = async (n) => { win.show(); win.focus(); win.webContents.invalidate(); await wait(800); await shot(path.join(D, n + '.png')); };
+  await win.setSize(1500, 900); await wait(500);
+  await S('cs_00_home');
+  ok(await run(`(() => { const b = document.querySelector('[data-mod="colorsplit"]'); if (!b) return false; b.click(); return true; })()`), 'module card opens');
+  await wait(1500);
+  const b64 = fs.readFileSync(process.env.E2E_INPUT).toString('base64');
+  const name = path.basename(process.env.E2E_INPUT);
+  const loaded = JSON.parse(await run(`(async () => { const bin = atob('${b64}'); const u = new Uint8Array(bin.length); for (let i = 0; i < bin.length; i++) u[i] = bin.charCodeAt(i);
+    await window.__r3d.colorsplit.loadFile(new File([u], ${JSON.stringify(name)})); const c = window.__r3d.colorsplit;
+    return JSON.stringify({ palette: c.model.palette, names: c.model.names, split: !c.root.querySelector('[data-r=btnSplit]').disabled }); })()`));
+  log('load', JSON.stringify(loaded));
+  ok(loaded.palette.length >= 2 && loaded.split, `3MF read with ${loaded.palette.length} colours, split enabled`);
+  await wait(1500);
+  await S('cs_01_original');
+  const t0 = Date.now();
+  await run(`document.querySelector('#colorsplit [data-a=split]').click()`);
+  for (let i = 0; i < 600; i++) { if (await run(`!!window.__r3d.colorsplit.res && !window.__r3d.colorsplit._busy`)) break; await wait(1000); }
+  const res = JSON.parse(await run(`(() => { const c = window.__r3d.colorsplit, r = c.res; if (!r) return JSON.stringify({ error: document.querySelector('#colorsplit [data-r=status]').textContent });
+    const k = {}; for (const p of r.parts) k[p.kind] = (k[p.kind] || 0) + 1;
+    return JSON.stringify({ n: r.parts.length, k, warnings: r.warnings, covers: !!r.covers, plates: c.plates.length }); })()`));
+  log('split', ((Date.now() - t0) / 1000).toFixed(1) + ' s', JSON.stringify(res));
+  ok(!res.error && res.n > 0, `split produced ${res.n || 0} parts`);
+  ok(!res.covers || (res.k.body || 0) >= 1, 'covers mode keeps a base body');
+  ok(!(res.warnings || []).some((w) => /piezas \(paredes|no se pudieron/.test(w)), 'no broken-base / failed-cover warnings');
+  await S('cs_02_split');
+  await run(`(() => { const e = document.querySelector('#colorsplit [data-r=explode]'); e.value = 0; e.dispatchEvent(new Event('input', { bubbles: true })); })()`);
+  await S('cs_03_assembled');
+  await run(`(() => { const e = document.querySelector('#colorsplit [data-r=explode]'); e.value = 0.8; e.dispatchEvent(new Event('input', { bubbles: true })); document.querySelector('#colorsplit [data-pc="1"]')?.click(); })()`);
+  await S('cs_04_exploded');
+  await run(`document.querySelector('#colorsplit [data-tab=plates]').click()`);
+  await wait(1200);
+  await S('cs_05_plates');
+  log('plates', await run(`[...document.querySelectorAll('#colorsplit [data-r=plateSel] option')].map((o) => o.textContent).join(' | ')`));
+  await run(`window.__r3d.colorsplit.export()`);
+  await wait(3000);
+  const files = fs.existsSync(exp) ? fs.readdirSync(exp) : [];
+  log('files', files.join(', '));
+  ok(files.filter((f) => f.endsWith('.3mf')).length >= 2 && files.some((f) => f.endsWith('.txt')), 'plates 3MF + instructions exported');
+  ok(!errs.length, 'console errors: ' + (errs.join(' | ') || 'none'));
+  log('done');
+};

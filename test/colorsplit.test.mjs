@@ -1,7 +1,7 @@
 // Color separation: synthetic multicolor 3MF (painted sphere + solid colored block sunk into it)
 // → single-color parts that are watertight, don't overlap, rebuild the original and lie on the bed.
 import Module from 'manifold-3d';
-import { zipSync, strToU8 } from 'fflate';
+import { paintedSphere3MF } from './fixtures/painted_sphere.mjs';
 import { read3MF } from '../src/core/threemf_read.js';
 import { splitColors, layoutPlates, applyPose, DEFAULT_SPLIT } from '../src/core/colorsplit.js';
 import { exportFiles } from '../src/core/colorsplit_export.js';
@@ -9,42 +9,7 @@ import { exportFiles } from '../src/core/colorsplit_export.js';
 let fails = 0;
 const check = (ok, msg) => { console.log((ok ? 'ok   ' : 'FAIL ') + msg); if (!ok) fails++; };
 
-// icosphere
-function icosphere(r, sub) {
-  const t = (1 + Math.sqrt(5)) / 2;
-  let V = [[-1, t, 0], [1, t, 0], [-1, -t, 0], [1, -t, 0], [0, -1, t], [0, 1, t], [0, -1, -t], [0, 1, -t], [t, 0, -1], [t, 0, 1], [-t, 0, -1], [-t, 0, 1]];
-  let F = [[0, 11, 5], [0, 5, 1], [0, 1, 7], [0, 7, 10], [0, 10, 11], [1, 5, 9], [5, 11, 4], [11, 10, 2], [10, 7, 6], [7, 1, 8], [3, 9, 4], [3, 4, 2], [3, 2, 6], [3, 6, 8], [3, 8, 9], [4, 9, 5], [2, 4, 11], [6, 2, 10], [8, 6, 7], [9, 8, 1]];
-  const nrm = (p) => { const l = Math.hypot(...p); return p.map((x) => x / l); };
-  V = V.map(nrm);
-  for (let s = 0; s < sub; s++) {
-    const mid = new Map(), F2 = [];
-    const m = (a, b) => { const k = a < b ? a + ',' + b : b + ',' + a; if (!mid.has(k)) { V.push(nrm(V[a].map((x, i) => (x + V[b][i]) / 2))); mid.set(k, V.length - 1); } return mid.get(k); };
-    for (const [a, b, c] of F) { const ab = m(a, b), bc = m(b, c), ca = m(c, a); F2.push([a, ab, ca], [b, bc, ab], [c, ca, bc], [ab, bc, ca]); }
-    F = F2;
-  }
-  return { V: V.map((p) => p.map((x) => x * r)), F };
-}
-function box(c, s) {
-  const V = [];
-  for (let i = 0; i < 8; i++) V.push([c[0] + (i & 1 ? s[0] : -s[0]) / 2, c[1] + (i & 2 ? s[1] : -s[1]) / 2, c[2] + (i & 4 ? s[2] : -s[2]) / 2]);
-  const F = [[0, 2, 3], [0, 3, 1], [4, 5, 7], [4, 7, 6], [0, 1, 5], [0, 5, 4], [2, 6, 7], [2, 7, 3], [0, 4, 6], [0, 6, 2], [1, 3, 7], [1, 7, 5]];
-  return { V, F };
-}
-const sph = icosphere(20, 4);
-const blk = box([0, 0, 24], [14, 10, 12]); // green block sinking 6 mm into the top of the sphere
-// painted band: a pink stripe around the sphere (|z| < 6) + a pink cap at the bottom
-const paint = (f) => { const z = f.reduce((a, i) => a + sph.V[i][2], 0) / 3; return Math.abs(z) < 6 || z < -16 ? 1 : 0; };
-const meshXML = (m, attrs) => `<mesh><vertices>${m.V.map((p) => `<vertex x="${p[0]}" y="${p[1]}" z="${p[2]}"/>`).join('')}</vertices><triangles>${m.F.map((f, i) => `<triangle v1="${f[0]}" v2="${f[1]}" v3="${f[2]}"${attrs(f, i)}/>`).join('')}</triangles></mesh>`;
-const xml = `<?xml version="1.0" encoding="UTF-8"?>
-<model unit="millimeter" xmlns="http://schemas.microsoft.com/3dmanufacturing/core/2015/02">
-<resources>
-<basematerials id="1"><base name="Blanco" displaycolor="#F4F4F4"/><base name="Rosa" displaycolor="#E8AFCF"/><base name="Verde" displaycolor="#8ADFBD"/></basematerials>
-<object id="2" type="model" pid="1" pindex="0">${meshXML(sph, (f) => ` pid="1" p1="${paint(f)}"`)}</object>
-<object id="3" type="model" pid="1" pindex="2">${meshXML(blk, () => '')}</object>
-</resources>
-<build><item objectid="2"/><item objectid="3"/></build>
-</model>`;
-const bytes = zipSync({ '3D/3dmodel.model': strToU8(xml), '[Content_Types].xml': strToU8('<Types/>') });
+const bytes = paintedSphere3MF();
 
 const model = read3MF(bytes);
 check(model.palette.length === 3, `palette ${model.palette.join(' ')}`);
@@ -186,6 +151,26 @@ for (const p of ck('cover')) {
 }
 check(ck('cover').every((p) => Math.abs(p._zmin) < 1e-3 && p._up > 0.2), `covers rest on z = 0, visible face up (min ${Math.min(...ck('cover').map((p) => p._up)).toFixed(2)})`);
 check(ck('cover').every((p) => p._thick <= DEFAULT_SPLIT.depth + 0.6), `covers ${Math.min(...ck('cover').map((p) => p._thick)).toFixed(2)}–${Math.max(...ck('cover').map((p) => p._thick)).toFixed(2)} mm thick`);
+// the pink stripe wraps around the sphere: it is split front/back by ONE straight vertical plane (a clean seam,
+// no saw teeth), so both halves are separated by a flat gap no wider than the clearance
+{
+  const zr = (p) => { let lo = Infinity, hi = -Infinity; for (let i = 2; i < p.mesh.V.length; i += 3) { lo = Math.min(lo, p.mesh.V[i]); hi = Math.max(hi, p.mesh.V[i]); } return [lo, hi]; };
+  const band = ck('cover', PINK).filter((p) => { const [lo, hi] = zr(p); return lo > -8 && hi < 8; });
+  let seam = null;
+  if (band.length === 2) for (const ax of [0, 1]) {
+    const rng = band.map((p) => { let lo = Infinity, hi = -Infinity; for (let i = ax; i < p.mesh.V.length; i += 3) { lo = Math.min(lo, p.mesh.V[i]); hi = Math.max(hi, p.mesh.V[i]); } return [lo, hi]; });
+    const [a, b] = rng[0][0] < rng[1][0] ? rng : [rng[1], rng[0]];
+    const gap = b[0] - a[1];
+    if (gap > -0.05 && (!seam || gap > seam.gap)) seam = { ax, gap };
+  }
+  check(band.length === 2, `wrapping stripe → 2 covers, front and back (${band.length})`);
+  check(seam && seam.gap < DEFAULT_SPLIT.clearance * 2 + 0.3, `stripe halves meet at one straight vertical plane (gap ${seam ? seam.gap.toFixed(2) : '—'} mm)`);
+}
+// no crumbs or shards: every cover is one solid piece of printable size
+const coverM = ck('cover').map((p) => toMan(p.mesh));
+check(ck('cover').every((p) => p.volume >= DEFAULT_SPLIT.minCover), `no cover crumbs (min ${Math.min(...ck('cover').map((p) => p.volume)).toFixed(0)} mm³)`);
+check(coverM.every((m) => m.decompose().filter((q) => q.volume() > 0.5).length === 1), 'every cover is one connected piece (no loose shards)');
+check(!rc.warnings.some((t) => /piezas \(paredes/.test(t)), 'no "base split" warning for a single object');
 const exc = exportFiles(rc, { bedW: 120, bedH: 100, title: 'test' });
 const txt = new TextDecoder().decode(exc.files.find((f) => f.name.endsWith('.txt')).data);
 check(/covers: \d+/.test(txt) && /COVER/.test(txt), 'covers instructions exported');
