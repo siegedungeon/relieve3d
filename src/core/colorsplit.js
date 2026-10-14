@@ -1755,8 +1755,9 @@ function buildCovers(ctx) {
       // 0.3 mm above it, against the solid), not along the broken mesh; the wall hides the difference
       const WALL = 0.25, RW = WALL + 1, mz = M.boundingBox().max[2] + 5;
       const inM = (q) => M.rayCast(q, [q[0] + 0.0123, q[1] + 0.0071, mz]).length % 2 === 1;
+      const wd = new Float64Array(nV).fill(Infinity), near = (v) => used[v] && dv[v] <= RW && d[v] > -RW && dvis[v] === 0;
       for (let v = 0; v < nV; v++) {
-        if (!used[v] || dv[v] > RW || d[v] <= -RW || dvis[v] > 0) continue;
+        if (!near(v)) continue;
         const n = [VN[v * 3], VN[v * 3 + 1], VN[v * 3 + 2]], o2 = [X[v * 3] + n[0] * 0.3, X[v * 3 + 1] + n[1] * 0.3, X[v * 3 + 2] + n[2] * 0.3];
         let wdist = Infinity;
         if (inM(o2)) wdist = 0;
@@ -1772,7 +1773,21 @@ function buildCovers(ctx) {
             wdist = Math.min(wdist, h);
           }
         }
-        if (wdist < RW) d[v] = Math.min(d[v], wdist - WALL);
+        wd[v] = wdist;
+      }
+      // the probes are noisy on the slivers of the junction (a lone vertex sees the wall, its neighbours don't):
+      // a contact counts only where 2+ neighbours see the wall too, and the distance is taken as the geodesic
+      // envelope of those (1 mm per mm at most) -> a smooth border, no teeth
+      const wf = new Float64Array(nV).fill(Infinity);
+      for (let v = 0; v < nV; v++) {
+        if (wd[v] === Infinity) continue;
+        let c = 0;
+        for (let k = off[v]; k < off[v + 1]; k++) if (wd[adj[k]] < Infinity) c++;
+        if (c >= 2) wf[v] = wd[v];
+      }
+      heapDijkstra(nV, off, adj, len, wf);
+      for (let v = 0; v < nV; v++) {
+        if (near(v) && wf[v] < RW) d[v] = Math.min(d[v], wf[v] - WALL);
       }
     }
    
@@ -1921,7 +1936,7 @@ function buildCovers(ctx) {
       i = P2.length / 3;
       key.set(k, i);
       for (let j = 0; j < 3; j++) { P2.push(X[a * 3 + j] + (X[b * 3 + j] - X[a * 3 + j]) * s); NN.push(VN[a * 3 + j] + (VN[b * 3 + j] - VN[a * 3 + j]) * s); }
-      TT.push(fixed ?? tv[a] + (tv[b] - tv[a]) * s + extra);
+      TT.push(fixed == null ? tv[a] + (tv[b] - tv[a]) * s + extra : typeof fixed === 'number' ? fixed : fixed[a] + (fixed[b] - fixed[a]) * s);
       rim.push(k >= nV);
       return i;
     };
@@ -2016,8 +2031,8 @@ function buildCovers(ctx) {
   // one recess per cover piece (a single shell for a whole colour can fold onto itself where two painted
   // surfaces meet at a tight angle, e.g. ear against head, and the boolean then leaves patches uncut)
   const recOf = pieces.map((pc) => shell(pc.r, 0.4)), recesses = recOf.filter(Boolean);
-  let body = M;
-  if (recesses.length) body = keep(body.subtract(keep(Manifold.union(recesses))));
+  let body = M, recU = null;
+  if (recesses.length) body = keep(body.subtract((recU = keep(Manifold.union(recesses)))));
   if (solidUnion && !o.solidCovers) body = keep(body.subtract(solidUnion));
   let bodyPieces = body.decompose().map(keep).filter((p) => p.volume() > 1).sort((a, b) => b.volume() - a.volume());
   const slivers = bodyPieces.filter((p, i) => i > 0 && p.volume() < 10);
@@ -2028,7 +2043,7 @@ function buildCovers(ctx) {
 
   progress('Covers: piezas de color', 0.6);
   let failed = 0, crumbs = 0, blockedArea = 0;
-  const done = [], back = [];
+  const done = [], back = [], backCut = [];
   pieces.forEach((pc, i) => {
     progress(`Covers: pieza ${i + 1}/${pieces.length}`, 0.6 + (0.2 * i) / pieces.length);
     const sh = shell(pc.h, 0.4);
@@ -2088,17 +2103,23 @@ function buildCovers(ctx) {
       }
       const isP = new Uint8Array(nV);
       for (let t = 0; t < nT; t++) if (!hidden[t] && triColor[t] === pc.color) for (let k = 0; k < 3; k++) isP[F[t * 3 + k]] = 1;
-      const CN = new Float64Array(VNg);
+      const isF = new Uint8Array(nV);
+      for (let t = 0; t < nT; t++) if (!hidden[t] && triColor[t] !== pc.color) for (let k = 0; k < 3; k++) isF[F[t * 3 + k]] = 1;
+      const CN = new Float64Array(VNg), cvx = new Uint8Array(nV);
       for (let v = 0; v < nV; v++) {
         if (!(pc.h.raw[v] > -2.5) || dvis[v] > 0) continue;
-        const p2 = [X[v * 3], X[v * 3 + 1], X[v * 3 + 2]], cc = p2.map(Math.floor), m = [0, 0, 0];
+        const p2 = [X[v * 3], X[v * 3 + 1], X[v * 3 + 2]], cc = p2.map(Math.floor), m = [0, 0, 0], mp = [0, 0, 0];
+        let aw = 0;
         for (let x = -2; x <= 2; x++) for (let y = -2; y <= 2; y++) for (let z = -2; z <= 2; z++) for (const [c, t, own, a] of ft.get(vk(cc[0] + x, cc[1] + y, cc[2] + z)) || []) {
           if ((c[0] - p2[0]) ** 2 + (c[1] - p2[1]) ** 2 + (c[2] - p2[2]) ** 2 > 4) continue;
           if (own) continue;
-          for (let j = 0; j < 3; j++) m[j] += SN[t * 3 + j] * a;
+          for (let j = 0; j < 3; j++) { m[j] += SN[t * 3 + j] * a; mp[j] += c[j] * a; }
+          aw += a;
         }
         const l = Math.hypot(...m);
         if (l > 1e-9) for (let j = 0; j < 3; j++) CN[v * 3 + j] = m[j] / l;
+        // the other surface lies behind this one's tangent plane: a knife edge (convex), not a wall it runs into
+        if (aw > 1e-9) cvx[v] = (mp[0] / aw - p2[0]) * VNg[v * 3] + (mp[1] / aw - p2[1]) * VNg[v * 3 + 1] + (mp[2] / aw - p2[2]) * VNg[v * 3 + 2] < -0.02 ? 1 : 0;
       }
       if (!seeds.size) return [m0];
       // ONE smooth cut: a thin shell under that foreign surface (everything within RQ mm of the hits along the
@@ -2122,16 +2143,27 @@ function buildCovers(ctx) {
         // (surface of another colour is always cut, whatever the field says on the slivers of a messy junction;
         // the tip of a knife edge up to the skin depth -> a straight border parallel to the edge; elsewhere - a
         // colour border on a smooth surface, a concave corner - the cover's own field)
-        if (!isP[v]) fv[v] = lim || -1e-6;
-        else fv[v] = Math.min(0.35 - rawAt(v), lim) || -1e-6;
+        if (!isP[v] && isF[v]) fv[v] = lim || -1e-6;
+        else if (!isP[v]) continue;
+        else if (cvx[v]) fv[v] = Math.min(0.35 - rawAt(v), lim) || -1e-6;
+        else fv[v] = Math.min(-Math.max(rawAt(v), 0), lim) || -1e-6;
       }
       // 0.35 mm deep: just past the clearance, so at a knife edge the base keeps only a hairline on the painted face
-      const cutSh = shell({ v: fv, n: CN, at: (a, b, s2) => fv[a] + (fv[b] - fv[a]) * s2 }, 0.3, 0, 0.35);
+      // 0.35 mm deep, but never more than half the wall: a fin thinner than that (painted on one side, base on the
+      // other) is split down the middle instead of losing its painted side to a strip of base
+      const dep = new Float64Array(nV).fill(0.35);
+      for (let v = 0; v < nV; v++) {
+        if (!(fv[v] > -0.5) || isP[v]) continue;
+        const q = [X[v * 3] - RN[v * 3] * 0.01, X[v * 3 + 1] - RN[v * 3 + 1] * 0.01, X[v * 3 + 2] - RN[v * 3 + 2] * 0.01];
+        const hh = M.rayCast(q, [q[0] - RN[v * 3] * 0.7, q[1] - RN[v * 3 + 1] * 0.7, q[2] - RN[v * 3 + 2] * 0.7]);
+        if (hh.length) dep[v] = Math.max(0.05, Math.min(0.35, (0.01 + hh[0].distance * 0.7) / 2));
+      }
+      const cutSh = shell({ v: fv, n: CN, at: (a, b, s2) => fv[a] + (fv[b] - fv[a]) * s2 }, 0.3, 0, dep);
       if (!cutSh) return [m0];
       const inn = keep(m0.intersect(cutSh));
       // most of the cover inside the cut: it just hugs a split crease (mitre), not a thin wall
       if (inn.volume() > 0.3 * m0.volume()) return [m0];
-      back.push(inn);
+      backCut.push(cutSh);
       return keep(m0.subtract(cutSh)).decompose().map(keep);
     };
     // crumbs and the zero-volume sheets a boolean leaves along shared faces go to the base before anything else
@@ -2158,9 +2190,20 @@ function buildCovers(ctx) {
   });
   if (failed) warnings.push(`${failed} covers no se pudieron construir`);
   if (crumbs) warnings.push(`${crumbs} migajas de color (< ${o.minCover} mm³) quedan del color base`);
-  if (back.length) {
-    const bi = parts.findIndex((p) => p.kind === 'body');
-    if (bi >= 0) parts[bi].man = keep(Manifold.union([parts[bi].man, ...back]));
+  // the bits cut off the covers go back to the base by not carving them: M - (recesses - cutters). A union of the
+  // bits with the carved base meets it on coincident faces and the boolean shreds those into a knot of thousands
+  // of degenerate triangles (spikes in the view, a viewer that freezes); the zero-volume sheets left along shared
+  // faces add nothing but such junk, so they are dropped
+  const solidBack = back.filter((b) => b.volume() > 1e-3);
+  if (recU && (solidBack.length || backCut.length)) {
+    let nb = backCut.length ? keep(M.subtract(keep(recU.subtract(keep(Manifold.union(backCut)))))) : body;
+    if (solidBack.length) nb = keep(Manifold.union([nb, ...solidBack]));
+    if (solidUnion && !o.solidCovers) nb = keep(nb.subtract(solidUnion));
+    const bp = nb.decompose().map(keep).filter((p) => p.volume() > 1).sort((a, b) => b.volume() - a.volume()).filter((p, i) => i === 0 || p.volume() >= 10);
+    const others = parts.filter((p) => p.kind !== 'body');
+    parts.length = 0;
+    for (const p of bp) parts.push({ kind: 'body', color: base, man: p, up: null });
+    parts.push(...others);
   }
   if (blockedArea > 5) warnings.push(`${Math.round(blockedArea)} mm² de covers quedan bajo otra parte del modelo: colócalos inclinándolos`);
   return parts;

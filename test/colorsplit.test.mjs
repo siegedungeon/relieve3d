@@ -258,6 +258,20 @@ check(!rc.warnings.some((t) => /piezas \(paredes/.test(t)), 'no "base split" war
   th.sort((x, y) => x - y);
   const p1 = th[Math.floor(th.length * 0.01)];
   check(th.length > 1000 && p1 > 0.4, `rough mesh: cover floors stay smooth (thickness p1 ${p1.toFixed(2)} mm, ${th.length} samples)`);
+  // the bits cut off the covers go back to the base by not carving them (M - (recesses - cutters)), not by a union
+  // with the carved base: that union shreds the coincident faces into a knot of degenerate triangles (thousands on a
+  // real model: spikes in the view and a viewer frozen at "Piezas sólidas 85 %")
+  let deg = 0, nb = 0;
+  for (const p of rr.parts.filter((q) => q.kind === 'body')) {
+    const { V, T } = p.mesh;
+    nb += T.length / 3;
+    for (let i = 0; i < T.length; i += 3) {
+      const q = [0, 1, 2].map((k) => [V[T[i + k] * 3], V[T[i + k] * 3 + 1], V[T[i + k] * 3 + 2]]);
+      const u = q[1].map((x, k) => x - q[0][k]), v = q[2].map((x, k) => x - q[0][k]);
+      if (Math.hypot(u[1] * v[2] - u[2] * v[1], u[2] * v[0] - u[0] * v[2], u[0] * v[1] - u[1] * v[0]) < 1e-6) deg++;
+    }
+  }
+  check(deg < 1500, `rough mesh: no knot of degenerate triangles in the base (${deg} of ${nb})`);
   // thin bow wing: the core's outline follows the wing, not the voxel staircase (few sharp folds in the core)
   const rw2 = splitColors(w, read3MF(paintedWing3MF()), {}, () => {});
   const { V, T } = rw2.parts.find((p) => p.kind === 'body').mesh;
