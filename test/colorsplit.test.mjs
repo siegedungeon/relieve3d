@@ -228,6 +228,19 @@ check(!rc.warnings.some((t) => /piezas \(paredes/.test(t)), 'no "base split" war
     }
   }
   check(under < 0.4 && far < 0.3, `knife edge: no cover on the white underside (${under.toFixed(2)} mm², up to x ${far.toFixed(2)} mm)`);
+  // ...and the cut is a thin slab (0.35 mm) under that surface: the base strip it leaves along the tip on the painted
+  // face stays a hairline, not a visible white band at every knife edge (0.6 mm slabs did: x up to ~0.55)
+  let strip = 0;
+  for (const p of rw.parts.filter((q) => q.kind === 'body')) {
+    const { V, T } = p.mesh;
+    for (let i = 0; i < T.length; i += 3) {
+      const q = [0, 1, 2].map((k) => [V[T[i + k] * 3], V[T[i + k] * 3 + 1], V[T[i + k] * 3 + 2]]);
+      const u = q[1].map((x, k) => x - q[0][k]), v = q[2].map((x, k) => x - q[0][k]);
+      const n = [u[1] * v[2] - u[2] * v[1], u[2] * v[0] - u[0] * v[2], u[0] * v[1] - u[1] * v[0]], l = Math.hypot(...n);
+      if ((n[2] - n[0]) / Math.SQRT2 / (l || 1) > 0.99 && q.every((x) => Math.abs(x[2] - x[0]) < 0.01 && x[0] < 5 && x[1] > 1 && x[1] < 29)) strip = Math.max(strip, ...q.map((x) => x[0]));
+    }
+  }
+  check(strip < 0.4, `knife edge: only a hairline of base on the painted face at the tip (up to x ${strip.toFixed(2)} mm)`);
 }
 {
   // irregular mesh (slivers, noisy normals and wall thickness): the cover floor is smoothed over the patch instead of

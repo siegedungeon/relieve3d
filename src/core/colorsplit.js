@@ -1568,6 +1568,7 @@ function buildCovers(ctx) {
       }
     }
   }
+  const hidS = hidden.slice();
   // paint buried inside the model (overlapping shells: a painted layer just behind the visible surface) is not seen
   {
     const bb = M.boundingBox();
@@ -1578,12 +1579,45 @@ function buildCovers(ctx) {
       if (M.rayCast(q, [q[0] + 0.0123, q[1] + 0.0071, bb.max[2] + 5]).length % 2) hidden[t] = 1;
     }
   }
+  // where painted surface runs on under another part of the model (a holder glued over a ball) the buried line is
+  // found per vertex and, along each edge that crosses it, exactly (bisection): the true intersection curve, not
+  // the sawtooth of whole triangles. bur = signed distance along the surface to it (+ visible, - buried)
+  let bur = null;
+  {
+    const near = new Float64Array(nV).fill(Infinity);
+    let any = false;
+    for (let t = 0; t < nT; t++) if (hidden[t] && !hidS[t]) { any = true; for (let k = 0; k < 3; k++) near[F[t * 3 + k]] = 0; }
+    if (any) {
+      heapDijkstra(nV, off, adj, len, near);
+      const mz = M.boundingBox().max[2] + 5, inM = (q) => M.rayCast(q, [q[0] + 0.0123, q[1] + 0.0071, mz]).length % 2 === 1;
+      const lift = (a, b, s2) => {
+        const n = norm([0, 1, 2].map((j) => VN[a * 3 + j] + (VN[b * 3 + j] - VN[a * 3 + j]) * s2));
+        return [0, 1, 2].map((j) => X[a * 3 + j] + (X[b * 3 + j] - X[a * 3 + j]) * s2 + n[j] * 0.15);
+      };
+      const cls = new Int8Array(nV);
+      for (let v = 0; v < nV; v++) if (used[v] && near[v] < 3) cls[v] = inM(lift(v, v, 0)) ? -1 : 1;
+      bur = new Float64Array(nV).fill(Infinity);
+      for (let e = 0; e < E.length; e += 2) {
+        const a = E[e], b = E[e + 1];
+        if (!cls[a] || !cls[b] || cls[a] === cls[b]) continue;
+        let lo = 0, hi = 1;
+        for (let i = 0; i < 8; i++) { const m = (lo + hi) / 2; if ((inM(lift(a, b, m)) ? -1 : 1) === cls[a]) lo = m; else hi = m; }
+        const s2 = (lo + hi) / 2, l = dist3(a, b);
+        bur[a] = Math.min(bur[a], s2 * l); bur[b] = Math.min(bur[b], (1 - s2) * l);
+      }
+      heapDijkstra(nV, off, adj, len, bur);
+      for (let v = 0; v < nV; v++) bur[v] = (bur[v] === Infinity ? 1e6 : bur[v]) * (cls[v] < 0 ? -1 : 1);
+    }
+  }
   const colors = [...new Set([...triColor].filter((c, t) => c !== base && !hidden[t]))];
   // how far each vertex lies inside the hidden surface: covers only tuck 0.8 mm under a solid part (enough to meet
   // its edge), never down into the slot of its tab
   const dvis = new Float64Array(nV).fill(Infinity);
   for (let t = 0; t < nT; t++) if (!hidden[t]) for (let k = 0; k < 3; k++) dvis[F[t * 3 + k]] = 0;
   heapDijkstra(nV, off, adj, len, dvis);
+  const dvisS = new Float64Array(nV).fill(Infinity);
+  for (let t = 0; t < nT; t++) if (!hidS[t]) for (let k = 0; k < 3; k++) dvisS[F[t * 3 + k]] = 0;
+  heapDijkstra(nV, off, adj, len, dvisS);
   // nearest mesh vertex of a point (1 mm grid)
   const vg = new Map(), vk = (x, y, z) => `${x},${y},${z}`;
   for (let v = 0; v < nV; v++) if (used[v]) { const k = vk(Math.floor(X[v * 3]), Math.floor(X[v * 3 + 1]), Math.floor(X[v * 3 + 2])); if (!vg.has(k)) vg.set(k, []); vg.get(k).push(v); }
@@ -1692,9 +1726,9 @@ function buildCovers(ctx) {
     d = morph(d, o.coverFeature / 2);
     // colour guessed under a solid part may not spill onto visible base-colour surface (max 1.2 mm from real paint)
     const dv = new Float64Array(nV).fill(Infinity);
-    for (let t = 0; t < nT; t++) if (!hidden[t] && !speck[t] && triColor[t] === col) for (let k = 0; k < 3; k++) dv[F[t * 3 + k]] = 0;
+    for (let t = 0; t < nT; t++) if (!hidS[t] && !speck[t] && triColor[t] === col) for (let k = 0; k < 3; k++) dv[F[t * 3 + k]] = 0;
     heapDijkstra(nV, off, adj, len, dv);
-    for (let v = 0; v < nV; v++) d[v] = Math.min(d[v], 1.2 - dv[v], 0.8 - dvis[v]);
+    for (let v = 0; v < nV; v++) d[v] = Math.min(d[v], 1.2 - dv[v], 0.8 - (bur ? dvisS[v] : dvis[v]), bur ? 0.8 + bur[v] : Infinity);
     // ...nor round a sharp crease (> 60°) onto a visible face that faces another way than the paint it came from
     {
       const pn = new Float64Array(nV * 3), un = new Float64Array(nV * 3);
@@ -1714,6 +1748,31 @@ function buildCovers(ctx) {
         if (dvis[v] > 0) continue;
         const s = src[v], l = (Math.hypot(pn[s * 3], pn[s * 3 + 1], pn[s * 3 + 2]) * Math.hypot(un[v * 3], un[v * 3 + 1], un[v * 3 + 2])) || 1;
         if ((un[v * 3] * pn[s * 3] + un[v * 3 + 1] * pn[s * 3 + 1] + un[v * 3 + 2] * pn[s * 3 + 2]) / l < 0.5) d[v] = Math.min(d[v], -dv[v]);
+      }
+      // where the paint runs into a wall (a concave corner: a holder glued onto a ball, an ear on a head) the model's
+      // own junction is often a heap of slivers; following it exactly gives covers and recesses ragged, holey edges.
+      // There the border is a smooth line WALL mm out on the painted side, found in space (rays along the surface,
+      // 0.3 mm above it, against the solid), not along the broken mesh; the wall hides the difference
+      const WALL = 0.25, RW = WALL + 1, mz = M.boundingBox().max[2] + 5;
+      const inM = (q) => M.rayCast(q, [q[0] + 0.0123, q[1] + 0.0071, mz]).length % 2 === 1;
+      for (let v = 0; v < nV; v++) {
+        if (!used[v] || dv[v] > RW || d[v] <= -RW || dvis[v] > 0) continue;
+        const n = [VN[v * 3], VN[v * 3 + 1], VN[v * 3 + 2]], o2 = [X[v * 3] + n[0] * 0.3, X[v * 3 + 1] + n[1] * 0.3, X[v * 3 + 2] + n[2] * 0.3];
+        let wdist = Infinity;
+        if (inM(o2)) wdist = 0;
+        else {
+          const t1 = norm(cross(n, Math.abs(n[0]) < 0.9 ? [1, 0, 0] : [0, 1, 0])), t2 = cross(n, t1);
+          for (let k = 0; k < 12; k++) {
+            const a2 = (k * Math.PI) / 6, dir = add(scl(t1, Math.cos(a2)), scl(t2, Math.sin(a2))), to = add(o2, scl(dir, RW));
+            const hits = M.rayCast(o2, to);
+            if (!hits.length) continue;
+            const h = Math.min(...hits.map((x) => x.distance)) * RW;
+            // a solid colour part (the bow) is not a wall: the paint tucks under it
+            if (solidUnion && solidUnion.rayCast(o2, to).some((x) => Math.abs(x.distance * RW - h) < 0.05)) continue;
+            wdist = Math.min(wdist, h);
+          }
+        }
+        if (wdist < RW) d[v] = Math.min(d[v], wdist - WALL);
       }
     }
    
@@ -1986,6 +2045,27 @@ function buildCovers(ctx) {
     const rawAt = (v) => Math.max(...(twins.get(vOrig[v]) || [v]).map((x) => colD[x]));
     const pokeCut = (m0) => {
       const mesh = m0.getMesh(), np = mesh.numProp, P = mesh.vertProperties, T = mesh.triVerts, seeds = new Set();
+      // the base-colour surface as a whole near each vertex: area-weighted plane over 2 mm of it (the slivers of a
+      // junction between overlapping shells weigh nothing), not the chaotic normals and borders of each sliver
+      // (large triangles - a long flat wall - sampled every ~0.7 mm, so they weigh where they are)
+      const bb0 = m0.boundingBox(), ft = new Map();
+      for (let t = 0; t < nT; t++) {
+        const own = triColor[t] === pc.color;
+        if (hidden[t] || (!own && triColor[t] !== base)) continue;
+        const q = [0, 1, 2].map((k) => [X[F[t * 3 + k] * 3], X[F[t * 3 + k] * 3 + 1], X[F[t * 3 + k] * 3 + 2]]);
+        if ([0, 1, 2].some((j) => Math.min(q[0][j], q[1][j], q[2][j]) > bb0.max[j] + 3 || Math.max(q[0][j], q[1][j], q[2][j]) < bb0.min[j] - 3)) continue;
+        if (q.some((x) => dvis[F[t * 3 + q.indexOf(x)]] > 0)) continue;
+        const e1 = sub(q[1], q[0]), e2 = sub(q[2], q[0]), ns = Math.min(40, Math.ceil(Math.max(Math.hypot(...e1), Math.hypot(...e2), Math.hypot(...sub(q[2], q[1]))) / 0.7));
+        const a = A[t] / (ns * ns);
+        const put = (bi, bj) => {
+          const c = add(q[0], add(scl(e1, bi / ns), scl(e2, bj / ns)));
+          if ([0, 1, 2].some((j) => c[j] > bb0.max[j] + 3 || c[j] < bb0.min[j] - 3)) return;
+          const kk = vk(...c.map(Math.floor));
+          if (!ft.has(kk)) ft.set(kk, []);
+          ft.get(kk).push([c, t, own, a]);
+        };
+        for (let i = 0; i < ns; i++) for (let j = 0; i + j < ns; j++) { put(i + 1 / 3, j + 1 / 3); if (i + j < ns - 1) put(i + 2 / 3, j + 2 / 3); }
+      }
       for (let i = 0; i < T.length; i += 3) {
         const q = [0, 1, 2].map((k) => [P[T[i + k] * np], P[T[i + k] * np + 1], P[T[i + k] * np + 2]]);
         const nn = cross(sub(q[1], q[0]), sub(q[2], q[0])), l = Math.hypot(...nn);
@@ -2006,23 +2086,47 @@ function buildCovers(ctx) {
         if (M.rayCast(qf, [qf[0] + 0.0123, qf[1] + 0.0071, mzTop]).length % 2) continue;
         seeds.add(u);
       }
-      if (!seeds.size) return [m0];
-      // ONE smooth cut: a thin shell under that foreign surface (a few rings around the hits, so it reaches the crease
-      // where both surfaces meet), bounded by the cover's own smooth border field -> a clean edge, no per-triangle teeth
-      const inQ = new Uint8Array(nV);
-      let ring = [...seeds];
-      for (const v of ring) inQ[v] = 1;
-      for (let r = 0; r < 3; r++) {
-        const nx = [];
-        for (const v of ring) {
-          for (let k = off[v]; k < off[v + 1]; k++) if (!inQ[adj[k]]) { inQ[adj[k]] = 1; nx.push(adj[k]); }
-          for (const u of twins.get(vOrig[v]) || []) if (!inQ[u]) { inQ[u] = 1; nx.push(u); }
+      const isP = new Uint8Array(nV);
+      for (let t = 0; t < nT; t++) if (!hidden[t] && triColor[t] === pc.color) for (let k = 0; k < 3; k++) isP[F[t * 3 + k]] = 1;
+      const CN = new Float64Array(VNg);
+      for (let v = 0; v < nV; v++) {
+        if (!(pc.h.raw[v] > -2.5) || dvis[v] > 0) continue;
+        const p2 = [X[v * 3], X[v * 3 + 1], X[v * 3 + 2]], cc = p2.map(Math.floor), m = [0, 0, 0];
+        for (let x = -2; x <= 2; x++) for (let y = -2; y <= 2; y++) for (let z = -2; z <= 2; z++) for (const [c, t, own, a] of ft.get(vk(cc[0] + x, cc[1] + y, cc[2] + z)) || []) {
+          if ((c[0] - p2[0]) ** 2 + (c[1] - p2[1]) ** 2 + (c[2] - p2[2]) ** 2 > 4) continue;
+          if (own) continue;
+          for (let j = 0; j < 3; j++) m[j] += SN[t * 3 + j] * a;
         }
-        ring = nx;
+        const l = Math.hypot(...m);
+        if (l > 1e-9) for (let j = 0; j < 3; j++) CN[v * 3 + j] = m[j] / l;
+      }
+      if (!seeds.size) return [m0];
+      // ONE smooth cut: a thin shell under that foreign surface (everything within RQ mm of the hits along the
+      // surface, across split creases, so it covers all the cover shows there however tiny the triangles are)
+      const RQ = 2.5, gq = new Float64Array(nV).fill(Infinity);
+      for (const v of seeds) gq[v] = 0;
+      for (let r = 0; r < 4; r++) {
+        heapDijkstra(nV, off, adj, len, gq);
+        let ch = false;
+        for (const g of twins.values()) {
+          let m = Infinity;
+          for (const u of g) m = Math.min(m, gq[u]);
+          if (m < RQ) for (const u of g) if (gq[u] > m) { gq[u] = m; ch = true; }
+        }
+        if (!ch) break;
       }
       const fv = new Float64Array(nV).fill(-1);
-      for (let v = 0; v < nV; v++) if (inQ[v] && dvis[v] === 0) fv[v] = 0.35 - rawAt(v) || -1e-6;
-      const cutSh = shell({ v: fv, at: (a, b, s2) => fv[a] + (fv[b] - fv[a]) * s2 }, 0.3, 0, 0.6);
+      for (let v = 0; v < nV; v++) {
+        if (!(gq[v] < RQ) || dvis[v] > 0) continue;
+        const lim = RQ - 0.5 - gq[v];
+        // (surface of another colour is always cut, whatever the field says on the slivers of a messy junction;
+        // the tip of a knife edge up to the skin depth -> a straight border parallel to the edge; elsewhere - a
+        // colour border on a smooth surface, a concave corner - the cover's own field)
+        if (!isP[v]) fv[v] = lim || -1e-6;
+        else fv[v] = Math.min(0.35 - rawAt(v), lim) || -1e-6;
+      }
+      // 0.35 mm deep: just past the clearance, so at a knife edge the base keeps only a hairline on the painted face
+      const cutSh = shell({ v: fv, n: CN, at: (a, b, s2) => fv[a] + (fv[b] - fv[a]) * s2 }, 0.3, 0, 0.35);
       if (!cutSh) return [m0];
       const inn = keep(m0.intersect(cutSh));
       // most of the cover inside the cut: it just hugs a split crease (mitre), not a thin wall
