@@ -5,6 +5,8 @@
 //    axis, the visible face is the original surface) + matching pockets in the body
 // Geometry booleans use manifold-3d (WASM). Units: mm.
 
+import { buildSkin } from './colorskin.js';
+
 export const DEFAULT_SPLIT = {
   pinhole: 2, // covers mode: islands of base colour smaller than this inside a cover are closed over (mm²)
   clearance: 0.15, // total gap between an inlay/part and its pocket (mm)
@@ -20,6 +22,9 @@ export const DEFAULT_SPLIT = {
   minArea: 2, // painted islands smaller than this (mm²) are dropped
   baseColor: -1, // -1 = auto (biggest volume)
   mode: 'covers', // 'covers': intact base + thin colour covers glued on top | 'inlays': deep inlays (optionally cut in halves)
+  //               | 'skin' (experimental): the whole original solid is the base, colours are a skin grown outside it
+  skinDepth: 1.2, // skin mode: thickness of the outer colour skin; the model grows this much on every side (mm)
+  skinGrid: 0.2, // skin mode: voxel size of the distance fields (mm); coarser automatically on big models
   borderSmooth: 0.8, // covers: smoothing radius of the colour borders (mm): removes the zigzag of the painted triangles
   plate: 256, // printer bed size for layout (mm)
   gap: 3, // spacing between parts on the bed (mm)
@@ -180,6 +185,33 @@ export function splitColors(w, model, options = {}, progress = () => {}) {
   const garbage = [];
   const keep = (m) => { garbage.push(m); return m; };
   const warnings = [];
+
+  if (o.mode === 'skin') {
+    progress('Uniendo cuerpo', 0.05);
+    const mans = ana.shells.filter((s) => Math.abs(s.vol) > 1e-6).map((s) => keep(toManifold(w, subMesh(s.part.V, s.part.T, s.tris, s.vol < 0))));
+    if (!mans.length) throw new Error('No se encontró un cuerpo base');
+    let M = keep(Manifold.union(mans));
+    const comps = M.decompose().map(keep);
+    if (comps.length > 1) M = keep(Manifold.union(comps.filter((c) => c.volume() > 0.5)));
+    const V = [], T = [], C = [];
+    for (const p of model.parts) {
+      const b = V.length / 3;
+      for (let i = 0; i < p.V.length; i++) V.push(p.V[i]);
+      for (let i = 0; i < p.T.length; i++) T.push(p.T[i] + b);
+      for (let t = 0; t < p.T.length / 3; t++) C.push(p.tc ? p.tc[t] : 0);
+    }
+    // front/back axis: the thinnest horizontal one, front = where the paint faces
+    const bx = M.boundingBox(), axI = bx.max[0] - bx.min[0] <= bx.max[1] - bx.min[1] ? 0 : 1;
+    let sN = 0;
+    for (let t = 0; t < T.length / 3; t++) if (C[t] !== base) {
+      const a = T[t * 3] * 3, b = T[t * 3 + 1] * 3, c = T[t * 3 + 2] * 3;
+      sN += cross([V[b] - V[a], V[b + 1] - V[a + 1], V[b + 2] - V[a + 2]], [V[c] - V[a], V[c + 1] - V[a + 1], V[c + 2] - V[a + 2]])[axI];
+    }
+    const cutAxis = [0, 0, 0];
+    cutAxis[axI] = sN >= 0 ? 1 : -1;
+    const parts = buildSkin({ w, o, M, src: { V, T, C }, base, nCol: model.palette.length, keep, warnings, progress, cutAxis });
+    return finishParts({ w, o, model, parts, solids: [], base, keep, garbage, warnings, progress, info: { regions: 0, tiles: parts.filter((p) => p.kind === 'cover').length, thickness: [], covers: true, skin: true, cut: null } });
+  }
 
   // 1) classify shells: thick single-color shells of a non-base color become separate solid parts
   const solids = [], rest = [];

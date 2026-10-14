@@ -22,14 +22,21 @@ module.exports = async ({ win, run, shot, wait }) => {
   ok(loaded.palette.length >= 2 && loaded.split, `3MF read with ${loaded.palette.length} colours, split enabled`);
   await wait(1500);
   await S('cs_01_original');
+  if (process.env.E2E_MODE) {
+    const m = process.env.E2E_MODE;
+    const st = JSON.parse(await run(`(() => { const s = document.querySelector('#colorsplit [data-k=mode]'); s.value = ${JSON.stringify(m)}; s.dispatchEvent(new Event('change', { bubbles: true }));
+      return JSON.stringify({ mode: window.__r3d.colorsplit.opts.mode, skinRow: !document.querySelector('#colorsplit [data-r=skinRow]').hidden }); })()`));
+    ok(st.mode === m && st.skinRow === (m === 'skin'), `mode "${m}" selected in the UI (skin thickness row ${st.skinRow ? 'shown' : 'hidden'})`);
+  }
   const t0 = Date.now();
   await run(`document.querySelector('#colorsplit [data-a=split]').click()`);
   for (let i = 0; i < 600; i++) { if (await run(`!!window.__r3d.colorsplit.res && !window.__r3d.colorsplit._busy`)) break; await wait(1000); }
   const res = JSON.parse(await run(`(() => { const c = window.__r3d.colorsplit, r = c.res; if (!r) return JSON.stringify({ error: document.querySelector('#colorsplit [data-r=status]').textContent });
     const k = {}; for (const p of r.parts) k[p.kind] = (k[p.kind] || 0) + 1;
-    return JSON.stringify({ n: r.parts.length, k, warnings: r.warnings, covers: !!r.covers, plates: c.plates.length }); })()`));
+    return JSON.stringify({ n: r.parts.length, k, warnings: r.warnings, covers: !!r.covers, skin: !!r.skin, plates: c.plates.length, summary: c.root.querySelector('[data-r=summary]').textContent }); })()`));
   log('split', ((Date.now() - t0) / 1000).toFixed(1) + ' s', JSON.stringify(res));
   ok(!res.error && res.n > 0, `split produced ${res.n || 0} parts`);
+  if (process.env.E2E_MODE === 'skin') ok(res.skin && res.k.body === 1 && /capas de color/.test(res.summary), 'skin mode: one whole base + colour skins, summary explains it');
   ok(!res.covers || (res.k.body || 0) >= 1, 'covers mode keeps a base body');
   ok(!(res.warnings || []).some((w) => /piezas \(paredes|no se pudieron/.test(w)), 'no broken-base / failed-cover warnings');
   await S('cs_02_split');

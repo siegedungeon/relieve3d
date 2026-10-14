@@ -85,7 +85,8 @@ export class ColorSplitStudio {
         <section class="card">
           <h3>Encajes</h3>
           ${SETTINGS.map(([k, l, t]) => `<label class="row" title="${esc(t)}">${l} <input ${N} data-k="${k}" /></label>`).join('')}
-          <label class="row" title="Covers: el color base queda en UNA pieza entera con rebajes; cada color extra es una tapa delgada (cover) que se pega encima y deja la figura exacta. Incrustaciones: modo anterior de piezas que se encajan (con corte frente / atrás opcional)">Modo <select data-k="mode"><option value="covers">Base + covers pegados</option><option value="inlays">Incrustaciones</option></select></label>
+          <label class="row" title="Covers: el color base queda en UNA pieza entera con rebajes; cada color extra es una tapa delgada (cover) que se pega encima y deja la figura exacta. Incrustaciones: modo anterior de piezas que se encajan (con corte frente / atrás opcional)">Modo <select data-k="mode"><option value="covers">Base + covers pegados</option><option value="inlays">Incrustaciones</option><option value="skin">Capa exterior (experimental)</option></select></label>
+          <label class="row" data-r="skinRow" title="Modo capa exterior: el modelo original queda entero como base y cada color es una capa de este grosor que se pega POR FUERA. El modelo crece este grosor por cada lado (los agujeros se cierran el doble)">Grosor capa exterior (mm) <input ${N} data-k="skinDepth" /></label>
           <label class="row" data-r="planeRow" title="Solo en modo incrustaciones: corta el modelo con un plano vertical por la silueta (cuerpo en 2 mitades frente / atrás)">Cortar en mitades frente / atrás <input type="checkbox" data-k="planeCut" /></label>
       <label class="row" title="Número en espejo grabado en la cara oculta (la que se pega) de cada incrustación: coincide con la lista y el mapa de armado">Grabar número bajo cada pieza <input type="checkbox" data-k="labels" /></label>
         </section>
@@ -139,7 +140,7 @@ export class ColorSplitStudio {
       const el = e.target;
       if (el.dataset.k === 'labels') { this.opts.labels = el.checked; this.markStale(); return; }
       if (el.dataset.k === 'planeCut') { this.opts.planeCut = el.checked; this.markStale(); return; }
-      if (el.dataset.k === 'mode') { this.opts.mode = el.value; this.$('planeRow').hidden = el.value !== 'inlays'; this.markStale(); return; }
+      if (el.dataset.k === 'mode') { this.opts.mode = el.value; this.$('planeRow').hidden = el.value !== 'inlays'; this.$('skinRow').hidden = el.value !== 'skin'; this.markStale(); return; }
       if (el.dataset.k) { const v = parseNum(el.value); if (Number.isFinite(v)) { this.opts[el.dataset.k] = v; this.markStale(); } return; }
       if (el.dataset.b) { const v = parseNum(el.value); if (Number.isFinite(v) && v > 0) { this.bed[el.dataset.b] = v; if (this.res) { this.plates = platesFor(this.res, { bedW: this.bed.w, bedH: this.bed.h, gap: this.bed.gap }); this.fillPlates(); if (this.tab === 'plates') this.render(); } } return; }
       const ci = el.dataset.ci;
@@ -172,6 +173,7 @@ export class ColorSplitStudio {
   sync() {
     for (const el of this.root.querySelectorAll('[data-k]')) { if (el.type === 'checkbox') el.checked = !!this.opts[el.dataset.k]; else el.value = this.opts[el.dataset.k]; }
     this.$('planeRow').hidden = this.opts.mode !== 'inlays';
+    this.$('skinRow').hidden = this.opts.mode !== 'skin';
     for (const el of this.root.querySelectorAll('[data-b]')) el.value = this.bed[el.dataset.b];
   }
 
@@ -338,7 +340,7 @@ export class ColorSplitStudio {
       return `<div class="cs-sum"><span class="cs-sw" style="background:${res.palette[c]}"></span><b>${esc(names[c])}</b>: ${parts}</div>`;
     });
     const nPlates = this.plates.length;
-    this.$('summary').innerHTML = `<div class="hb-ok">✓ ${res.parts.length} piezas, ${nPlates} placa(s) de impresión</div>${lines.join('')}<div class="muted small" style="margin-top:6px">Holgura ${this.opts.clearance} mm · ${res.covers ? `base en una sola pieza; covers de hasta ${this.opts.depth} mm que se pegan en sus rebajes (imprimir con la cara de color arriba y soportes debajo)` : `cascarones de color de ${this.opts.depth} mm `}${res.covers ? '' : res.cut ? '(las mitades del cuerpo y las piezas de color se imprimen apoyadas en la cara plana del corte: sin soportes)' : '(imprimir con la cara de color arriba y soportes bajo la cara oculta)'}</div>`;
+    this.$('summary').innerHTML = `<div class="hb-ok">✓ ${res.parts.length} piezas, ${nPlates} placa(s) de impresión</div>${lines.join('')}<div class="muted small" style="margin-top:6px">Holgura ${this.opts.clearance} mm · ${res.skin ? `modelo original entero como base; capas de color de ${this.opts.skinDepth} mm que se pegan por fuera (el modelo crece ${this.opts.skinDepth} mm por lado) ` : res.covers ? `base en una sola pieza; covers de hasta ${this.opts.depth} mm que se pegan en sus rebajes (imprimir con la cara de color arriba y soportes debajo)` : `cascarones de color de ${this.opts.depth} mm `}${res.covers ? '' : res.cut ? '(las mitades del cuerpo y las piezas de color se imprimen apoyadas en la cara plana del corte: sin soportes)' : '(imprimir con la cara de color arriba y soportes bajo la cara oculta)'}</div>`;
     this.$('warn').innerHTML = res.warnings.map((w) => `<div class="hb-w">⚠ ${esc(w)}</div>`).join('');
     this.renderList();
   }

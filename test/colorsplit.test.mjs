@@ -325,5 +325,46 @@ for (const pl of ex.plates) {
 check(countOk === r.parts.length, `exported 3MFs re-open with all ${countOk} parts`);
 check(bedOk, 'exported parts sit on the bed (inside 120×100, z ≥ 0) with their color');
 
+// skin mode: the original solid stays whole as the base, colours are a skin grown outside it
+{
+  console.log('— skin mode');
+  const ts = Date.now();
+  const rs = splitColors(w, model, { mode: 'skin' }, () => {});
+  console.log(`  ${((Date.now() - ts) / 1000).toFixed(1)} s, ${rs.parts.length} parts, warnings: ${rs.warnings.join(' | ') || '-'}`);
+  const sm = rs.parts.map((p) => toMan(p.mesh));
+  const bodyI = rs.parts.map((p, i) => (p.kind === 'body' ? i : -1)).filter((i) => i >= 0);
+  check(bodyI.length === 1 && rs.parts[bodyI[0]].color === WHITE, `skin: one white base (${bodyI.length})`);
+  check(rs.skin && rs.parts.some((p) => p.kind === 'cover' && p.color === PINK), 'skin: pink becomes covers');
+  check(sm.every((m) => m.status() === 'NoError' && m.volume() > 0.3), 'skin: all parts are valid closed solids');
+  const orig = Manifold.union(model.parts.map((p) => toMan(p)));
+  const lost = orig.subtract(sm[bodyI[0]]).volume();
+  check(lost < 0.5, `skin: the base contains the whole original solid (missing ${lost.toFixed(2)} mm³)`);
+  let ov = 0;
+  for (let i = 0; i < sm.length; i++) for (let j = i + 1; j < sm.length; j++) ov = Math.max(ov, sm[i].intersect(sm[j]).volume());
+  check(ov < 0.3, `skin: parts don't overlap (max ${ov.toFixed(3)} mm³)`);
+  const g = sm.filter((_, i) => rs.parts[i].kind === 'cover').map((m) => m.genus());
+  check(g.every((x) => x <= 0), `skin: covers have no holes or handles (genus ${g.join(' ')})`);
+  const ob = orig.boundingBox(), all = Manifold.union(sm).boundingBox(), D = DEFAULT_SPLIT.skinDepth;
+  const grow = [0, 1, 2].map((k) => (all.max[k] - all.min[k]) - (ob.max[k] - ob.min[k]));
+  check(grow.every((x) => Math.abs(x - 2 * D) < 0.3), `skin: the model grows ${D} mm per side (${grow.map((x) => x.toFixed(2)).join(' ')})`);
+
+  // a white box with a pink box overlapping its top half: both top faces lie on the same plane; the paint must win
+  // there (else the white base pokes through the pink skin, or the top gets no pink at all)
+  const boxPart = (a, b, c) => {
+    const V = [], T = [];
+    for (let i = 0; i < 8; i++) V.push(i & 1 ? b[0] : a[0], i & 2 ? b[1] : a[1], i & 4 ? b[2] : a[2]);
+    for (const f of [[0, 2, 3, 1], [4, 5, 7, 6], [0, 1, 5, 4], [2, 6, 7, 3], [0, 4, 6, 2], [1, 3, 7, 5]]) T.push(f[0], f[1], f[2], f[0], f[2], f[3]);
+    return { V: Float32Array.from(V), T: Uint32Array.from(T), tc: new Uint8Array(12).fill(c) };
+  };
+  const two = { palette: ['#F4F4F4', '#E8AFCF'], names: ['Blanco', 'Rosa'], parts: [boxPart([0, 0, 0], [20, 20, 20], 0), boxPart([0, 0, 10], [20, 20, 20], 1)] };
+  two.parts[1].tc.fill(1);
+  // white wins on volume (base) only if the white box is bigger: it is (8000 vs 4000 mm³)
+  const rt = splitColors(w, two, { mode: 'skin' }, () => {});
+  const pinkTop = rt.parts.filter((p) => p.kind === 'cover' && p.color === 1).map((p) => toMan(p.mesh));
+  const probe = Manifold.cube([16, 16, 0.6]).translate([2, 2, 20.3]);
+  const onTop = pinkTop.reduce((s, m) => s + m.intersect(probe).volume(), 0);
+  check(onTop > 0.95 * probe.volume(), `skin: coincident white/pink top face → pink skin on top (${(100 * onTop / probe.volume()).toFixed(0)}%)`);
+}
+
 console.log(fails ? `\n${fails} FAILED` : '\ncolorsplit OK');
 process.exit(fails ? 1 : 0);
