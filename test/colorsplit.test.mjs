@@ -183,6 +183,9 @@ check(ck('cover').every((p) => p._thick <= DEFAULT_SPLIT.depth + 0.6), `covers $
 const coverM = ck('cover').map((p) => toMan(p.mesh));
 check(ck('cover').every((p) => p.volume >= DEFAULT_SPLIT.minCover), `no cover crumbs (min ${Math.min(...ck('cover').map((p) => p.volume)).toFixed(0)} mm³)`);
 check(coverM.every((m) => m.decompose().filter((q) => q.volume() > 0.5).length === 1), 'every cover is one connected piece (no loose shards)');
+// solid covers: no handles or holes through them (intersecting each cover with its recess left zero-volume sheets
+// and handles along their near-coincident walls - holes and specks of base in the print)
+check(coverM.every((m) => m.genus() === 0), `covers have no holes or handles (genus ${coverM.map((m) => m.genus()).join(' ')})`);
 check(!rc.warnings.some((t) => /piezas \(paredes/.test(t)), 'no "base split" warning for a single object');
 // a colour border on a sharp edge (painted top face of a box) is already exact: the cover reaches the edge itself
 {
@@ -258,6 +261,17 @@ check(!rc.warnings.some((t) => /piezas \(paredes/.test(t)), 'no "base split" war
   th.sort((x, y) => x - y);
   const p1 = th[Math.floor(th.length * 0.01)];
   check(th.length > 1000 && p1 > 0.4, `rough mesh: cover floors stay smooth (thickness p1 ${p1.toFixed(2)} mm, ${th.length} samples)`);
+  // ...and they stay solid and inside their recesses: a cover reaching past its recess floor or wall (shells over
+  // different patches smooth and unfold differently) is volume shared with the base; one cut by its recess instead
+  // is riddled with handles
+  {
+    const rcv = rr.parts.filter((q) => q.kind === 'cover').map((q) => toMan(q.mesh)), rb = rr.parts.filter((q) => q.kind === 'body').map((q) => toMan(q.mesh));
+    const g = rcv.reduce((a, m) => a + m.genus(), 0);
+    let ov = 0;
+    for (const c of rcv) for (const b of rb) ov = Math.max(ov, c.intersect(b).volume());
+    check(g < 40, `rough mesh: covers without a mesh of handles (genus ${rcv.map((m) => m.genus()).join(' ')})`);
+    check(ov < 1, `rough mesh: covers do not overlap the base (max ${ov.toFixed(3)} mm³)`);
+  }
   // the bits cut off the covers go back to the base by not carving them (M - (recesses - cutters)), not by a union
   // with the carved base: that union shreds the coincident faces into a knot of degenerate triangles (thousands on a
   // real model: spikes in the view and a viewer frozen at "Piezas sólidas 85 %")

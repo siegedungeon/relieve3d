@@ -6,6 +6,7 @@
 // Geometry booleans use manifold-3d (WASM). Units: mm.
 
 export const DEFAULT_SPLIT = {
+  pinhole: 2, // covers mode: islands of base colour smaller than this inside a cover are closed over (mm²)
   clearance: 0.15, // total gap between an inlay/part and its pocket (mm)
   depth: 1.6, // minimum inlay shell thickness, measured along the surface normal (mm)
   maxAngle: 75, // max surface-normal deviation from the insertion axis inside one inlay (deg)
@@ -1926,8 +1927,40 @@ function buildCovers(ctx) {
     }
   }
 
+  // pinholes: a small island below zero inside a piece's patch (a lone vertex whose normal or wall probe is off on
+  // the slivers of a junction) is a hole through the cover and a hair-thin pin of base in it - neither prints, so
+  // the cover closes over it (field and recess alike)
+  {
+    const va = new Float64Array(nV);
+    for (let t = 0; t < nT; t++) if (!hidden[t]) for (let k = 0; k < 3; k++) va[F[t * 3 + k]] += A[t] / 3;
+    const closePins = (H) => {
+      const h = H.v, seen = new Uint8Array(nV), flip = new Uint8Array(nV);
+      let any = false;
+      for (let v0 = 0; v0 < nV; v0++) {
+        if (!used[v0] || seen[v0] || h[v0] > 0) continue;
+        const q = [v0];
+        seen[v0] = 1;
+        let a = 0, big = false;
+        for (let i = 0; i < q.length; i++) {
+          const v = q[i];
+          a += va[v];
+          if (a > o.pinhole || dvis[v] > 0) big = true;
+          for (let k = off[v]; k < off[v + 1]; k++) { const u = adj[k]; if (!seen[u] && h[u] <= 0) { seen[u] = 1; q.push(u); } }
+          for (const u of twins.get(vOrig[v]) || []) if (!seen[u] && h[u] <= 0) { seen[u] = 1; q.push(u); }
+        }
+        if (big) continue;
+        for (const v of q) { h[v] = 0.1; flip[v] = 1; }
+        any = true;
+      }
+      if (!any) return;
+      const at0 = H.at;
+      H.at = (a, b, s2) => (flip[a] || flip[b] ? h[a] + (h[b] - h[a]) * s2 : at0(a, b, s2));
+    };
+    for (const pc of pieces) { closePins(pc.h); closePins(pc.r); }
+  }
+
   // closed shell between the surface patch {h > 0} (pushed e out) and its copy t(v) inside, walls along the normals
-  const shell = (H, e = 0.4, extra = 0, fixed = null) => {
+  const shell = (H, e = 0.4, extra = 0, fixed = null, out = null, cap = null) => {
     const h = H.v, VN = H.n || VNg;
     const key = new Map(), P2 = [], NN = [], TT = [], tops = [], rim = [];
     const vid = (k, a, b, s) => {
@@ -1936,7 +1969,7 @@ function buildCovers(ctx) {
       i = P2.length / 3;
       key.set(k, i);
       for (let j = 0; j < 3; j++) { P2.push(X[a * 3 + j] + (X[b * 3 + j] - X[a * 3 + j]) * s); NN.push(VN[a * 3 + j] + (VN[b * 3 + j] - VN[a * 3 + j]) * s); }
-      TT.push(fixed == null ? tv[a] + (tv[b] - tv[a]) * s + extra : typeof fixed === 'number' ? fixed : fixed[a] + (fixed[b] - fixed[a]) * s);
+      TT.push(fixed == null ? Math.max(0.05, tv[a] + (tv[b] - tv[a]) * s + extra) : typeof fixed === 'number' ? fixed : fixed[a] + (fixed[b] - fixed[a]) * s);
       rim.push(k >= nV);
       return i;
     };
@@ -2006,6 +2039,25 @@ function buildCovers(ctx) {
       for (let v = 0; v < n0; v++) if (shrink[v]) TT[v] *= 0.6;
       smoothT(2);
     }
+    // inside the given shell (a cover in its recess): the same normals and never deeper than its floor minus the
+    // margin at each vertex - shells built over different patches smooth and unfold differently, and a cover
+    // reaching past its recess floor is volume shared with the base
+    if (cap) {
+      for (const [k, i] of key) {
+        const src = k < nV ? [k] : [E[(k - nV) * 2], E[(k - nV) * 2 + 1]].filter((v) => cap.T[v] === cap.T[v]);
+        if (!src.length) continue;
+        let tc = Infinity;
+        const m = [0, 0, 0];
+        for (const v of src) { tc = Math.min(tc, cap.T[v]); for (let j = 0; j < 3; j++) m[j] += cap.N[v * 3 + j]; }
+        if (k < nV) { const q = norm(m); UN[i * 3] = q[0]; UN[i * 3 + 1] = q[1]; UN[i * 3 + 2] = q[2]; }
+        TT[i] = Math.max(0.02, Math.min(TT[i], tc - cap.margin));
+      }
+    }
+    if (out) {
+      out.T = new Float64Array(nV).fill(NaN);
+      out.N = new Float64Array(nV * 3);
+      for (const [k, i] of key) if (k < nV) { out.T[k] = TT[i]; for (let j = 0; j < 3; j++) out.N[k * 3 + j] = UN[i * 3 + j]; }
+    }
     for (let i = 0; i < n0; i++) {
       for (let j = 0; j < 3; j++) { VP[i * 3 + j] = P2[i * 3 + j] + UN[i * 3 + j] * e; VP[(n0 + i) * 3 + j] = P2[i * 3 + j] - UN[i * 3 + j] * TT[i]; }
     }
@@ -2030,7 +2082,8 @@ function buildCovers(ctx) {
   const parts = [];
   // one recess per cover piece (a single shell for a whole colour can fold onto itself where two painted
   // surfaces meet at a tight angle, e.g. ear against head, and the boolean then leaves patches uncut)
-  const recOf = pieces.map((pc) => shell(pc.r, 0.4)), recesses = recOf.filter(Boolean);
+  const recCap = pieces.map(() => ({ margin: 0.05 }));
+  const recOf = pieces.map((pc, i) => shell(pc.r, 0.4, 0, null, recCap[i])), recesses = recOf.filter(Boolean);
   let body = M, recU = null;
   if (recesses.length) body = keep(body.subtract((recU = keep(Manifold.union(recesses)))));
   if (solidUnion && !o.solidCovers) body = keep(body.subtract(solidUnion));
@@ -2046,10 +2099,11 @@ function buildCovers(ctx) {
   const done = [], back = [], backCut = [];
   pieces.forEach((pc, i) => {
     progress(`Covers: pieza ${i + 1}/${pieces.length}`, 0.6 + (0.2 * i) / pieces.length);
-    const sh = shell(pc.h, 0.4);
+    const sh = shell(pc.h, 0.4, -0.05, null, null, recOf[i] ? recCap[i] : null);
     if (!sh) { failed++; return; }
+    // (not intersected with its recess: it lies inside it by construction - see shell's cap - and the boolean of two
+    // shells with near-coincident walls leaves zero-volume sheets and handles all over the cover)
     let man = keep(sh.intersect(M));
-    if (recOf[i]) man = keep(man.intersect(recOf[i]));
     if (solidUnion) man = keep(man.subtract(solidUnion));
     if (done.length) man = keep(man.subtract(keep(Manifold.union(done))));
     // a cover face lying on visible model surface outside its own patch is the cover showing through a wall thinner
@@ -2122,6 +2176,21 @@ function buildCovers(ctx) {
         if (aw > 1e-9) cvx[v] = (mp[0] / aw - p2[0]) * VNg[v * 3] + (mp[1] / aw - p2[1]) * VNg[v * 3 + 1] + (mp[2] / aw - p2[2]) * VNg[v * 3 + 2] < -0.02 ? 1 : 0;
       }
       if (!seeds.size) return [m0];
+      // knife edge as a smooth weight, not a per-vertex flag: a flag flipping from one vertex to the next makes the
+      // cut border zigzag across every triangle along the edge (a saw of teeth, slivers and handles on the cover)
+      const cvs = new Float64Array(nV).fill(-1);
+      for (let v = 0; v < nV; v++) if (pc.h.raw[v] > -2.5 && !(dvis[v] > 0)) cvs[v] = cvx[v];
+      for (let r = 0; r < 6; r++) {
+        const nx = cvs.slice();
+        for (let v = 0; v < nV; v++) {
+          if (cvs[v] < 0) continue;
+          let s2 = cvs[v], c2 = 1;
+          for (let j = off[v]; j < off[v + 1]; j++) if (cvs[adj[j]] >= 0) { s2 += cvs[adj[j]]; c2++; }
+          nx[v] = s2 / c2;
+        }
+        for (const g of twins.values()) { let m = 0, c2 = 0; for (const u of g) if (nx[u] >= 0) { m += nx[u]; c2++; } if (c2) for (const u of g) if (nx[u] >= 0) nx[u] = m / c2; }
+        cvs.set(nx);
+      }
       // ONE smooth cut: a thin shell under that foreign surface (everything within RQ mm of the hits along the
       // surface, across split creases, so it covers all the cover shows there however tiny the triangles are)
       const RQ = 2.5, gq = new Float64Array(nV).fill(Infinity);
@@ -2145,8 +2214,7 @@ function buildCovers(ctx) {
         // colour border on a smooth surface, a concave corner - the cover's own field)
         if (!isP[v] && isF[v]) fv[v] = lim || -1e-6;
         else if (!isP[v]) continue;
-        else if (cvx[v]) fv[v] = Math.min(0.35 - rawAt(v), lim) || -1e-6;
-        else fv[v] = Math.min(-Math.max(rawAt(v), 0), lim) || -1e-6;
+        else { const k2 = Math.max(cvs[v], 0), ra = rawAt(v); fv[v] = Math.min(k2 * (0.35 - ra) - (1 - k2) * Math.max(ra, 0), lim) || -1e-6; }
       }
       // 0.35 mm deep: just past the clearance, so at a knife edge the base keeps only a hairline on the painted face
       // 0.35 mm deep, but never more than half the wall: a fin thinner than that (painted on one side, base on the
@@ -2170,12 +2238,13 @@ function buildCovers(ctx) {
     const comps = [];
     for (const c0 of man.decompose().map(keep)) {
       if (c0.volume() < o.minCover) { if (c0.volume() > 1) crumbs++; back.push(c0); continue; }
-      comps.push(...pokeCut(c0));
+      const nc = backCut.length;
+      for (const q of pokeCut(c0)) { q.__cut = backCut.length > nc ? nc : -1; comps.push(q); }
     }
     comps.sort((a, b) => b.volume() - a.volume());
     for (const cm of comps) {
       if (cm.volume() < o.minCover) { if (cm.volume() > 1) crumbs++; back.push(cm); continue; }
-      parts.push({ kind: 'cover', color: pc.color, man: cm, up: pc.axis, n: pc.axis, half: pc.side });
+      parts.push({ kind: 'cover', color: pc.color, man: cm, up: pc.axis, n: pc.axis, half: pc.side, cut: cm.__cut });
       done.push(cm);
     }
     // seating: the last few mm in along the axis must be free
@@ -2194,6 +2263,21 @@ function buildCovers(ctx) {
   // bits with the carved base meets it on coincident faces and the boolean shreds those into a knot of thousands
   // of degenerate triangles (spikes in the view, a viewer that freezes); the zero-volume sheets left along shared
   // faces add nothing but such junk, so they are dropped
+  // a cut goes back to the base, so no other piece's cover may keep anything inside it either (the cut of one half
+  // of a split cover reaches across the split crease into the other half): that would be volume in two parts
+  for (const p of parts.slice()) {
+    if (p.kind !== 'cover' || p.cut == null) continue;
+    const cs = backCut.filter((c, k) => k !== p.cut);
+    if (!cs.length) continue;
+    const cu = keep(Manifold.union(cs));
+    if (!(p.man.intersect(cu).volume() > 1e-4)) continue;
+    const qs = keep(p.man.subtract(cu)).decompose().map(keep).sort((a, b) => b.volume() - a.volume());
+    p.man = qs[0];
+    for (const q of qs.slice(1)) {
+      if (q.volume() >= o.minCover) parts.push({ ...p, man: q });
+      else back.push(q);
+    }
+  }
   const solidBack = back.filter((b) => b.volume() > 1e-3);
   if (recU && (solidBack.length || backCut.length)) {
     let nb = backCut.length ? keep(M.subtract(keep(recU.subtract(keep(Manifold.union(backCut)))))) : body;
