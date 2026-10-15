@@ -84,9 +84,8 @@ const Wt = 0.8 + 0.15; // minWall + clearance (defaults)
   check(n === 0, `thin plate whose faces belong to different pieces: untouched (${n})`);
 }
 {
-  // blade (prism, 50° between its flanks, 4 mm tall) on a block, left flank colour 1: where the blade is thinner than
-  // Wt the flank goes base. Rays cross the blade slantwise (1.56× its thickness): the thickness is the distance to the
-  // far flank's plane, not the ray length
+  // A tapered flank is one piece with a thick lower portion, not a loose thin plate. Keeping its attached thin edge
+  // avoids recolouring whole triangles along a varying-thickness contour (the green/white bow regression).
   const H = 4, half = H * Math.tan((25 * Math.PI) / 180);
   const cs = new CrossSection([[-half, 0], [half, 0], [0, H]]);
   const blade = cs.extrude(20), block = Manifold.cube([20, 3, 20]).translate([-10, -3, 0]);
@@ -103,8 +102,20 @@ const Wt = 0.8 + 0.15; // minWall + clearance (defaults)
     if (d < Wt - 0.1) { thin++; if (col[t] === 1) thinKept++; }
     if (d > Wt + 0.1) { thick++; if (col[t] !== 1) thickLost++; }
   }
-  check(thin > 50 && thinKept === 0, `blade: flank thinner than ${Wt.toFixed(2)} mm → base (${thinKept} of ${thin} still painted)`);
+  check(thin > 50 && thinKept === thin, `blade: thin edge stays attached to the thick colour piece (${thinKept} of ${thin} still painted)`);
   check(thick > 50 && thickLost === 0, `blade: flank thicker than ${Wt.toFixed(2)} mm keeps its colour (${thickLost} of ${thick} lost)`);
+}
+{
+  // A separate thick patch in the same colour must not protect an unrelated thin fin.
+  const block = Manifold.cube([20, 20, 5]), fin = Manifold.cube([0.6, 12, 10]).translate([9.7, 4, 5]);
+  const s = meshOf(Manifold.union([block, fin]), 0.6);
+  block.delete(); fin.delete();
+  const onFin = (t) => s.N[t][0] > 0.9 && s.C[t][2] > 5.01;
+  const onPatch = (t) => s.N[t][2] > 0.9 && s.C[t][0] < 5 && s.C[t][2] < 5.01;
+  const col = Int16Array.from({ length: s.nT }, (_, t) => onFin(t) || onPatch(t) ? 1 : 0);
+  const n = thinWalls(col, s.P, s.np, s.T, 0, Wt);
+  check(n > 0 && col.every((c, t) => !onFin(t) || c === 0), 'thin fin: a disconnected thick patch of the same colour gives no support');
+  check(col.every((c, t) => !onPatch(t) || c === 1), 'thin fin: the separate thick patch keeps its paint');
 }
 
 // ---------- openPaint ----------
@@ -152,6 +163,28 @@ function partsCheck(name, r, { coverGenus0 = true } = {}) {
   check(mans.filter((_, i) => r.parts[i].kind === 'body').every((m) => m.genus() === 0), `${name}: base body without handles`);
   uni.delete();
   mans.forEach((m) => m.delete());
+}
+{
+  const H = 4, half = H * Math.tan(25 * Math.PI / 180), L = Math.hypot(H, half);
+  const NA = [-H / L, half / L, 0], cs = new CrossSection([[-half, 0], [half, 0], [0, H]]);
+  const blade = cs.extrude(20), block = Manifold.cube([20, 3, 20]).translate([-10, -3, 0]);
+  const model = shellsModel('attached taper', [{
+    man: Manifold.union([blade, block]),
+    colorOf: (_, n) => n[0] * NA[0] + n[1] * NA[1] > 0.999 ? 1 : 0,
+  }], ['#F4F4F4', '#8ADFBD']);
+  [cs, blade, block].forEach((m) => m.delete());
+  const r = splitColors(w, model, { mode: 'carve' });
+  partsCheck('attached taper', r);
+  const covers = r.parts.filter((p) => p.color === 1).map((p) => toMan(p.mesh));
+  let kept = 0, samples = 0;
+  for (const y of [3.1, 3.3, 3.5]) for (const z of [3, 6, 10, 14, 17]) {
+    const p = [-half * (1 - y / H), y, z];
+    const from = p.map((x, k) => x + NA[k] * 0.5), to = p.map((x, k) => x - NA[k] * 0.02);
+    samples++;
+    if (covers.some((m) => m.rayCast(from, to).length)) kept++;
+  }
+  check(kept === samples, `attached taper: original colour reaches the thin edge, without white bites (${kept}/${samples} surface samples)`);
+  covers.forEach((m) => m.delete());
 }
 {
   const t0 = Date.now();

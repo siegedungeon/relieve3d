@@ -61,6 +61,7 @@ module.exports = async ({ win, run, shot, wait }) => {
   if (mode === 'carve') ok(res.carve && res.k.body === nBody && /tallados/.test(res.summary), `carve mode: ${nBody} base piece(s) (${res.k.body}) + carved colour pieces, summary explains it`);
   if (process.env.E2E_MODE === 'skin') ok(res.skin && res.k.body === 1 && /capas de color/.test(res.summary), 'skin mode: one whole base + colour skins, summary explains it');
   ok(!res.covers || (res.k.body || 0) >= 1, 'covers mode keeps a base body');
+  if (res.carve || (res.covers && !res.skin)) ok(res.summary.includes(`base: ${res.k.body} pieza(s)`) && !/figura queda exacta/.test(res.summary), 'summary reports the actual base count, without promising a perfect fit');
   ok(!(res.warnings || []).some((w) => /piezas \(paredes|no se pudieron/.test(w)), 'no broken-base / failed-cover warnings');
   await S('cs_02_split');
   await run(`(() => { const e = document.querySelector('#colorsplit [data-r=explode]'); e.value = 0; e.dispatchEvent(new Event('input', { bubbles: true })); })()`);
@@ -76,6 +77,10 @@ module.exports = async ({ win, run, shot, wait }) => {
   const files = fs.existsSync(exp) ? fs.readdirSync(exp) : [];
   log('files', files.join(', '));
   ok(files.filter((f) => f.endsWith('.3mf')).length >= 2 && files.some((f) => f.endsWith('.txt')), 'plates 3MF + instructions exported');
+  if (res.covers) {
+    const instructions = files.filter((f) => f.endsWith('.txt')).map((f) => fs.readFileSync(path.join(exp, f), 'utf8')).join('\n');
+    ok(instructions.includes(`La BASE incluye ${res.k.body} pieza(s)`) && /bordes afinados/.test(instructions), 'export describes actual base pieces and the need to inspect tapered edges');
+  }
   ok(!errs.length, 'console errors: ' + (errs.join(' | ') || 'none'));
   log('done');
 };

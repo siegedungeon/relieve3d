@@ -113,17 +113,18 @@ export function instructions(res, opts, plates) {
   for (const pl of plates) L.push(`  ${names(pl.color)} — placa ${pl.plate + 1}: ${pl.items.length} pieza(s)${pl.items.some((i) => !i.fits) ? '  ⚠ hay piezas más grandes que la cama' : ''}`);
   if (res.covers) {
     L.push('',
-      '  • La BASE (color principal) es una sola pieza entera con rebajes poco profundos donde van los otros colores.',
+      `  • La BASE incluye ${body.length} pieza(s) del color principal; revisa su posición en el mapa de armado.`,
       '    Imprímela como viene (Z hacia arriba); si el slicer marca voladizos activa soportes "solo en la cama".',
       '  • Cada COVER es una tapa delgada que copia la superficie: viene con la cara de color ARRIBA; su cara de abajo',
       '    es curva → soportes tipo árbol "solo en la cama". Esa cara se pega y no se ve.',
       '  • Usa capas de 0.12–0.16 mm para los covers (la superficie curva sale más lisa).',
+      '  • Revisa los bordes afinados y los avisos de montaje en el laminador antes de imprimir.',
       '  • Si los covers entran muy duros sube la holgura a 0.2 mm; si quedan flojos bájala a 0.1 mm y vuelve a generar.', '');
     L.push('ARMADO', '',
       '  1. Retira los soportes y lija suave la cara de abajo de cada cover (lija 400) para que asiente parejo.',
       '  2. Presenta cada cover en su rebaje SIN pegamento: cada forma sólo calza en su lugar (usa el mapa de armado).',
       '  3. Pega con cianoacrilato en gel o epóxico de 5 min, en gotas pequeñas en el fondo del rebaje (no en los bordes),',
-      '     y presiona unos segundos: el borde queda a ras con la base y la figura queda igual al modelo original.',
+      '     y presiona unos segundos. Comprueba la alineación y la holgura antes de que cure el pegamento.',
       '  4. Las piezas sólidas (ej. el moño) entran en su asiento en la base; pégalas al final.', '');
   } else if (res.cut) {
     L.push('',

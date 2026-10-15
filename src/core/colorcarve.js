@@ -186,23 +186,26 @@ export function openPaint(col, P, np, T, merged, rho, adj = triAdjacency(P, np, 
   return changed;
 }
 
-// Walls thinner than Wt painted one colour on each face: carved, each colour would get half the wall minus the clearance,
-// two slivers too thin to print. The losing face takes the colour of the face opposite it so the wall prints in one
-// colour: the base colour wins (the wall stays part of the base body), between two other colours the one painted over
-// the larger area. Every triangle casts a ray from its centre through the wall (against its normal) to the face it
+// A painted patch that is only a thin wall cannot be a separate piece. A tapered edge attached to a substantial
+// thicker part of the same patch can, however, stay on that piece: recolouring individual triangles along the taper
+// made long, jagged bites in otherwise printable colour pieces. The base colour wins for unsupported thin patches;
+// between two other colours the one painted over the larger area wins.
+// Every triangle casts a ray from its centre through the wall (against its normal) to the face it
 // leaves the solid through; the wall thickness is the distance to that face's plane, so curved or tapered walls whose
 // faces are not parallel (the ray crosses them slantwise) still count, while at a convex corner the ray runs deep into
 // the body. key (optional): surface piece of each triangle; faces of other pieces are not compared.
 // Returns how many triangles were recoloured.
-export function thinWalls(col, P, np, T, base, Wt, key = null) {
+export function thinWalls(col, P, np, T, base, Wt, key = null, adj = null) {
   const nT = T.length / 3, N = new Float64Array(nT * 3), C = new Float64Array(nT * 3), area = new Map();
+  const areas = new Float64Array(nT), thick = new Uint8Array(nT);
   const lo = [Infinity, Infinity, Infinity], hi = [-Infinity, -Infinity, -Infinity];
   for (let t = 0; t < nT; t++) {
     const a = T[t * 3] * np, b = T[t * 3 + 1] * np, c = T[t * 3 + 2] * np;
     const ux = P[b] - P[a], uy = P[b + 1] - P[a + 1], uz = P[b + 2] - P[a + 2], vx = P[c] - P[a], vy = P[c + 1] - P[a + 1], vz = P[c + 2] - P[a + 2];
     const nx = uy * vz - uz * vy, ny = uz * vx - ux * vz, nz = ux * vy - uy * vx, l = Math.hypot(nx, ny, nz);
     if (l > 0) { N[t * 3] = nx / l; N[t * 3 + 1] = ny / l; N[t * 3 + 2] = nz / l; }
-    area.set(col[t], (area.get(col[t]) || 0) + l / 2);
+    areas[t] = l / 2;
+    area.set(col[t], (area.get(col[t]) || 0) + areas[t]);
     for (let k = 0; k < 3; k++) {
       C[t * 3 + k] = (P[a + k] + P[b + k] + P[c + k]) / 3;
       lo[k] = Math.min(lo[k], P[a + k], P[b + k], P[c + k]);
@@ -265,15 +268,39 @@ export function thinWalls(col, P, np, T, base, Wt, key = null) {
         if (s > 1e-6 && s < best) { best = s; hit = u; }
       }
     }
-    if (hit < 0 || col[hit] === col[t] || (key && key[hit] !== key[t])) continue;
+    if (hit < 0) { thick[t] = 1; continue; }
     // thickness = distance to the exit face's plane; exits more than 60° slantwise are not a wall
     const ch = N[hit * 3] * dx + N[hit * 3 + 1] * dy + N[hit * 3 + 2] * dz;
-    if (ch < 0.5 || best * ch >= Wt) continue;
+    if (ch < 0.5 || best * ch >= Wt) { thick[t] = 1; continue; }
+    if (col[hit] === col[t] || (key && key[hit] !== key[t])) continue;
     const a = col[t], b = col[hit], A = area.get(a), Bv = area.get(b);
     const win = a === base || b === base ? base : Bv > A || (Bv === A && b < a) ? b : a;
     if (win !== a) { next[t] = win; changed++; }
   }
-  if (changed) col.set(next);
+  if (changed) {
+    adj ||= triAdjacency(P, np, T, Uint32Array.from({ length: P.length / np }, (_, i) => i));
+    const { off: ao, nb } = adj, seen = new Uint8Array(nT), queue = new Int32Array(nT);
+    for (let s = 0; s < nT; s++) {
+      if (seen[s] || col[s] === base) continue;
+      let h = 0, e = 1, support = 0;
+      queue[0] = s; seen[s] = 1;
+      while (h < e) {
+        const t = queue[h++];
+        if (thick[t]) support += areas[t];
+        for (let q = ao[t]; q < ao[t + 1]; q++) {
+          const u = nb[q];
+          if (seen[u] || col[u] !== col[s] || (key && key[u] !== key[s])) continue;
+          seen[u] = 1; queue[e++] = u;
+        }
+      }
+      // Require an area equivalent to a 2*Wt square, not one surviving triangle; this is independent of tessellation.
+      if (support >= 4 * Wt * Wt) for (let q = 0; q < e; q++) {
+        const t = queue[q];
+        if (next[t] !== col[t]) { next[t] = col[t]; changed--; }
+      }
+    }
+    col.set(next);
+  }
   return changed;
 }
 
@@ -401,7 +428,7 @@ export function buildCarve({ w, o, M, mg, col, mIDs, merged, base, keep, warning
     key = new Int16Array(nT);
     for (let t = 0; t < nT; t++) key[t] = byId.get(runOf[t]) ?? -1;
   }
-  const walled = thinWalls(col, P, np, T, base, o.minWall + cl, key);
+  const walled = thinWalls(col, P, np, T, base, o.minWall + cl, key, adj);
   const thinned = openPaint(col, P, np, T, merged, (o.carveMinWidth ?? 0.6) / 2, adj, key);
   const fixed = cleanIslands(col, P, np, T, merged, o.minArea, key ? cutAdjacency(adj, key) : adj);
   // base paint on a solid: specks (smaller than minArea within the solid, e.g. at its joint with the base) take the
