@@ -243,11 +243,12 @@ function build({ w, o, M, src, base, nCol, keep, warnings, progress, cutAxis, so
   // the sdf must be finite and negative on the box faces (the grid border lies R outside the skin)
   const skinOf = (c, shift, draft = 0) => {
     const region = keep(Manifold.levelSet((p) => {
-      const depth = tri(S, p), taper = smooth > 0 ? 1 - 0.75 * Math.max(0, Math.min(1, -depth / D)) : 1;
+      // Extend the wall through the envelope; clamping its draft at the surface creates serrated intersections.
+      const depth = tri(S, p), taper = smooth > 0 ? 1 + 0.75 * depth / D : 1;
       const bound = envelope ? Math.min(D + depth + 2 * H, 2 * H - depth,
         p[0] - o0[0] - H / 2, p[1] - o0[1] - H / 2, p[2] - o0[2] - H / 2,
         o1[0] - p[0] - H / 2, o1[1] - p[1] - H / 2, o1[2] - p[2] - H / 2) : D + depth;
-      const v = Math.min(bound, dom(c, p) + shift * taper - draft * Math.max(0, D + depth));
+      const v = Math.min(bound, dom(c, p) + shift * taper - draft * (D + depth));
       return Number.isFinite(v) ? v : -1;
     }, box, H, 0));
     return envelope ? keep(envelope.intersect(region)) : region;

@@ -58,6 +58,54 @@ assert.throws(() => splitColors(w, strip(0), { mode: 'sculpt' }, message => {
   if (message === 'Capa exterior: distancias') throw new Error('interrupted sculpt regression');
 }), /interrupted sculpt regression/, 'an interrupted job propagates its error; subsequent runs still work');
 
+for (const angles of [[0, 0, 0], [27, -19, 31]]) {
+  const rotate = p => {
+    p = p.slice();
+    for (let a = 0; a < 3; a++) {
+      const angle = angles[a] * Math.PI / 180, b = (a + 1) % 3, c = (a + 2) % 3, x = p[b], y = p[c];
+      p[b] = x * Math.cos(angle) - y * Math.sin(angle);
+      p[c] = x * Math.sin(angle) + y * Math.cos(angle);
+    }
+    return p;
+  };
+  const model = strip(0), source = model.parts[0];
+  // The base-colour half exercises the drafted wall, unlike a joint between two coloured covers.
+  source.tc = source.tc.map(c => Math.max(0, c - 1));
+  for (let i = 0; i < source.V.length; i += 3) source.V.set(rotate(Array.from(source.V.slice(i, i + 3))), i);
+  const result = splitColors(w, model, { mode: 'sculpt', skinGrid: 0.29 });
+  assert.equal(result.parts.length, 2, 'a base-colour boundary keeps one body and one coloured piece');
+  const body = solid(result.parts[0].mesh), cover = solid(result.parts[1].mesh);
+  try {
+    for (const man of [body, cover]) {
+      assert.equal(man.status(), 'NoError');
+      assert.equal(man.genus(), 0, 'polishing does not create tunnels');
+      const components = man.decompose();
+      assert.equal(components.length, 1, 'polishing does not create floating fragments');
+      components.forEach(c => c.delete());
+    }
+    const edges = [[], []], gaps = [];
+    for (let j = 0; j <= 300; j++) {
+      const y = -4 + j * 8 / 300;
+      for (const [i, man] of [body, cover].entries()) {
+        const hits = man.rayCast(rotate([-2, y, 1.195]), rotate([2, y, 1.195]));
+        assert.ok(hits.length, 'each colour keeps a continuous visible edge');
+        edges[i].push(hits.map(h => -2 + 4 * h.distance).sort((a, b) => Math.abs(a) - Math.abs(b))[0]);
+      }
+      gaps.push(edges[1].at(-1) - edges[0].at(-1));
+    }
+    const waviness = Math.max(...edges.map(e => Math.max(...e) - Math.min(...e)));
+    console.log('sculpt base seam', { angles, waviness, gap: [Math.min(...gaps), Math.max(...gaps)] });
+    assert.ok(waviness < 0.01, 'the drafted base edge has no grid serrations, including on oblique faces');
+    assert.ok(Math.min(...gaps) > 0.02 && Math.max(...gaps) < 0.08, 'the polished visible joint stays narrow and open');
+    for (const distance of [0, 0.025, 0.05, 0.1, 0.3, 1, 3, 10, 30]) {
+      const moved = cover.translate(result.parts[1].n.map(x => x * distance));
+      const hit = moved.intersect(body);
+      try { assert.ok(hit.volume() < 1e-4, `polished pieces still assemble at ${distance} mm`); }
+      finally { hit.delete(); moved.delete(); }
+    }
+  } finally { body.delete(); cover.delete(); }
+}
+
 for (const [amplitude, count] of [[0, 2], [0.18, 2], [0.18, 4]]) {
   const model = strip(amplitude, count), original = solid(model.parts[0]);
   assert.equal(original.status(), 'NoError');
