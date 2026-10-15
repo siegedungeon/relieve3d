@@ -7,6 +7,7 @@
 
 import { buildSkin } from './colorskin.js';
 import { buildCarve } from './colorcarve.js';
+import { blurGrid } from './gridfield.js';
 import { dropSpecks, hiddenFaces, lockedParts, meshSoup, slideOn, solidPieces } from './solidparts.js';
 
 export const DEFAULT_SPLIT = {
@@ -27,8 +28,10 @@ export const DEFAULT_SPLIT = {
   //                walls), the base keeps the core in one piece; the outer shape stays exact
   //               | 'covers': intact base + thin colour covers glued on top | 'inlays': deep inlays (optionally cut in halves)
   //               | 'skin' (experimental): the whole original solid is the base, colours are a skin grown outside it
-  skinDepth: 1.2, // skin mode: thickness of the outer colour skin; the model grows this much on every side (mm)
-  skinGrid: 0.2, // skin mode: voxel size of the distance fields (mm); coarser automatically on big models
+  //               | 'sculpt' (preview only): reconstruct the outer shape and redraw the colour boundaries
+  skinDepth: 1.2, // skin/sculpt: outward growth on every side (mm)
+  skinGrid: 0.2, // skin/sculpt: distance-field spacing (mm); coarser automatically on big models
+  skinSmooth: 0.6, // sculpt: positive colour-boundary smoothing radius (mm, up to 3)
   carveDepth: 1.2, // carve mode: thickness of the colour layer carved under the surface (mm)
   carveGrid: 0.25, // carve mode: node spacing of the distance fields (mm); coarser automatically on big models
   carveDraft: 10, // carve mode: draft of the walls between colours (deg): pieces get narrower inwards so they slide in
@@ -213,6 +216,11 @@ export function analyzeModel(model) {
 // ---------- main ----------
 export function splitColors(w, model, options = {}, progress = () => {}) {
   const o = { ...DEFAULT_SPLIT, ...options };
+  if (o.mode === 'sculpt') {
+    if (!Number.isFinite(o.skinSmooth) || o.skinSmooth <= 0 || o.skinSmooth > 3) throw new Error('El suavizado del esculpido debe ser mayor que 0 y como máximo 3 mm');
+    if (!Number.isFinite(o.skinDepth) || o.skinDepth <= 0 || !Number.isFinite(o.skinGrid) || o.skinGrid <= 0 ||
+      !Number.isFinite(o.clearance) || o.clearance < 0 || o.clearance / 2 >= o.skinDepth) throw new Error('Esculpido: revisa el grosor, la rejilla y la holgura; debe quedar espesor de color');
+  }
   const { Manifold, CrossSection } = w;
   const ana = analyzeModel(model);
   const base = o.baseColor >= 0 ? o.baseColor : ana.base;
@@ -220,9 +228,11 @@ export function splitColors(w, model, options = {}, progress = () => {}) {
   const keep = (m) => { garbage.push(m); return m; };
   const warnings = [];
 
-  if (o.mode === 'skin') {
+  if (o.mode === 'skin' || o.mode === 'sculpt') {
     progress('Uniendo cuerpo', 0.05);
-    const mans = shellManifolds(ana.shells.filter((s) => Math.abs(s.vol) > 1e-6), warnings, (s) => keep(toManifold(w, subMesh(s.part.V, s.part.T, s.tris, s.vol < 0)))).filter(Boolean);
+    const shells = ana.shells.filter((s) => Math.abs(s.vol) > 1e-6);
+    const built = shellManifolds(shells, warnings, (s) => keep(toManifold(w, subMesh(s.part.V, s.part.T, s.tris, s.vol < 0))));
+    const mans = built.filter(Boolean);
     if (!mans.length) throw new Error('No se encontró un cuerpo base');
     const M = dropSpecks(w, keep(Manifold.union(mans)), keep);
     const V = [], T = [], C = [];
@@ -241,8 +251,9 @@ export function splitColors(w, model, options = {}, progress = () => {}) {
     }
     const cutAxis = [0, 0, 0];
     cutAxis[axI] = sN >= 0 ? 1 : -1;
-    const parts = buildSkin({ w, o, M, src: { V, T, C }, base, nCol: model.palette.length, keep, warnings, progress, cutAxis });
-    return finishParts({ w, o, model, parts, solids: [], base, keep, garbage, warnings, progress, info: { regions: 0, tiles: parts.filter((p) => p.kind === 'cover').length, thickness: [], covers: true, skin: true, cut: null } });
+    const solids = o.mode === 'sculpt' ? shells.flatMap((s, i) => built[i] && s.dom !== base && s.purity > 0.99 && s.thickness > 0.6 && s.vol > o.minCover ? [{ color: s.dom, man: built[i] }] : []) : [];
+    const parts = buildSkin({ w, o, M, src: { V, T, C }, base, nCol: model.palette.length, keep, warnings, progress, cutAxis, solids });
+    return finishParts({ w, o, model, parts, solids: [], base, keep, garbage, warnings, progress, info: { regions: 0, tiles: parts.filter((p) => p.kind === 'cover').length, thickness: [], covers: true, skin: true, sculpt: o.mode === 'sculpt', previewOnly: o.mode === 'sculpt', cut: null } });
   }
 
   if (o.mode === 'carve') {
@@ -1229,16 +1240,7 @@ function sampler(G, F, out) {
 
 // box blur (3 taps per axis, `passes` times) of a node field: softens the steps of fields built from voxel masks
 function blur(G, F, passes = 2) {
-  const st = [1, G.n[0], G.n[0] * G.n[1]], tmp = new Float32Array(F.length);
-  for (let p = 0; p < passes; p++) for (let k = 0; k < 3; k++) {
-    const s = st[k];
-    for (let i = 0; i < F.length; i++) {
-      const c = Math.floor(i / s) % G.n[k];
-      tmp[i] = (F[c > 0 ? i - s : i] + F[i] + F[c < G.n[k] - 1 ? i + s : i]) / 3;
-    }
-    F.set(tmp);
-  }
-  return F;
+  return blurGrid(F, G.n, passes);
 }
 
 // covers mode, solid colour parts (a bow): the base colour gets the whole shape (a core fused to the base, plus a

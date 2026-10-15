@@ -166,6 +166,7 @@ export function instructions(res, opts, plates) {
 
 // All files: [{ name, data }]
 export function exportFiles(res, opts = {}) {
+  if (res.previewOnly) throw new Error('El esculpido es solo una vista previa: su montaje aún no está resuelto y no se puede exportar para imprimir');
   const o = { bedW: 256, bedH: 256, gap: 3, clearance: 0.15, title: 'modelo', ...opts };
   const plates = platesFor(res, o);
   const files = [];

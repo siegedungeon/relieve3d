@@ -85,9 +85,10 @@ export class ColorSplitStudio {
         <section class="card">
           <h3>Encajes</h3>
           ${SETTINGS.map(([k, l, t]) => `<label class="row" title="${esc(t)}">${l} <input ${N} data-k="${k}" /></label>`).join('')}
-          <label class="row" title="Tallado: cada color se talla HACIA DENTRO bajo la superficie, sin agrandar la figura. Se busca conservar una base conectada y piezas que se puedan colocar; revisa los avisos de montaje y los detalles finos en el laminador. Covers: la base lleva rebajes y cada color es una tapa delgada que se pega encima. Incrustaciones: modo anterior con corte frente / atrás opcional. Capa exterior: el modelo entero es la base y los colores se pegan POR FUERA (el modelo crece)">Modo <select data-k="mode"><option value="carve">Tallado (recomendado)</option><option value="covers">Base + covers pegados</option><option value="inlays">Incrustaciones</option><option value="skin">Capa exterior (experimental)</option></select></label>
+          <label class="row" title="Tallado conserva las dimensiones exteriores. Capa exterior crece sobre el original. Esculpido reconstruye una envolvente mayor y suaviza los colores: solo vista previa, todavía sin exportación por problemas de montaje">Modo <select data-k="mode"><option value="carve">Tallado (recomendado)</option><option value="covers">Base + covers pegados</option><option value="inlays">Incrustaciones</option><option value="skin">Capa exterior (experimental)</option><option value="sculpt">Esculpido (solo vista previa)</option></select></label>
           <label class="row" data-r="carveRow" title="Modo tallado: grosor de la capa de color tallada bajo la superficie. Más grosor = piezas de color más rígidas. Una zona enteramente delgada puede pasar al color base; un borde afinado unido a una zona gruesa conserva su color">Grosor del color tallado (mm) <input ${N} data-k="carveDepth" /></label>
-          <label class="row" data-r="skinRow" title="Modo capa exterior: el modelo original queda entero como base y cada color es una capa de este grosor que se pega POR FUERA. El modelo crece este grosor por cada lado (los agujeros se cierran el doble)">Grosor capa exterior (mm) <input ${N} data-k="skinDepth" /></label>
+          <label class="row" data-r="skinRow" title="Capa exterior conserva el original como base; Esculpido reconstruye también el núcleo. Ambos crecen por fuera y pueden estrechar agujeros; Esculpido no está listo para imprimir">Grosor capa exterior (mm) <input ${N} data-k="skinDepth" /></label>
+          <label class="row" data-r="sculptRow" title="Redibuja y redondea las fronteras de color. Mayor que 0 y hasta 3 mm. Puede cambiar detalles y no garantiza piezas montables">Suavizado del esculpido (mm) <input ${N} data-k="skinSmooth" /></label>
           <label class="row" data-r="planeRow" title="Solo en modo incrustaciones: corta el modelo con un plano vertical por la silueta (cuerpo en 2 mitades frente / atrás)">Cortar en mitades frente / atrás <input type="checkbox" data-k="planeCut" /></label>
       <label class="row" title="Número en espejo grabado en la cara oculta (la que se pega) de cada incrustación: coincide con la lista y el mapa de armado">Grabar número bajo cada pieza <input type="checkbox" data-k="labels" /></label>
         </section>
@@ -141,7 +142,7 @@ export class ColorSplitStudio {
       const el = e.target;
       if (el.dataset.k === 'labels') { this.opts.labels = el.checked; this.markStale(); return; }
       if (el.dataset.k === 'planeCut') { this.opts.planeCut = el.checked; this.markStale(); return; }
-      if (el.dataset.k === 'mode') { this.opts.mode = el.value; this.$('planeRow').hidden = el.value !== 'inlays'; this.$('skinRow').hidden = el.value !== 'skin'; this.$('carveRow').hidden = el.value !== 'carve'; this.markStale(); return; }
+      if (el.dataset.k === 'mode') { this.opts.mode = el.value; this.syncMode(); this.markStale(); return; }
       if (el.dataset.k) { const v = parseNum(el.value); if (Number.isFinite(v)) { this.opts[el.dataset.k] = v; this.markStale(); } return; }
       if (el.dataset.b) { const v = parseNum(el.value); if (Number.isFinite(v) && v > 0) { this.bed[el.dataset.b] = v; if (this.res) { this.plates = platesFor(this.res, { bedW: this.bed.w, bedH: this.bed.h, gap: this.bed.gap }); this.fillPlates(); if (this.tab === 'plates') this.render(); } } return; }
       const ci = el.dataset.ci;
@@ -173,10 +174,15 @@ export class ColorSplitStudio {
 
   sync() {
     for (const el of this.root.querySelectorAll('[data-k]')) { if (el.type === 'checkbox') el.checked = !!this.opts[el.dataset.k]; else el.value = this.opts[el.dataset.k]; }
-    this.$('planeRow').hidden = this.opts.mode !== 'inlays';
-    this.$('skinRow').hidden = this.opts.mode !== 'skin';
-    this.$('carveRow').hidden = this.opts.mode !== 'carve';
+    this.syncMode();
     for (const el of this.root.querySelectorAll('[data-b]')) el.value = this.bed[el.dataset.b];
+  }
+
+  syncMode() {
+    this.$('planeRow').hidden = this.opts.mode !== 'inlays';
+    this.$('skinRow').hidden = !['skin', 'sculpt'].includes(this.opts.mode);
+    this.$('sculptRow').hidden = this.opts.mode !== 'sculpt';
+    this.$('carveRow').hidden = this.opts.mode !== 'carve';
   }
 
   status(msg) { this.$('status').textContent = msg; }
@@ -300,13 +306,13 @@ export class ColorSplitStudio {
       this.plate = 0;
       this.fillPlates();
       this.renderResult();
-      this.$('btnExport').disabled = false;
+      this.$('btnExport').disabled = !!res.previewOnly;
       this.$('explode').value = this.explode = 0.35;
       this.setTab('split');
       this.viewer.frame();
       const secs = (performance.now() - t0) / 1000;
       this.$('time').textContent = `${secs.toFixed(1)} s`;
-      this.status(`${res.parts.length} piezas listas`);
+      this.status(res.previewOnly ? 'Vista previa experimental: no está lista para imprimir' : `${res.parts.length} piezas listas`);
       return res;
     } catch (err) {
       console.error(err);
@@ -345,7 +351,8 @@ export class ColorSplitStudio {
     });
     const nPlates = this.plates.length;
     const baseInfo = `base: ${res.parts.filter((p) => p.kind === 'body').length} pieza(s)`;
-    this.$('summary').innerHTML = `<div class="hb-ok">✓ ${res.parts.length} piezas, ${nPlates} placa(s) de impresión</div>${lines.join('')}<div class="muted small" style="margin-top:6px">Holgura ${this.opts.clearance} mm · ${res.skin ? `modelo original entero como base; capas de color de ${this.opts.skinDepth} mm que se pegan por fuera (el modelo crece ${this.opts.skinDepth} mm por lado) ` : res.carve ? `${baseInfo}; colores tallados ${this.opts.carveDepth} mm bajo la superficie, sin agrandar la figura. Revisa los avisos de montaje y los bordes finos en el laminador (cara de color arriba y soportes debajo)` : res.covers ? `${baseInfo}; covers de hasta ${this.opts.depth} mm que se pegan en sus rebajes (imprimir con la cara de color arriba y soportes debajo)` : `cascarones de color de ${this.opts.depth} mm `}${res.covers ? '' : res.cut ? '(las mitades del cuerpo y las piezas de color se imprimen apoyadas en la cara plana del corte: sin soportes)' : '(imprimir con la cara de color arriba y soportes bajo la cara oculta)'}</div>`;
+    const headline = res.previewOnly ? `<div class="hb-w">Vista previa: ${res.parts.length} piezas. Montaje pendiente; exportación desactivada.</div>` : `<div class="hb-ok">✓ ${res.parts.length} piezas, ${nPlates} placa(s) de impresión</div>`;
+    this.$('summary').innerHTML = `${headline}${lines.join('')}<div class="muted small" style="margin-top:6px">Holgura ${this.opts.clearance} mm · ${res.sculpt ? `${baseInfo}; núcleo y envolvente reconstruidos, fronteras de color suavizadas ${this.opts.skinSmooth} mm. Crece aproximadamente ${this.opts.skinDepth} mm por lado y puede estrechar agujeros. No está listo para imprimir.` : res.skin ? `modelo original entero como base; capas de color de ${this.opts.skinDepth} mm que se pegan por fuera (el modelo crece ${this.opts.skinDepth} mm por lado) ` : res.carve ? `${baseInfo}; colores tallados ${this.opts.carveDepth} mm bajo la superficie, sin agrandar la figura. Revisa los avisos de montaje y los bordes finos en el laminador (cara de color arriba y soportes debajo)` : res.covers ? `${baseInfo}; covers de hasta ${this.opts.depth} mm que se pegan en sus rebajes (imprimir con la cara de color arriba y soportes debajo)` : `cascarones de color de ${this.opts.depth} mm `}${res.covers ? '' : res.cut ? '(las mitades del cuerpo y las piezas de color se imprimen apoyadas en la cara plana del corte: sin soportes)' : '(imprimir con la cara de color arriba y soportes bajo la cara oculta)'}</div>`;
     this.$('warn').innerHTML = res.warnings.map((w) => `<div class="hb-w">⚠ ${esc(w)}</div>`).join('');
     this.renderList();
   }
@@ -569,6 +576,7 @@ export class ColorSplitStudio {
 
   async export() {
     if (!this.res) { this.cb.toast('Primero pulsa «Separar»', true); return null; }
+    if (this.res.previewOnly) { this.cb.toast('El esculpido es solo una vista previa; el montaje aún no está resuelto', true); return null; }
     this.cb.showBusy('Preparando archivos…');
     try {
       await new Promise((r) => setTimeout(r, 30));

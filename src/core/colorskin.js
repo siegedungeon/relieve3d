@@ -1,10 +1,9 @@
-// Colour split by an OUTER SKIN (experimental 'skin' mode).
-// The original solid is never cut: it stays whole as the base. Every colour becomes a skin of constant thickness
-// grown OUTSIDE the surface (the model gets `skinDepth` mm bigger on every side). Inside the skin, the border
-// between two colours is the bisector of their painted areas (distance fields on a voxel grid → level set), so
-// colours meet with straight walls: no wedges or spikes where they join.
+// Outer colour skins. Legacy 'skin' keeps the original solid as its base.
+// The preview-only 'sculpt' prototype reconstructs the core and outer envelope, smooths the paint partition,
+// and fills monochrome source solids. Its assembly is not yet reliable on complex models.
 
 import { solidPieces } from './solidparts.js';
+import { blurGrid } from './gridfield.js';
 
 // squared distance point-triangle (Ericson)
 export function triDist2(px, py, pz, ax, ay, az, bx, by, bz, cx, cy, cz) {
@@ -38,15 +37,35 @@ export function triDist2(px, py, pz, ax, ay, az, bx, by, bz, cx, cy, cz) {
 
 // M: the whole solid (Manifold). src: { V, T, C } original painted triangles (flat arrays, C = colour per triangle).
 // Returns [{ kind: 'body'|'cover', color, man, up }].
-export function buildSkin({ w, o, M, src, base, nCol, keep, warnings, progress, cutAxis }) {
+export function buildSkin({ w, o, M, src, base, nCol, keep, warnings, progress, cutAxis, solids = [] }) {
+  const owned = new Set();
+  const retain = m => { owned.add(m); return m; };
+  const release = m => { if (owned.delete(m)) m.delete(); };
+  const checkpoint = () => new Set(owned);
+  const releaseSince = (before, retained) => {
+    for (const m of owned) if (!before.has(m) && !retained.has(m)) release(m);
+  };
+  try {
+    const parts = build({ w, o, M, src, base, nCol, keep: retain, warnings, progress, cutAxis, solids, checkpoint, releaseSince });
+    for (const p of parts) { owned.delete(p.man); keep(p.man); }
+    return parts;
+  } finally {
+    for (const m of owned) m.delete();
+  }
+}
+
+function build({ w, o, M, src, base, nCol, keep, warnings, progress, cutAxis, solids, checkpoint, releaseSince }) {
   const { Manifold } = w;
-  const D = o.skinDepth, C2 = o.clearance / 2;
+  const D = o.skinDepth, C2 = o.clearance / 2, smooth = o.mode === 'sculpt' ? o.skinSmooth ?? 0.6 : 0;
+  if (o.mode === 'sculpt') {
+    warnings.push('Vista previa experimental: el montaje del esculpido aún no es fiable; la exportación está desactivada');
+  }
   const mg = M.getMesh(), MV = mg.vertProperties, MT = mg.triVerts, mnp = mg.numProp;
   const bb = M.boundingBox();
   // grid: as fine as o.skinGrid, coarser on big models (memory: one float per voxel per colour)
   const ext = [0, 1, 2].map((q) => bb.max[q] - bb.min[q] + 2 * (D + 2));
   const nUsed = new Set(src.C).size;
-  const maxVox = Math.min(40e6, 1.2e9 / (4 * (1 + nUsed)));
+  const maxVox = smooth > 0 ? Math.min(14e6, 384e6 / (4 * (3 + nUsed))) : Math.min(40e6, 1.2e9 / (4 * (1 + nUsed)));
   const H = Math.max(o.skinGrid, Math.cbrt((ext[0] * ext[1] * ext[2]) / maxVox));
   const R = D + 3 * H;
   const o0 = bb.min.map((x) => x - R - H), o1 = bb.max.map((x) => x + R + H);
@@ -73,17 +92,21 @@ export function buildSkin({ w, o, M, src, base, nCol, keep, warnings, progress, 
   };
 
   // signed depth field of the solid (positive inside)
-  const S = new Float32Array(NG).fill(R * R);
-  splat(MV, MT, mnp, S, null, 0.15, 0.4, 'Capa exterior: distancias');
-  progress('Capa exterior: interior', 0.4);
-  const L = o1[2] - o0[2] + 2;
-  for (let j = 0; j < NY; j++) for (let i = 0; i < NX; i++) {
-    const x = o0[0] + i * H + 1.3e-4, y = o0[1] + j * H + 0.7e-4;
-    const hz = M.rayCast([x, y, o0[2] - 1], [x, y, o1[2] + 1]).map((h) => o0[2] - 1 + h.distance * L).sort((p, q) => p - q);
-    const ins = new Uint8Array(NZ);
-    for (let n = 0; n + 1 < hz.length; n += 2) for (let k = Math.max(0, Math.ceil((hz[n] - o0[2]) / H)); k < NZ && o0[2] + k * H < hz[n + 1]; k++) ins[k] = 1;
-    for (let k = 0; k < NZ; k++) { const g = gi(i, j, k), d = Math.sqrt(S[g]); S[g] = ins[k] ? d : -d; }
-  }
+  const depthField = (man, start, end, message) => {
+    const mesh = man.getMesh(), F = new Float32Array(NG).fill(R * R);
+    splat(mesh.vertProperties, mesh.triVerts, mesh.numProp, F, null, start, end, message);
+    const L = o1[2] - o0[2] + 2;
+    for (let j = 0; j < NY; j++) for (let i = 0; i < NX; i++) {
+      const x = o0[0] + i * H + 1.3e-4, y = o0[1] + j * H + 0.7e-4;
+      const hz = man.rayCast([x, y, o0[2] - 1], [x, y, o1[2] + 1]).map((h) => o0[2] - 1 + h.distance * L).sort((p, q) => p - q);
+      const ins = new Uint8Array(NZ);
+      for (let n = 0; n + 1 < hz.length; n += 2) for (let k = Math.max(0, Math.ceil((hz[n] - o0[2]) / H)); k < NZ && o0[2] + k * H < hz[n + 1]; k++) ins[k] = 1;
+      for (let k = 0; k < NZ; k++) { const g = gi(i, j, k), d = Math.sqrt(F[g]); F[g] = ins[k] ? d : -d; }
+    }
+    return F;
+  };
+  const S = depthField(M, 0.15, 0.4, 'Capa exterior: distancias');
+  const shapePasses = Math.max(1, Math.round(1.5 * (Math.min(smooth / 2, D / 4) / H) ** 2));
 
   // painted triangles that are really on the surface (buried overlapping shells carry no colour)
   progress('Capa exterior: superficie visible', 0.45);
@@ -144,64 +167,155 @@ export function buildSkin({ w, o, M, src, base, nCol, keep, warnings, progress, 
   const G = new Map();
   cols.forEach((c, n) => {
     const f = new Float32Array(NG).fill(4 * R * R);
-    const f0 = 0.5 + (0.25 * n) / cols.length;
-    splat(OV, OT, 3, f, (t) => vis[t] && OC[t] === c, f0, f0 + 0.25 / cols.length, 'Capa exterior: colores');
+    const f0 = 0.5 + (0.18 * n) / cols.length;
+    splat(OV, OT, 3, f, (t) => vis[t] && OC[t] === c, f0, f0 + 0.18 / cols.length, 'Capa exterior: colores');
     for (let g = 0; g < NG; g++) f[g] = Math.sqrt(f[g]);
     G.set(c, f);
   });
 
-  const tri = (F, p) => {
+  if (smooth > 0) {
+    const nearest = new Float32Array(NG).fill(Infinity);
+    for (const F of G.values()) for (let g = 0; g < NG; g++) nearest[g] = Math.min(nearest[g], F[g] * F[g]);
+    const variance = 2 * smooth * smooth, passes = Math.max(1, Math.round(1.5 * (smooth / H) ** 2));
+    cols.forEach((c, i) => {
+      progress('Capa exterior: esculpiendo colores', 0.7 + 0.05 * i / cols.length);
+      const F = G.get(c);
+      for (let g = 0; g < NG; g++) F[g] = Math.exp(-Math.max(0, F[g] * F[g] - nearest[g]) / variance);
+      blurGrid(F, [NX, NY, NZ], passes);
+    });
+    blurGrid(S, [NX, NY, NZ], shapePasses);
+  }
+
+  const tri = (F, p, gradient = null) => {
     const fx = Math.min(NX - 1.001, Math.max(0, (p[0] - o0[0]) / H)), fy = Math.min(NY - 1.001, Math.max(0, (p[1] - o0[1]) / H)), fz = Math.min(NZ - 1.001, Math.max(0, (p[2] - o0[2]) / H));
     const i = Math.floor(fx), j = Math.floor(fy), k = Math.floor(fz), u = fx - i, v = fy - j, s = fz - k;
     const g = gi(i, j, k), dy = NX, dz = NX * NY;
+    if (gradient) {
+      gradient[0] = (((F[g + 1] - F[g]) * (1 - v) + (F[g + dy + 1] - F[g + dy]) * v) * (1 - s) +
+        ((F[g + dz + 1] - F[g + dz]) * (1 - v) + (F[g + dz + dy + 1] - F[g + dz + dy]) * v) * s) / H;
+      gradient[1] = (((F[g + dy] - F[g]) * (1 - u) + (F[g + dy + 1] - F[g + 1]) * u) * (1 - s) +
+        ((F[g + dz + dy] - F[g + dz]) * (1 - u) + (F[g + dz + dy + 1] - F[g + dz + 1]) * u) * s) / H;
+      gradient[2] = (((F[g + dz] - F[g]) * (1 - u) + (F[g + dz + 1] - F[g + 1]) * u) * (1 - v) +
+        ((F[g + dz + dy] - F[g + dy]) * (1 - u) + (F[g + dz + dy + 1] - F[g + dy + 1]) * u) * v) / H;
+    }
     return ((F[g] * (1 - u) + F[g + 1] * u) * (1 - v) + (F[g + dy] * (1 - u) + F[g + dy + 1] * u) * v) * (1 - s) +
       ((F[g + dz] * (1 - u) + F[g + dz + 1] * u) * (1 - v) + (F[g + dz + dy] * (1 - u) + F[g + dz + dy + 1] * u) * v) * s;
   };
   // half the gap between the nearest other colour and colour c: > 0 where c is the closest colour
+  const gradC = [0, 0, 0], gradOther = [0, 0, 0], gradient = [0, 0, 0];
   const dom = (c, p) => {
+    if (smooth > 0) {
+      const value = tri(G.get(c), p, gradC);
+      let other = -Infinity;
+      for (const k of cols) if (k !== c) {
+        const v = tri(G.get(k), p, gradient);
+        if (v > other) { other = v; for (let a = 0; a < 3; a++) gradOther[a] = gradient[a]; }
+      }
+      if (other === -Infinity) return R;
+      const delta = value - other, length = Math.hypot(gradC[0] - gradOther[0], gradC[1] - gradOther[1], gradC[2] - gradOther[2]);
+      return Math.max(-R, Math.min(R, delta / Math.max(1e-12, length)));
+    }
     const dc = tri(G.get(c), p);
     let m = Infinity;
     for (const k of cols) if (k !== c) m = Math.min(m, tri(G.get(k), p));
     return m === Infinity ? 1 : (m - dc) / 2;
   };
   const box = { min: o0, max: o1 };
+  let envelope = null;
+  if (smooth > 0) {
+    const raw = Manifold.levelSet(p => D + tri(S, p), box, H, 0);
+    try { envelope = keep(raw.simplify(0.01)); } finally { raw.delete(); }
+  }
+  const core = envelope ? keep(Manifold.levelSet(p => tri(S, p) - C2, box, H, 0)) : M;
+  const inner = envelope && C2 > 0 ? keep(Manifold.levelSet(p => C2 + tri(S, p), box, H, 0)) : core;
+  const outerIDs = envelope ? new Set(envelope.getMesh().runOriginalID) : null;
+  const filled = [], sockets = [];
+  if (envelope) for (const solid of solids) {
+    const F = depthField(solid.man, 0.74, 0.75, 'Esculpido: interiores de piezas solidas');
+    blurGrid(F, [NX, NY, NZ], shapePasses);
+    const grow = C2 + H;
+    const fill = keep(Manifold.levelSet(p => grow + tri(F, p), box, H, 0));
+    filled.push({ color: solid.color, man: keep(fill.intersect(envelope)) });
+    sockets.push({ color: solid.color, man: keep(Manifold.levelSet(p => grow + o.clearance + tri(F, p), box, H, 0)) });
+  }
   // the sdf must be finite and negative on the box faces (the grid border lies R outside the skin)
-  const skinOf = (c, shift) => keep(Manifold.levelSet((p) => { const v = Math.min(D + tri(S, p), dom(c, p) + shift); return Number.isFinite(v) ? v : -1; }, box, H, 0));
+  const skinOf = (c, shift, draft = 0) => {
+    const region = keep(Manifold.levelSet((p) => {
+      const depth = tri(S, p), taper = smooth > 0 ? 1 - 0.75 * Math.max(0, Math.min(1, -depth / D)) : 1;
+      const bound = envelope ? Math.min(D + depth + 2 * H, 2 * H - depth,
+        p[0] - o0[0] - H / 2, p[1] - o0[1] - H / 2, p[2] - o0[2] - H / 2,
+        o1[0] - p[0] - H / 2, o1[1] - p[1] - H / 2, o1[2] - p[2] - H / 2) : D + depth;
+      const v = Math.min(bound, dom(c, p) + shift * taper - draft * Math.max(0, D + depth));
+      return Number.isFinite(v) ? v : -1;
+    }, box, H, 0));
+    return envelope ? keep(envelope.intersect(region)) : region;
+  };
 
   const parts = [];
-  let body = M;
+  let body = core;
   const smalls = [];
   cols.forEach((c, n) => {
     if (c === base) return;
-    progress('Capa exterior: piezas de color', 0.75 + (0.08 * n) / cols.length);
-    const cov = keep(skinOf(c, -C2).subtract(M));
-    for (const q of cov.decompose()) {
-      keep(q);
-      if (q.volume() < o.minCover) { smalls.push(q); continue; }
-      for (const h of splitFrontBack(w, q, cutAxis, tri, S, D, keep)) parts.push({ kind: 'cover', color: c, man: h.man, up: h.up });
+    const before = checkpoint();
+    try {
+      progress('Capa exterior: piezas de color', 0.75 + (0.08 * n) / cols.length);
+      if (envelope) {
+        const fills = filled.filter(p => p.color === c).map(p => p.man);
+        let region = skinOf(c, 0), contracted = keep(skinOf(c, -C2).subtract(inner));
+        if (fills.length) {
+          region = keep(Manifold.union([region, ...fills]));
+          contracted = keep(Manifold.union([contracted, ...fills]));
+        }
+        const otherSockets = sockets.filter(p => p.color !== c).map(p => p.man);
+        if (otherSockets.length) contracted = keep(contracted.subtract(keep(Manifold.union(otherSockets))));
+        for (const q of keep(new Manifold(region.getMesh())).decompose()) {
+          keep(q);
+          if (q.volume() < o.minCover) { smalls.push(q); continue; }
+          const candidates = keep(new Manifold(keep(q.intersect(contracted)).getMesh())).decompose();
+          const kept = candidates.filter(p => { keep(p); return p.volume() >= o.minCover; });
+          if (!kept.length) { smalls.push(q); continue; }
+          for (const p of kept) for (const h of splitFrontBack(w, p, fills.length ? null : cutAxis, tri, S, D, keep, outerIDs)) {
+            parts.push({ kind: 'cover', color: c, man: h.man, up: h.up });
+          }
+        }
+        return;
+      }
+      const cov = keep(skinOf(c, -C2).subtract(core));
+      for (const q of cov.decompose()) {
+        keep(q);
+        if (q.volume() < o.minCover) { smalls.push(q); continue; }
+        for (const h of splitFrontBack(w, q, cutAxis, tri, S, D, keep, outerIDs)) parts.push({ kind: 'cover', color: c, man: h.man, up: h.up });
+      }
+    } finally {
+      releaseSince(before, new Set([...parts.map(p => p.man), ...smalls]));
     }
   });
   progress('Capa exterior: base', 0.83);
-  body = keep(Manifold.union([M, skinOf(base, C2), ...smalls]));
-  const bodies = solidPieces(w, body, keep, 1).sort((a, b) => b.man.volume() - a.man.volume());
+  body = keep(Manifold.union([core, skinOf(base, envelope ? -C2 : C2, envelope ? Math.tan(Math.PI / 6) : 0), ...smalls]));
+  if (sockets.length) body = keep(body.subtract(keep(Manifold.union(sockets.map(p => p.man)))));
+  const bodies = solidPieces(w, envelope ? keep(new Manifold(body.getMesh())) : body, keep, 1).sort((a, b) => b.man.volume() - a.man.volume());
   if (bodies.length > 1) warnings.push(`La base quedó en ${bodies.length} piezas`);
   for (const q of bodies) parts.unshift({ kind: 'body', color: base, man: q.man, up: q.up });
   if (smalls.length) warnings.push(`${smalls.length} trocitos de color < ${o.minCover} mm³ quedan del color base`);
-  warnings.push(`Capa exterior: el modelo crece ${D} mm por lado (rejilla ${H.toFixed(2)} mm); los agujeros se cierran ${2 * D} mm`);
+  warnings.push(`${envelope ? 'Esculpido' : 'Capa exterior'}: el modelo crece aproximadamente ${D} mm por lado (rejilla ${H.toFixed(2)} mm); los agujeros pueden estrecharse ${2 * D} mm`);
   return parts;
 }
 
 // a skin that wraps around (faces both front and back) is cut on the plane where its surface turns sideways, so
 // each half prints with its visible face up
-function splitFrontBack(w, q, axis, tri, S, D, keep) {
+function splitFrontBack(w, q, axis, tri, S, D, keep, outerIDs = null) {
   const info = (m) => {
     const g = m.getMesh(), P = g.vertProperties, T = g.triVerts, np = g.numProp;
+    const outer = new Uint8Array(T.length / 3);
+    if (outerIDs) for (let r = 0; r < g.runOriginalID.length; r++) {
+      if (outerIDs.has(g.runOriginalID[r])) outer.fill(1, g.runIndex[r] / 3, g.runIndex[r + 1] / 3);
+    }
     const up = [0, 0, 0];
     let ap = 0, an = 0, sw = 0, sx = 0;
     for (let t = 0; t < T.length / 3; t++) {
       const a = T[t * 3] * np, b = T[t * 3 + 1] * np, c = T[t * 3 + 2] * np;
       const ctr = [0, 1, 2].map((k) => (P[a + k] + P[b + k] + P[c + k]) / 3);
-      if (tri(S, ctr) > -D / 2) continue; // only the outer (visible) face
+      if (outerIDs ? !outer[t] : tri(S, ctr) > -D / 2) continue; // only the outer (visible) face
       const u = [0, 1, 2].map((k) => P[b + k] - P[a + k]), v = [0, 1, 2].map((k) => P[c + k] - P[a + k]);
       const n = [u[1] * v[2] - u[2] * v[1], u[2] * v[0] - u[0] * v[2], u[0] * v[1] - u[1] * v[0]];
       for (let k = 0; k < 3; k++) up[k] += n[k] / 2;

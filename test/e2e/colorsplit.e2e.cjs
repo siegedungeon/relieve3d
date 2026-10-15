@@ -25,7 +25,8 @@ module.exports = async ({ win, run, shot, wait }) => {
   await wait(1500);
   await S('cs_01_original');
   const rows = `JSON.stringify({ mode: window.__r3d.colorsplit.opts.mode, sel: document.querySelector('#colorsplit [data-k=mode]').value,
-    skinRow: !document.querySelector('#colorsplit [data-r=skinRow]').hidden, carveRow: !document.querySelector('#colorsplit [data-r=carveRow]').hidden })`;
+    skinRow: !document.querySelector('#colorsplit [data-r=skinRow]').hidden, carveRow: !document.querySelector('#colorsplit [data-r=carveRow]').hidden,
+    sculptRow: !document.querySelector('#colorsplit [data-r=sculptRow]').hidden })`;
   const st0 = JSON.parse(await run(rows));
   ok(st0.mode === 'carve' && st0.sel === 'carve' && st0.carveRow && !st0.skinRow, `default mode is carve ("Tallado"), its thickness row shown (${JSON.stringify(st0)})`);
   const mode = process.env.E2E_MODE || 'carve';
@@ -33,7 +34,7 @@ module.exports = async ({ win, run, shot, wait }) => {
     const m = process.env.E2E_MODE;
     const st = JSON.parse(await run(`(() => { const s = document.querySelector('#colorsplit [data-k=mode]'); s.value = ${JSON.stringify(m)}; s.dispatchEvent(new Event('change', { bubbles: true }));
       return ${rows}; })()`));
-    ok(st.mode === m && st.skinRow === (m === 'skin') && st.carveRow === (m === 'carve'), `mode "${m}" selected in the UI (skin row ${st.skinRow ? 'shown' : 'hidden'}, carve row ${st.carveRow ? 'shown' : 'hidden'})`);
+    ok(st.mode === m && st.skinRow === ['skin', 'sculpt'].includes(m) && st.carveRow === (m === 'carve') && st.sculptRow === (m === 'sculpt'), `mode "${m}" selected in the UI (skin row ${st.skinRow ? 'shown' : 'hidden'}, carve row ${st.carveRow ? 'shown' : 'hidden'})`);
   }
   const setMode = (m) => run(`(() => { const s = document.querySelector('#colorsplit [data-k=mode]'); s.value = ${JSON.stringify(m)}; s.dispatchEvent(new Event('change', { bubbles: true })); })()`);
   if (process.env.E2E_FIRST_MODE) {
@@ -51,15 +52,16 @@ module.exports = async ({ win, run, shot, wait }) => {
   }
   const t0 = Date.now();
   await run(`document.querySelector('#colorsplit [data-a=split]').click()`);
-  for (let i = 0; i < 600; i++) { if (await run(`!!window.__r3d.colorsplit.res && !window.__r3d.colorsplit._busy`)) break; await wait(1000); }
+  for (let i = 0; i < 600; i++) { if (await run(`!window.__r3d.colorsplit._busy`)) break; await wait(1000); }
   const res = JSON.parse(await run(`(() => { const c = window.__r3d.colorsplit, r = c.res; if (!r) return JSON.stringify({ error: document.querySelector('#colorsplit [data-r=status]').textContent });
     const k = {}; for (const p of r.parts) k[p.kind] = (k[p.kind] || 0) + 1;
-    return JSON.stringify({ n: r.parts.length, k, warnings: r.warnings, covers: !!r.covers, skin: !!r.skin, carve: !!r.carve, plates: c.plates.length, summary: c.root.querySelector('[data-r=summary]').textContent }); })()`));
+    return JSON.stringify({ n: r.parts.length, k, warnings: r.warnings, covers: !!r.covers, skin: !!r.skin, carve: !!r.carve, sculpt: !!r.sculpt, previewOnly: !!r.previewOnly, plates: c.plates.length, summary: c.root.querySelector('[data-r=summary]').textContent }); })()`));
   log('split', ((Date.now() - t0) / 1000).toFixed(1) + ' s', JSON.stringify(res));
   ok(!res.error && res.n > 0, `split produced ${res.n || 0} parts`);
   const nBody = +(process.env.E2E_BODIES || 1); // base pieces expected (white letters on a pink layer are pieces of base)
   if (mode === 'carve') ok(res.carve && res.k.body === nBody && /tallados/.test(res.summary), `carve mode: ${nBody} base piece(s) (${res.k.body}) + carved colour pieces, summary explains it`);
   if (process.env.E2E_MODE === 'skin') ok(res.skin && res.k.body === 1 && /capas de color/.test(res.summary), 'skin mode: one whole base + colour skins, summary explains it');
+  if (mode === 'sculpt') ok(res.sculpt && res.previewOnly && /Vista previa/.test(res.summary) && /reconstruidos/.test(res.summary) && !/original entero/.test(res.summary), 'sculpt is explicitly a reconstructed, non-printable preview');
   ok(!res.covers || (res.k.body || 0) >= 1, 'covers mode keeps a base body');
   if (res.carve || (res.covers && !res.skin)) ok(res.summary.includes(`base: ${res.k.body} pieza(s)`) && !/figura queda exacta/.test(res.summary), 'summary reports the actual base count, without promising a perfect fit');
   ok(!(res.warnings || []).some((w) => /piezas \(paredes|no se pudieron/.test(w)), 'no broken-base / failed-cover warnings');
@@ -76,8 +78,11 @@ module.exports = async ({ win, run, shot, wait }) => {
   await wait(3000);
   const files = fs.existsSync(exp) ? fs.readdirSync(exp) : [];
   log('files', files.join(', '));
-  ok(files.filter((f) => f.endsWith('.3mf')).length >= 2 && files.some((f) => f.endsWith('.txt')), 'plates 3MF + instructions exported');
-  if (res.covers) {
+  if (res.previewOnly) {
+    ok(!files.length, 'unfinished sculpt geometry is not exported, including programmatic export');
+    ok(await run(`document.querySelector('#colorsplit [data-r=btnExport]').disabled`), 'preview export button stays disabled');
+  } else ok(files.filter((f) => f.endsWith('.3mf')).length >= 2 && files.some((f) => f.endsWith('.txt')), 'plates 3MF + instructions exported');
+  if (res.covers && !res.previewOnly) {
     const instructions = files.filter((f) => f.endsWith('.txt')).map((f) => fs.readFileSync(path.join(exp, f), 'utf8')).join('\n');
     ok(instructions.includes(`La BASE incluye ${res.k.body} pieza(s)`) && /bordes afinados/.test(instructions), 'export describes actual base pieces and the need to inspect tapered edges');
   }
