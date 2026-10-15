@@ -2,6 +2,7 @@
 // Returns every mesh part in world coordinates with a palette index per triangle:
 //   { title, palette: ['#RRGGBB', ...], parts: [{ name, V: Float64Array, T: Uint32Array, tc: Uint8Array }] }
 import { unzipSync, strFromU8 } from 'fflate';
+import { weldPainted } from './meshweld.js';
 
 const attrRe = new Map();
 const attr = (s, name) => {
@@ -213,14 +214,17 @@ export function read3MF(bytes) {
       }
       T.push(a, b, c); tcol.push(hex ? 'h' + hex : ext);
     }
-    let VV = V;
+    let VV = V, TT = T, tk = tcol;
     if (extraV.length) {
       VV = new Float64Array(V.length + extraV.length);
       VV.set(V); VV.set(extraV, V.length);
-      T.push(...extraT); tcol.push(...extraC);
+      for (let i = 0; i < extraT.length; i++) T.push(extraT[i]);
+      for (const c of extraC) tcol.push(c);
+      // brush paint: the sub-triangles come loose (own vertices, T-junctions); weld them back into a closed surface
+      ({ V: VV, T: TT, tags: tk } = weldPainted(VV, T, tcol, nV));
     }
-    for (const c of tcol) usedExtruders.add(c);
-    parts.push({ name: o.name || `pieza ${parts.length + 1}`, V: VV, T: new Uint32Array(T), tkey: tcol });
+    for (const c of tk) usedExtruders.add(c);
+    parts.push({ name: o.name || `pieza ${parts.length + 1}`, V: VV, T: new Uint32Array(TT), tkey: tk });
   };
   const walk = (path, id, mat, topId, matHex) => {
     const o = parseModel(path).objects.get(id);

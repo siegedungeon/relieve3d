@@ -6,6 +6,8 @@
 // Geometry booleans use manifold-3d (WASM). Units: mm.
 
 import { buildSkin } from './colorskin.js';
+import { buildCarve } from './colorcarve.js';
+import { dropSpecks, hiddenFaces, lockedParts, meshSoup, slideOn, solidPieces } from './solidparts.js';
 
 export const DEFAULT_SPLIT = {
   pinhole: 2, // covers mode: islands of base colour smaller than this inside a cover are closed over (mm²)
@@ -21,10 +23,17 @@ export const DEFAULT_SPLIT = {
   coverFeature: 0.3, // covers mode: thinner clean-up so stripe tips still meet (covers are glued, not inlaid)
   minArea: 2, // painted islands smaller than this (mm²) are dropped
   baseColor: -1, // -1 = auto (biggest volume)
-  mode: 'covers', // 'covers': intact base + thin colour covers glued on top | 'inlays': deep inlays (optionally cut in halves)
+  mode: 'carve', // 'carve': colours are carved INTO the model (a band under the surface split by drafted bisector
+  //                walls), the base keeps the core in one piece; the outer shape stays exact
+  //               | 'covers': intact base + thin colour covers glued on top | 'inlays': deep inlays (optionally cut in halves)
   //               | 'skin' (experimental): the whole original solid is the base, colours are a skin grown outside it
   skinDepth: 1.2, // skin mode: thickness of the outer colour skin; the model grows this much on every side (mm)
   skinGrid: 0.2, // skin mode: voxel size of the distance fields (mm); coarser automatically on big models
+  carveDepth: 1.2, // carve mode: thickness of the colour layer carved under the surface (mm)
+  carveGrid: 0.25, // carve mode: node spacing of the distance fields (mm); coarser automatically on big models
+  carveDraft: 10, // carve mode: draft of the walls between colours (deg): pieces get narrower inwards so they slide in
+  carveMinPiece: 1.5, // carve mode: colour pieces smaller than this (mm³) are not printed, the base keeps that spot
+  carveMinWidth: 0.6, // carve mode: painted strokes narrower than this (mm) go to the neighbouring colour
   borderSmooth: 0.8, // covers: smoothing radius of the colour borders (mm): removes the zigzag of the painted triangles
   plate: 256, // printer bed size for layout (mm)
   gap: 3, // spacing between parts on the bed (mm)
@@ -123,6 +132,23 @@ function toManifold(w, m, id = -1) {
   return man;
 }
 
+// Manifolds of the shells (same order; null where a shell is not a closed surface). A few loose open bits of a broken
+// file are skipped with a warning; a broken body (> 2 % of the surface) stops with a clear message.
+function shellManifolds(shells, warnings, make) {
+  const out = [], bad = [];
+  for (const s of shells) {
+    let m = null;
+    try { m = make(s); } catch { bad.push(s); }
+    out.push(m);
+  }
+  if (bad.length) {
+    const tot = shells.reduce((a, s) => a + s.area, 0), ba = bad.reduce((a, s) => a + s.area, 0);
+    if (ba > 0.02 * tot) throw new Error('El modelo no es un sólido cerrado (tiene agujeros o caras sueltas): repáralo en el slicer y vuelve a intentarlo');
+    warnings.push(`Se ignoraron ${bad.length} trozo(s) abierto(s) del modelo (${bad.reduce((a, s) => a + s.tris.length, 0)} triángulos)`);
+  }
+  return out;
+}
+
 export function manifoldToMesh(man) {
   const m = man.getMesh();
   const np = m.numProp;
@@ -132,19 +158,27 @@ export function manifoldToMesh(man) {
   return { V, T: new Uint32Array(m.triVerts) };
 }
 
-// move every vertex along its (area-weighted) normal; d < 0 shrinks
+// move every vertex along its (area-weighted) normal; d < 0 shrinks. Unwelded copies of a vertex (same position) share
+// one normal, so they stay together and mesh.merge() still closes the surface.
 function offsetVerts(mesh, d) {
   const { vertProperties: P, triVerts: T } = mesh;
+  const nV = P.length / 3, rep = new Uint32Array(nV), ids = new Map();
+  for (let v = 0; v < nV; v++) {
+    const k = `${P[v * 3]},${P[v * 3 + 1]},${P[v * 3 + 2]}`;
+    let j = ids.get(k);
+    if (j === undefined) ids.set(k, (j = v));
+    rep[v] = j;
+  }
   const N = new Float32Array(P.length);
   for (let t = 0; t < T.length; t += 3) {
     const a = T[t] * 3, b = T[t + 1] * 3, c = T[t + 2] * 3;
     const n = cross([P[b] - P[a], P[b + 1] - P[a + 1], P[b + 2] - P[a + 2]], [P[c] - P[a], P[c + 1] - P[a + 1], P[c + 2] - P[a + 2]]);
-    for (const i of [a, b, c]) { N[i] += n[0]; N[i + 1] += n[1]; N[i + 2] += n[2]; }
+    for (let k = 0; k < 3; k++) { const i = rep[T[t + k]] * 3; N[i] += n[0]; N[i + 1] += n[1]; N[i + 2] += n[2]; }
   }
   const out = new Float32Array(P.length);
-  for (let i = 0; i < P.length; i += 3) {
-    const l = Math.hypot(N[i], N[i + 1], N[i + 2]) || 1;
-    out[i] = P[i] + (N[i] / l) * d; out[i + 1] = P[i + 1] + (N[i + 1] / l) * d; out[i + 2] = P[i + 2] + (N[i + 2] / l) * d;
+  for (let v = 0; v < nV; v++) {
+    const i = v * 3, r = rep[v] * 3, l = Math.hypot(N[r], N[r + 1], N[r + 2]) || 1;
+    out[i] = P[i] + (N[r] / l) * d; out[i + 1] = P[i + 1] + (N[r + 1] / l) * d; out[i + 2] = P[i + 2] + (N[r + 2] / l) * d;
   }
   return { vertProperties: out, triVerts: T };
 }
@@ -188,11 +222,9 @@ export function splitColors(w, model, options = {}, progress = () => {}) {
 
   if (o.mode === 'skin') {
     progress('Uniendo cuerpo', 0.05);
-    const mans = ana.shells.filter((s) => Math.abs(s.vol) > 1e-6).map((s) => keep(toManifold(w, subMesh(s.part.V, s.part.T, s.tris, s.vol < 0))));
+    const mans = shellManifolds(ana.shells.filter((s) => Math.abs(s.vol) > 1e-6), warnings, (s) => keep(toManifold(w, subMesh(s.part.V, s.part.T, s.tris, s.vol < 0)))).filter(Boolean);
     if (!mans.length) throw new Error('No se encontró un cuerpo base');
-    let M = keep(Manifold.union(mans));
-    const comps = M.decompose().map(keep);
-    if (comps.length > 1) M = keep(Manifold.union(comps.filter((c) => c.volume() > 0.5)));
+    const M = dropSpecks(w, keep(Manifold.union(mans)), keep);
     const V = [], T = [], C = [];
     for (const p of model.parts) {
       const b = V.length / 3;
@@ -213,6 +245,71 @@ export function splitColors(w, model, options = {}, progress = () => {}) {
     return finishParts({ w, o, model, parts, solids: [], base, keep, garbage, warnings, progress, info: { regions: 0, tiles: parts.filter((p) => p.kind === 'cover').length, thickness: [], covers: true, skin: true, cut: null } });
   }
 
+  if (o.mode === 'carve') {
+    progress('Uniendo cuerpo', 0.05);
+    const shells = ana.shells.filter((s) => Math.abs(s.vol) > 1e-6);
+    if (!shells.length) throw new Error('No se encontró un cuerpo base');
+    const idToShell = new Map(), shellId = new Map();
+    const bigVol = Math.max(...shells.map((s) => Math.abs(s.vol)));
+    const built = shellManifolds(shells, warnings, (s) => {
+      const id = Manifold.reserveIDs(1);
+      let sm = subMesh(s.part.V, s.part.T, s.tris, s.vol < 0);
+      // overlays (skins, decals, solid parts) are grown 0.05 mm: they fuse with the body and their paint wins
+      if (Math.abs(s.vol) < bigVol) sm = offsetVerts(sm, 0.05);
+      const m = keep(toManifold(w, sm, id));
+      idToShell.set(id, s);
+      shellId.set(s, id);
+      return m;
+    });
+    const mans = built.filter(Boolean);
+    if (!mans.length) throw new Error('No se encontró un cuerpo base');
+    // solid single-colour shells (a bow stuck on a head) are filled with their colour instead of a base core
+    const isSolid = (s) => s.dom !== base && s.purity > 0.9 && s.thickness > 0.6 && Math.abs(s.vol) > 5;
+    let solidIdx = shells.map((s, i) => (built[i] && isSolid(s) ? i : -1)).filter((i) => i >= 0);
+    const restMans = solidIdx.length ? built.filter((m, i) => m && !solidIdx.includes(i)) : [];
+    let restU = restMans.length ? keep(Manifold.union(restMans)) : null, moved = [];
+    // a solid locked into the rest (a print-in-place joint, a link through a ring) could not be put in place printed
+    // apart: it is carved like the rest, around a core of the base colour
+    if (restU) {
+      const lk = lockedParts(w, solidIdx.map((i) => built[i]), restU, keep);
+      moved = solidIdx.filter((_, n) => lk[n]);
+      if (moved.length) {
+        solidIdx = solidIdx.filter((i) => !moved.includes(i));
+        restU = keep(Manifold.union([restU, ...moved.map((i) => built[i])]));
+        warnings.push(`Tallado: ${moved.length} pieza(s) de un solo color van trabadas en el modelo (articulación): se tallan como el resto`);
+      }
+    }
+    const solids = solidIdx.map((i) => ({ color: shells[i].dom, mesh: built[i].getMesh(), id: shellId.get(shells[i]) }));
+    const rest = solidIdx.length && restU ? restU.getMesh() : null;
+    // voids stay (the gap of a print-in-place joint): only specks and slivers trapped between overlapping shells go
+    const M = dropSpecks(w, keep(Manifold.union(mans)), keep);
+    const mg = M.getMesh();
+    const nTm = mg.triVerts.length / 3, col = new Int16Array(nTm).fill(base);
+    for (let r = 0; r < mg.runOriginalID.length; r++) {
+      const s = idToShell.get(mg.runOriginalID[r]);
+      if (!s || !s.part.tc) continue;
+      for (let t = mg.runIndex[r] / 3; t < mg.runIndex[r + 1] / 3; t++) col[t] = s.part.tc[s.tris[mg.faceID[t]]];
+    }
+    const merged = new Uint32Array(mg.vertProperties.length / mg.numProp).map((_, i) => i);
+    if (mg.mergeFromVert) for (let i = 0; i < mg.mergeFromVert.length; i++) merged[mg.mergeFromVert[i]] = mg.mergeToVert[i];
+    // paint inside closed voids (the walls of a joint gap) is never seen: no colour piece there
+    const hid = hiddenFaces(mg, merged);
+    if (hid) for (let t = 0; t < nTm; t++) if (hid[t]) col[t] = base;
+    // front/back axis: the thinnest horizontal one, front = where the paint faces
+    const bx = M.boundingBox(), axI = bx.max[0] - bx.min[0] <= bx.max[1] - bx.min[1] ? 0 : 1;
+    let sN = 0;
+    const PV = mg.vertProperties, TVm = mg.triVerts, npm = mg.numProp;
+    for (let t = 0; t < nTm; t++) if (col[t] !== base) {
+      const a = TVm[t * 3] * npm, b = TVm[t * 3 + 1] * npm, c = TVm[t * 3 + 2] * npm;
+      sN += cross([PV[b] - PV[a], PV[b + 1] - PV[a + 1], PV[b + 2] - PV[a + 2]], [PV[c] - PV[a], PV[c + 1] - PV[a + 1], PV[c + 2] - PV[a + 2]])[axI];
+    }
+    const cutAxis = [0, 0, 0];
+    cutAxis[axI] = sN >= 0 ? 1 : -1;
+    const keepBase = moved.map((i) => built[i].getMesh());
+    const parts = buildCarve({ w, o, M, mg, col, mIDs: new Set(idToShell.keys()), merged, base, keep, warnings, progress, cutAxis, voxelize, edt, solids, rest, keepBase });
+    return finishParts({ w, o, model, parts, solids: [], base, keep, garbage, warnings, progress, info: { regions: 0, tiles: parts.filter((p) => p.kind === 'cover').length, thickness: [], covers: true, carve: true, cut: null } });
+  }
+
   // 1) classify shells: thick single-color shells of a non-base color become separate solid parts
   const solids = [], rest = [];
   for (const s of ana.shells) {
@@ -223,20 +320,31 @@ export function splitColors(w, model, options = {}, progress = () => {}) {
   progress('Uniendo cuerpo', 0.05);
   const idToShell = new Map();
   const bigVol = Math.max(...rest.map((s) => Math.abs(s.vol)));
-  const restMans = rest.map((s) => {
+  const build = (s) => {
     const id = Manifold.reserveIDs(1);
-    idToShell.set(id, s); // (asOriginal() would renumber faceIDs by coplanar groups)
     let sm = subMesh(s.part.V, s.part.T, s.tris, s.vol < 0);
     // overlays (skins, decals) are grown 0.05 mm so they fuse with the body instead of leaving hair-thin gaps
     if (Math.abs(s.vol) < bigVol) sm = offsetVerts(sm, 0.05);
-    return keep(toManifold(w, sm, id));
-  });
+    const m = keep(toManifold(w, sm, id));
+    idToShell.set(id, s); // (asOriginal() would renumber faceIDs by coplanar groups)
+    return m;
+  };
+  const restMans = shellManifolds(rest, warnings, build).filter(Boolean);
   if (!restMans.length) throw new Error('No se encontró un cuerpo base');
   let M = keep(Manifold.union(restMans));
-  // drop internal voids left between overlapping shells
-  const comps = M.decompose().map(keep);
-  if (comps.length > 1) M = keep(Manifold.union(comps.filter((c) => c.volume() > 0.5)));
-  const solidMans = solids.map((s) => keep(toManifold(w, subMesh(s.part.V, s.part.T, s.tris, s.vol < 0))));
+  const solidMans = shellManifolds(solids, warnings, (s) => keep(toManifold(w, subMesh(s.part.V, s.part.T, s.tris, s.vol < 0))));
+  for (let i = solids.length - 1; i >= 0; i--) if (!solidMans[i]) { solids.splice(i, 1); solidMans.splice(i, 1); }
+  // a solid locked into the rest (a print-in-place joint, a link through a ring) could not be put in place printed
+  // apart: it gets covers like the rest
+  const lk = solids.length ? lockedParts(w, solidMans, M, keep) : [];
+  if (lk.some(Boolean)) {
+    const moved = solids.filter((_, i) => lk[i]);
+    M = keep(Manifold.union([M, ...shellManifolds(moved, warnings, build).filter(Boolean)]));
+    for (let i = solids.length - 1; i >= 0; i--) if (lk[i]) { solids.splice(i, 1); solidMans.splice(i, 1); }
+    warnings.push(`${moved.length} pieza(s) de un solo color van trabadas en el modelo (articulación): llevan color como el resto`);
+  }
+  // specks and slivers of void trapped between overlapping shells go; real voids (the gap of a print-in-place joint) stay
+  M = dropSpecks(w, M, keep);
   const solidUnion = solidMans.length ? keep(Manifold.union(solidMans)) : null;
 
   // 2) colored surface triangles of the base body
@@ -263,6 +371,9 @@ export function splitColors(w, model, options = {}, progress = () => {}) {
   const edgeMap = new Map();
   const merged = new Uint32Array(P.length / np).map((_, i) => i);
   if (mm.mergeFromVert) for (let i = 0; i < mm.mergeFromVert.length; i++) merged[mm.mergeFromVert[i]] = mm.mergeToVert[i];
+  // paint inside closed voids (the walls of a joint gap) is never seen: no colour piece there
+  const hid = hiddenFaces(mm, merged);
+  if (hid) for (let t = 0; t < nT; t++) if (hid[t]) triColor[t] = base;
   const nbr = Array.from({ length: nT }, () => []);
   for (let t = 0; t < nT; t++) {
     for (let k = 0; k < 3; k++) {
@@ -326,6 +437,17 @@ export function splitColors(w, model, options = {}, progress = () => {}) {
     }
     const parts = buildCovers({ w, o, M, mm, TV, nT, A, N, SN, triColor, merged, base, solidUnion, TH, keep, warnings, progress, cutAxis, thickBody });
     const cored = o.solidCovers && solidUnion ? coverSolids({ w, o, M, solids, solidMans, parts, cutAxis: cutAxis || [0, 1, 0], keep, progress }) : [];
+    // a solid left whole (no core fused to the base) sinks into a socket in the base, as without solidCovers: else the
+    // base fills the part where it is stuck on and they could not fit (a scarf round a neck)
+    if (o.solidCovers && solidUnion && cored.length < solids.length) {
+      const U = keep(Manifold.union(solidMans.filter((_, i) => !cored.includes(solids[i])))), ub = U.boundingBox();
+      for (let i = parts.length - 1; i >= 0; i--) {
+        const p = parts[i], pb = p.man.boundingBox();
+        if (p.kind !== 'body' || ![0, 1, 2].every((e) => pb.min[e] < ub.max[e] && ub.min[e] < pb.max[e])) continue;
+        const ps = solidPieces(w, keep(p.man.subtract(U)), keep, 1);
+        parts.splice(i, 1, ...ps.map((q) => ({ ...p, man: q.man, up: q.up || p.up })));
+      }
+    }
     return finishParts({ w, o, model, parts, solids: solids.filter((s) => !cored.includes(s)), base, keep, garbage, warnings, progress, info: { regions: regions.length, tiles: parts.filter((p) => p.kind === 'cover').length, thickness: thPct, covers: true, cut: null } });
   }
 
@@ -867,11 +989,11 @@ export function splitColors(w, model, options = {}, progress = () => {}) {
   let body = M;
   if (pockets.length) body = keep(body.subtract(keep(Manifold.union(pockets))));
   if (solidUnion) body = keep(body.subtract(solidUnion));
-  let bodyPieces = body.decompose().map(keep).filter((p) => p.volume() > 1).sort((a, b) => b.volume() - a.volume());
+  let bodyPieces = solidPieces(w, body, keep, 1).map((p) => p.man).sort((a, b) => b.volume() - a.volume());
   // slivers of base colour left between pockets are too thin to print
   const slivers = bodyPieces.filter((p, i) => i > 0 && p.volume() < 10);
   if (slivers.length) { bodyPieces = bodyPieces.filter((p) => !slivers.includes(p)); warnings.push(`${slivers.length} astillas del color base (< 10 mm³) entre cajas no se imprimen`); }
-  const nObj = M.decompose().filter((p) => p.volume() > 1).length;
+  const nObj = solidPieces(w, M, keep, 1).length;
   if (bodyPieces.length > nObj) warnings.push(`el cuerpo quedó en ${bodyPieces.length} piezas (paredes delgadas)`);
   if (cut) {
     // two halves, each printed on its flat cut face
@@ -1284,15 +1406,24 @@ function coverSolids({ w, o, M, solids, solidMans, parts, cutAxis, keep, progres
 }
 
 function finishParts({ w, o, model, parts, solids, base, keep, garbage, warnings, progress, info }) {
-  // 6) solid color parts, shrunk by the clearance so they slide into their socket
+  // 6) solid color parts, shrunk by the clearance so they slide into their socket. A solid no straight slide takes off
+  // the figure (a scarf round a neck between a head and a body wider than it) could never be put on: it is cut in
+  // pieces that do (across the front/back axis first: the seams fall on the sides)
   progress('Piezas sólidas', 0.85);
-  solids.forEach((s) => {
+  const R = solids.length && parts.length ? meshSoup(parts.map((p) => p.man)) : null;
+  const fb = R && R.bb.max[0] - R.bb.min[0] > R.bb.max[1] - R.bb.min[1] ? 1 : 0;
+  let stuck = 0;
+  solids.forEach((s, i) => {
+    progress('Piezas sólidas', 0.85 + (0.1 * i) / solids.length);
     const sm = subMesh(s.part.V, s.part.T, s.tris, s.vol < 0);
     const shr = keep(toManifold(w, offsetVerts(sm, -o.clearance)));
     const ok = shr.status && shr.status() !== 'NoError' ? null : shr;
     const man = ok && ok.volume() > 0 ? ok : keep(toManifold(w, sm));
-    parts.push({ kind: 'solid', color: s.dom, man, up: null });
+    const ps = slideOn(w, man, R, keep, [fb, 1 - fb, 2]);
+    if (!ps) stuck++;
+    for (const q of ps || [man]) parts.push({ kind: 'solid', color: s.dom, man: q, up: null });
   });
+  if (stuck) warnings.push(`${stuck} pieza(s) sólida(s) no salen del modelo en línea recta: revisa cómo se colocan antes de imprimir`);
 
   // 7) export meshes (assembled pose) + print pose
   const out = parts.map((p, i) => {
@@ -2119,12 +2250,12 @@ function buildCovers(ctx) {
   let body = M, recU = null;
   if (recesses.length) body = keep(body.subtract((recU = keep(Manifold.union(recesses)))));
   if (solidUnion && !o.solidCovers) body = keep(body.subtract(solidUnion));
-  let bodyPieces = body.decompose().map(keep).filter((p) => p.volume() > 1).sort((a, b) => b.volume() - a.volume());
-  const slivers = bodyPieces.filter((p, i) => i > 0 && p.volume() < 10);
+  let bodyPieces = solidPieces(w, body, keep, 1).sort((a, b) => b.man.volume() - a.man.volume());
+  const slivers = bodyPieces.filter((p, i) => i > 0 && p.man.volume() < 10);
   if (slivers.length) { bodyPieces = bodyPieces.filter((p) => !slivers.includes(p)); warnings.push(`${slivers.length} astillas del color base (< 10 mm³) no se imprimen`); }
-  const nObj = M.decompose().filter((p) => p.volume() > 1).length;
+  const nObj = solidPieces(w, M, keep, 1).length;
   if (bodyPieces.length > nObj) warnings.push(`la base quedó en ${bodyPieces.length} piezas (paredes delgadas)`);
-  for (const bp of bodyPieces) parts.push({ kind: 'body', color: base, man: bp, up: null });
+  for (const bp of bodyPieces) parts.push({ kind: 'body', color: base, man: bp.man, up: bp.up });
 
   progress('Covers: piezas de color', 0.6);
   let failed = 0, crumbs = 0, blockedArea = 0;
@@ -2315,10 +2446,10 @@ function buildCovers(ctx) {
     let nb = backCut.length ? keep(M.subtract(keep(recU.subtract(keep(Manifold.union(backCut)))))) : body;
     if (solidBack.length) nb = keep(Manifold.union([nb, ...solidBack]));
     if (solidUnion && !o.solidCovers) nb = keep(nb.subtract(solidUnion));
-    const bp = nb.decompose().map(keep).filter((p) => p.volume() > 1).sort((a, b) => b.volume() - a.volume()).filter((p, i) => i === 0 || p.volume() >= 10);
+    const bp = solidPieces(w, nb, keep, 1).sort((a, b) => b.man.volume() - a.man.volume()).filter((p, i) => i === 0 || p.man.volume() >= 10);
     const others = parts.filter((p) => p.kind !== 'body');
     parts.length = 0;
-    for (const p of bp) parts.push({ kind: 'body', color: base, man: p, up: null });
+    for (const p of bp) parts.push({ kind: 'body', color: base, man: p.man, up: p.up });
     parts.push(...others);
   }
   if (blockedArea > 5) warnings.push(`${Math.round(blockedArea)} mm² de covers quedan bajo otra parte del modelo: colócalos inclinándolos`);

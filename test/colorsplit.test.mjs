@@ -115,13 +115,13 @@ const v1 = kinds('inlay').map((p) => p.volume);
 const engraved = v1.filter((v, i) => v0[i] - v > 0.3).length;
 check(v0.length === v1.length && engraved >= v1.length * 0.5, `numbers engraved on ${engraved}/${v1.length} inlays`);
 
-// covers mode (default): the base stays ONE intact piece, each extra colour is a thin cover glued on top
+// covers mode: the base stays ONE intact piece, each extra colour is a thin cover glued on top
 console.log('— covers mode');
 const t1 = Date.now();
-const rc = splitColors(w, model, {}, () => {});
+const rc = splitColors(w, model, { mode: 'covers' }, () => {});
 console.log(`  ${((Date.now() - t1) / 1000).toFixed(1)} s, ${rc.parts.length} parts, warnings: ${rc.warnings.join(' | ') || '-'}`);
 const ck = (k, c) => rc.parts.filter((p) => p.kind === k && (c == null || p.color === c));
-check(rc.covers && !rc.cut, 'covers mode is the default');
+check(rc.covers && !rc.carve && !rc.cut, 'covers mode');
 check(ck('body').length === 1 && ck('body')[0].color === WHITE, `one intact white base (${ck('body').length})`);
 // a solid colour part (the green block) is not printed solid: a white core fused to the base + ONE green cover
 // (a cap over it, not split in halves); thin back covers only where its back is left exposed
@@ -189,7 +189,7 @@ check(coverM.every((m) => m.genus() === 0), `covers have no holes or handles (ge
 check(!rc.warnings.some((t) => /piezas \(paredes/.test(t)), 'no "base split" warning for a single object');
 // a colour border on a sharp edge (painted top face of a box) is already exact: the cover reaches the edge itself
 {
-  const rb = splitColors(w, read3MF(paintedBox3MF()), {}, () => {});
+  const rb = splitColors(w, read3MF(paintedBox3MF()), { mode: 'covers' }, () => {});
   const cv = rb.parts.filter((p) => p.kind === 'cover');
   const lo = [Infinity, Infinity], hi = [-Infinity, -Infinity];
   for (const p of cv) for (let i = 0; i < p.mesh.V.length; i += 3) for (let k = 0; k < 2; k++) { lo[k] = Math.min(lo[k], p.mesh.V[i + k]); hi[k] = Math.max(hi[k], p.mesh.V[i + k]); }
@@ -202,7 +202,7 @@ check(!rc.warnings.some((t) => /piezas \(paredes/.test(t)), 'no "base split" war
   // cover left under the core, no back skin left on the front cover, locking it in place
   {
     const fb = read3MF(paintedFloatingBall3MF());
-    const rf = splitColors(w, fb, {}, () => {});
+    const rf = splitColors(w, fb, { mode: 'covers' }, () => {});
     const body = rf.parts.filter((p) => p.kind === 'body'), cv = rf.parts.filter((p) => p.kind === 'cover');
     const bM = toMan(body[0].mesh), ballM = toMan({ V: fb.parts[1].V, T: fb.parts[1].T });
     const pieces = bM.decompose().filter((q) => q.volume() > 1).length, coreV = bM.intersect(ballM).volume();
@@ -213,7 +213,7 @@ check(!rc.warnings.some((t) => /piezas \(paredes/.test(t)), 'no "base split" war
     check(cap.length === 1 && cv.length <= 3 && hit < 0.05, `ball: one cover (+${cv.length - cap.length} back) lifts off the core (max hit ${hit.toFixed(3)} mm³)`);
   }
   // knife edge: the cover runs out to the tip of a wedge instead of leaving base-colour notches along it
-  const rw = splitColors(w, read3MF(paintedWedge3MF()), {}, () => {});
+  const rw = splitColors(w, read3MF(paintedWedge3MF()), { mode: 'covers' }, () => {});
   const cv = rw.parts.filter((p) => p.kind === 'cover');
   let lo = Infinity;
   for (const p of cv) for (let i = 0; i < p.mesh.V.length; i += 3) lo = Math.min(lo, p.mesh.V[i]);
@@ -248,7 +248,7 @@ check(!rc.warnings.some((t) => /piezas \(paredes/.test(t)), 'no "base split" war
 {
   // irregular mesh (slivers, noisy normals and wall thickness): the cover floor is smoothed over the patch instead of
   // offsetting each vertex on its own, and slivers do not collapse it -> no spikes, no near-zero spots in the covers
-  const rr = splitColors(w, read3MF(paintedRoughShell3MF()), {}, () => {});
+  const rr = splitColors(w, read3MF(paintedRoughShell3MF()), { mode: 'covers' }, () => {});
   const th = [];
   for (const p of rr.parts.filter((q) => q.kind === 'cover')) {
     const m = toMan(p.mesh);
@@ -287,7 +287,7 @@ check(!rc.warnings.some((t) => /piezas \(paredes/.test(t)), 'no "base split" war
   }
   check(deg < 1500, `rough mesh: no knot of degenerate triangles in the base (${deg} of ${nb})`);
   // thin bow wing: the core's outline follows the wing, not the voxel staircase (few sharp folds in the core)
-  const rw2 = splitColors(w, read3MF(paintedWing3MF()), {}, () => {});
+  const rw2 = splitColors(w, read3MF(paintedWing3MF()), { mode: 'covers' }, () => {});
   const { V, T } = rw2.parts.find((p) => p.kind === 'body').mesh;
   const N = [], A2 = [], em = new Map();
   let sharp = 0;

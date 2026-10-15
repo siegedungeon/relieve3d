@@ -1,5 +1,7 @@
 // E2E: "Separar colores 3D" — open a multicolor 3MF, split it, inspect views and plates, export.
 // Run through test/e2e/run.mjs (env: E2E_DIR output folder, E2E_INPUT 3MF file, R3D_AUTOSAVE_DIR export folder).
+// Optional env: E2E_MODE mode under test (default carve), E2E_FIRST_MODE a mode to run first (it may fail: the next run
+// must still work), E2E_BODIES base pieces expected in carve mode (default 1).
 const fs = require('fs');
 const path = require('path');
 module.exports = async ({ win, run, shot, wait }) => {
@@ -22,20 +24,41 @@ module.exports = async ({ win, run, shot, wait }) => {
   ok(loaded.palette.length >= 2 && loaded.split, `3MF read with ${loaded.palette.length} colours, split enabled`);
   await wait(1500);
   await S('cs_01_original');
+  const rows = `JSON.stringify({ mode: window.__r3d.colorsplit.opts.mode, sel: document.querySelector('#colorsplit [data-k=mode]').value,
+    skinRow: !document.querySelector('#colorsplit [data-r=skinRow]').hidden, carveRow: !document.querySelector('#colorsplit [data-r=carveRow]').hidden })`;
+  const st0 = JSON.parse(await run(rows));
+  ok(st0.mode === 'carve' && st0.sel === 'carve' && st0.carveRow && !st0.skinRow, `default mode is carve ("Tallado"), its thickness row shown (${JSON.stringify(st0)})`);
+  const mode = process.env.E2E_MODE || 'carve';
   if (process.env.E2E_MODE) {
     const m = process.env.E2E_MODE;
     const st = JSON.parse(await run(`(() => { const s = document.querySelector('#colorsplit [data-k=mode]'); s.value = ${JSON.stringify(m)}; s.dispatchEvent(new Event('change', { bubbles: true }));
-      return JSON.stringify({ mode: window.__r3d.colorsplit.opts.mode, skinRow: !document.querySelector('#colorsplit [data-r=skinRow]').hidden }); })()`));
-    ok(st.mode === m && st.skinRow === (m === 'skin'), `mode "${m}" selected in the UI (skin thickness row ${st.skinRow ? 'shown' : 'hidden'})`);
+      return ${rows}; })()`));
+    ok(st.mode === m && st.skinRow === (m === 'skin') && st.carveRow === (m === 'carve'), `mode "${m}" selected in the UI (skin row ${st.skinRow ? 'shown' : 'hidden'}, carve row ${st.carveRow ? 'shown' : 'hidden'})`);
+  }
+  const setMode = (m) => run(`(() => { const s = document.querySelector('#colorsplit [data-k=mode]'); s.value = ${JSON.stringify(m)}; s.dispatchEvent(new Event('change', { bubbles: true })); })()`);
+  if (process.env.E2E_FIRST_MODE) {
+    // a run in another mode first (one that may fail on this model, even inside the 3D engine): the next run must work
+    const f = process.env.E2E_FIRST_MODE, nErr = errs.length, t1 = Date.now();
+    await setMode(f);
+    await run(`document.querySelector('#colorsplit [data-a=split]').click()`);
+    for (let i = 0; i < 900; i++) { if (await run(`!window.__r3d.colorsplit._busy`)) break; await wait(1000); }
+    const r1 = JSON.parse(await run(`JSON.stringify({ n: window.__r3d.colorsplit.res?.parts.length || 0, status: document.querySelector('#colorsplit [data-r=status]').textContent })`));
+    log(`first run in ${f}`, ((Date.now() - t1) / 1000).toFixed(1) + ' s', JSON.stringify(r1));
+    if (!r1.n) ok(!/Aborted/.test(r1.status) || /Tallado/.test(r1.status), `a failed ${f} run tells what to do (${r1.status})`);
+    errs.splice(nErr); // its error is expected
+    await run(`window.__r3d.colorsplit.res = null`);
+    await setMode(mode);
   }
   const t0 = Date.now();
   await run(`document.querySelector('#colorsplit [data-a=split]').click()`);
   for (let i = 0; i < 600; i++) { if (await run(`!!window.__r3d.colorsplit.res && !window.__r3d.colorsplit._busy`)) break; await wait(1000); }
   const res = JSON.parse(await run(`(() => { const c = window.__r3d.colorsplit, r = c.res; if (!r) return JSON.stringify({ error: document.querySelector('#colorsplit [data-r=status]').textContent });
     const k = {}; for (const p of r.parts) k[p.kind] = (k[p.kind] || 0) + 1;
-    return JSON.stringify({ n: r.parts.length, k, warnings: r.warnings, covers: !!r.covers, skin: !!r.skin, plates: c.plates.length, summary: c.root.querySelector('[data-r=summary]').textContent }); })()`));
+    return JSON.stringify({ n: r.parts.length, k, warnings: r.warnings, covers: !!r.covers, skin: !!r.skin, carve: !!r.carve, plates: c.plates.length, summary: c.root.querySelector('[data-r=summary]').textContent }); })()`));
   log('split', ((Date.now() - t0) / 1000).toFixed(1) + ' s', JSON.stringify(res));
   ok(!res.error && res.n > 0, `split produced ${res.n || 0} parts`);
+  const nBody = +(process.env.E2E_BODIES || 1); // base pieces expected (white letters on a pink layer are pieces of base)
+  if (mode === 'carve') ok(res.carve && res.k.body === nBody && /tallados/.test(res.summary), `carve mode: ${nBody} base piece(s) (${res.k.body}) + carved colour pieces, summary explains it`);
   if (process.env.E2E_MODE === 'skin') ok(res.skin && res.k.body === 1 && /capas de color/.test(res.summary), 'skin mode: one whole base + colour skins, summary explains it');
   ok(!res.covers || (res.k.body || 0) >= 1, 'covers mode keeps a base body');
   ok(!(res.warnings || []).some((w) => /piezas \(paredes|no se pudieron/.test(w)), 'no broken-base / failed-cover warnings');

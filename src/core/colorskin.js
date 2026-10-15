@@ -4,8 +4,10 @@
 // between two colours is the bisector of their painted areas (distance fields on a voxel grid → level set), so
 // colours meet with straight walls: no wedges or spikes where they join.
 
+import { solidPieces } from './solidparts.js';
+
 // squared distance point-triangle (Ericson)
-function triDist2(px, py, pz, ax, ay, az, bx, by, bz, cx, cy, cz) {
+export function triDist2(px, py, pz, ax, ay, az, bx, by, bz, cx, cy, cz) {
   const abx = bx - ax, aby = by - ay, abz = bz - az, acx = cx - ax, acy = cy - ay, acz = cz - az;
   const apx = px - ax, apy = py - ay, apz = pz - az;
   const d1 = abx * apx + aby * apy + abz * apz, d2 = acx * apx + acy * apy + acz * apz;
@@ -181,9 +183,9 @@ export function buildSkin({ w, o, M, src, base, nCol, keep, warnings, progress, 
   });
   progress('Capa exterior: base', 0.83);
   body = keep(Manifold.union([M, skinOf(base, C2), ...smalls]));
-  const bodies = body.decompose().map(keep).filter((q) => q.volume() > 1).sort((a, b) => b.volume() - a.volume());
+  const bodies = solidPieces(w, body, keep, 1).sort((a, b) => b.man.volume() - a.man.volume());
   if (bodies.length > 1) warnings.push(`La base quedó en ${bodies.length} piezas`);
-  for (const q of bodies) parts.unshift({ kind: 'body', color: base, man: q, up: null });
+  for (const q of bodies) parts.unshift({ kind: 'body', color: base, man: q.man, up: q.up });
   if (smalls.length) warnings.push(`${smalls.length} trocitos de color < ${o.minCover} mm³ quedan del color base`);
   warnings.push(`Capa exterior: el modelo crece ${D} mm por lado (rejilla ${H.toFixed(2)} mm); los agujeros se cierran ${2 * D} mm`);
   return parts;
