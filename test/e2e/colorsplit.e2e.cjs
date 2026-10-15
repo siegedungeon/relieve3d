@@ -52,16 +52,19 @@ module.exports = async ({ win, run, shot, wait }) => {
   }
   const t0 = Date.now();
   await run(`document.querySelector('#colorsplit [data-a=split]').click()`);
-  for (let i = 0; i < 600; i++) { if (await run(`!window.__r3d.colorsplit._busy`)) break; await wait(1000); }
+  for (let i = 0; i < 900; i++) { if (await run(`!window.__r3d.colorsplit._busy`)) break; await wait(1000); }
   const res = JSON.parse(await run(`(() => { const c = window.__r3d.colorsplit, r = c.res; if (!r) return JSON.stringify({ error: document.querySelector('#colorsplit [data-r=status]').textContent });
     const k = {}; for (const p of r.parts) k[p.kind] = (k[p.kind] || 0) + 1;
-    return JSON.stringify({ n: r.parts.length, k, warnings: r.warnings, covers: !!r.covers, skin: !!r.skin, carve: !!r.carve, sculpt: !!r.sculpt, previewOnly: !!r.previewOnly, plates: c.plates.length, summary: c.root.querySelector('[data-r=summary]').textContent }); })()`));
+    return JSON.stringify({ n: r.parts.length, k, warnings: r.warnings, covers: !!r.covers, skin: !!r.skin, carve: !!r.carve, sculpt: !!r.sculpt, previewOnly: !!r.previewOnly, assemblyChecked: !!r.assemblyChecked, assemblySteps: r.parts.map(p => p.assemblyStep), plates: c.plates.length, summary: c.root.querySelector('[data-r=summary]').textContent }); })()`));
   log('split', ((Date.now() - t0) / 1000).toFixed(1) + ' s', JSON.stringify(res));
   ok(!res.error && res.n > 0, `split produced ${res.n || 0} parts`);
   const nBody = +(process.env.E2E_BODIES || 1); // base pieces expected (white letters on a pink layer are pieces of base)
   if (mode === 'carve') ok(res.carve && res.k.body === nBody && /tallados/.test(res.summary), `carve mode: ${nBody} base piece(s) (${res.k.body}) + carved colour pieces, summary explains it`);
   if (process.env.E2E_MODE === 'skin') ok(res.skin && res.k.body === 1 && /capas de color/.test(res.summary), 'skin mode: one whole base + colour skins, summary explains it');
-  if (mode === 'sculpt') ok(res.sculpt && res.previewOnly && /Vista previa/.test(res.summary) && /reconstruidos/.test(res.summary) && !/original entero/.test(res.summary), 'sculpt is explicitly a reconstructed, non-printable preview');
+  if (mode === 'sculpt') {
+    ok(res.sculpt && !res.previewOnly && res.assemblyChecked && /reconstruidos/.test(res.summary) && /Montaje por traslación comprobado/.test(res.summary), 'sculpt reports reconstruction and a checked assembly, not an untouched original');
+    ok(res.assemblySteps?.filter(s => s > 0).every((s, i) => s === i + 1), 'the piece list follows assembly order');
+  }
   ok(!res.covers || (res.k.body || 0) >= 1, 'covers mode keeps a base body');
   if (res.carve || (res.covers && !res.skin)) ok(res.summary.includes(`base: ${res.k.body} pieza(s)`) && !/figura queda exacta/.test(res.summary), 'summary reports the actual base count, without promising a perfect fit');
   ok(!(res.warnings || []).some((w) => /piezas \(paredes|no se pudieron/.test(w)), 'no broken-base / failed-cover warnings');
@@ -85,6 +88,18 @@ module.exports = async ({ win, run, shot, wait }) => {
   if (res.covers && !res.previewOnly) {
     const instructions = files.filter((f) => f.endsWith('.txt')).map((f) => fs.readFileSync(path.join(exp, f), 'utf8')).join('\n');
     ok(instructions.includes(`La BASE incluye ${res.k.body} pieza(s)`) && /bordes afinados/.test(instructions), 'export describes actual base pieces and the need to inspect tapered edges');
+    if (mode === 'sculpt') ok(/ORDEN DE MONTAJE DEL ESCULPIDO/.test(instructions) && /salida \(/.test(instructions), 'export includes the checked assembly order and directions');
+  }
+  if (mode === 'sculpt' && !res.previewOnly) {
+    const originals = [];
+    for (let i = 0; i < res.n; i++) originals.push(JSON.parse(await run(`(() => {
+      const p = window.__r3d.colorsplit.res.parts[${i}];
+      return JSON.stringify({ name: p.name, kind: p.kind, n: p.n, assemblyStep: p.assemblyStep, V: Array.from(p.mesh.V), T: Array.from(p.mesh.T) });
+    })()`)));
+    const { pathToFileURL } = require('url');
+    const { checkColorExports } = await import(pathToFileURL(path.join(__dirname, '..', 'color_exports.mjs')).href);
+    const count = await checkColorExports(exp, originals, { assembly: true });
+    ok(count >= 2, 'ordered assembly is clear; exported reference, 3MF plates and STL retain their closed solids and topology');
   }
   ok(!errs.length, 'console errors: ' + (errs.join(' | ') || 'none'));
   log('done');

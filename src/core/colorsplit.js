@@ -28,7 +28,7 @@ export const DEFAULT_SPLIT = {
   //                walls), the base keeps the core in one piece; the outer shape stays exact
   //               | 'covers': intact base + thin colour covers glued on top | 'inlays': deep inlays (optionally cut in halves)
   //               | 'skin' (experimental): the whole original solid is the base, colours are a skin grown outside it
-  //               | 'sculpt' (preview only): reconstruct the outer shape and redraw the colour boundaries
+  //               | 'sculpt': reconstruct the outer shape, redraw colour boundaries and relieve insertion paths
   skinDepth: 1.2, // skin/sculpt: outward growth on every side (mm)
   skinGrid: 0.2, // skin/sculpt: distance-field spacing (mm); coarser automatically on big models
   skinSmooth: 0.6, // sculpt: positive colour-boundary smoothing radius (mm, up to 3)
@@ -229,31 +229,35 @@ export function splitColors(w, model, options = {}, progress = () => {}) {
   const warnings = [];
 
   if (o.mode === 'skin' || o.mode === 'sculpt') {
-    progress('Uniendo cuerpo', 0.05);
-    const shells = ana.shells.filter((s) => Math.abs(s.vol) > 1e-6);
-    const built = shellManifolds(shells, warnings, (s) => keep(toManifold(w, subMesh(s.part.V, s.part.T, s.tris, s.vol < 0))));
-    const mans = built.filter(Boolean);
-    if (!mans.length) throw new Error('No se encontró un cuerpo base');
-    const M = dropSpecks(w, keep(Manifold.union(mans)), keep);
-    const V = [], T = [], C = [];
-    for (const p of model.parts) {
-      const b = V.length / 3;
-      for (let i = 0; i < p.V.length; i++) V.push(p.V[i]);
-      for (let i = 0; i < p.T.length; i++) T.push(p.T[i] + b);
-      for (let t = 0; t < p.T.length / 3; t++) C.push(p.tc ? p.tc[t] : 0);
+    try {
+      progress('Uniendo cuerpo', 0.05);
+      const shells = ana.shells.filter((s) => Math.abs(s.vol) > 1e-6);
+      const built = shellManifolds(shells, warnings, (s) => keep(toManifold(w, subMesh(s.part.V, s.part.T, s.tris, s.vol < 0))));
+      const mans = built.filter(Boolean);
+      if (!mans.length) throw new Error('No se encontró un cuerpo base');
+      const M = dropSpecks(w, keep(Manifold.union(mans)), keep);
+      const V = [], T = [], C = [];
+      for (const p of model.parts) {
+        const b = V.length / 3;
+        for (let i = 0; i < p.V.length; i++) V.push(p.V[i]);
+        for (let i = 0; i < p.T.length; i++) T.push(p.T[i] + b);
+        for (let t = 0; t < p.T.length / 3; t++) C.push(p.tc ? p.tc[t] : 0);
+      }
+      // front/back axis: the thinnest horizontal one, front = where the paint faces
+      const bx = M.boundingBox(), axI = bx.max[0] - bx.min[0] <= bx.max[1] - bx.min[1] ? 0 : 1;
+      let sN = 0;
+      for (let t = 0; t < T.length / 3; t++) if (C[t] !== base) {
+        const a = T[t * 3] * 3, b = T[t * 3 + 1] * 3, c = T[t * 3 + 2] * 3;
+        sN += cross([V[b] - V[a], V[b + 1] - V[a + 1], V[b + 2] - V[a + 2]], [V[c] - V[a], V[c + 1] - V[a + 1], V[c + 2] - V[a + 2]])[axI];
+      }
+      const cutAxis = [0, 0, 0];
+      cutAxis[axI] = sN >= 0 ? 1 : -1;
+      const solids = o.mode === 'sculpt' ? shells.flatMap((s, i) => built[i] && s.dom !== base && s.purity > 0.99 && s.thickness > 0.6 && s.vol > o.minCover ? [{ color: s.dom, man: built[i] }] : []) : [];
+      const parts = buildSkin({ w, o, M, src: { V, T, C }, base, nCol: model.palette.length, keep, warnings, progress, cutAxis, solids });
+      return finishParts({ w, o, model, parts, solids: [], base, keep, garbage: [], warnings, progress, info: { regions: 0, tiles: parts.filter((p) => p.kind === 'cover').length, thickness: [], covers: true, skin: true, sculpt: o.mode === 'sculpt', assemblyChecked: o.mode === 'sculpt', previewOnly: false, cut: null } });
+    } finally {
+      for (const man of new Set(garbage)) man.delete();
     }
-    // front/back axis: the thinnest horizontal one, front = where the paint faces
-    const bx = M.boundingBox(), axI = bx.max[0] - bx.min[0] <= bx.max[1] - bx.min[1] ? 0 : 1;
-    let sN = 0;
-    for (let t = 0; t < T.length / 3; t++) if (C[t] !== base) {
-      const a = T[t * 3] * 3, b = T[t * 3 + 1] * 3, c = T[t * 3 + 2] * 3;
-      sN += cross([V[b] - V[a], V[b + 1] - V[a + 1], V[b + 2] - V[a + 2]], [V[c] - V[a], V[c + 1] - V[a + 1], V[c + 2] - V[a + 2]])[axI];
-    }
-    const cutAxis = [0, 0, 0];
-    cutAxis[axI] = sN >= 0 ? 1 : -1;
-    const solids = o.mode === 'sculpt' ? shells.flatMap((s, i) => built[i] && s.dom !== base && s.purity > 0.99 && s.thickness > 0.6 && s.vol > o.minCover ? [{ color: s.dom, man: built[i] }] : []) : [];
-    const parts = buildSkin({ w, o, M, src: { V, T, C }, base, nCol: model.palette.length, keep, warnings, progress, cutAxis, solids });
-    return finishParts({ w, o, model, parts, solids: [], base, keep, garbage, warnings, progress, info: { regions: 0, tiles: parts.filter((p) => p.kind === 'cover').length, thickness: [], covers: true, skin: true, sculpt: o.mode === 'sculpt', previewOnly: o.mode === 'sculpt', cut: null } });
   }
 
   if (o.mode === 'carve') {
@@ -1411,7 +1415,7 @@ function finishParts({ w, o, model, parts, solids, base, keep, garbage, warnings
   // 6) solid color parts, shrunk by the clearance so they slide into their socket. A solid no straight slide takes off
   // the figure (a scarf round a neck between a head and a body wider than it) could never be put on: it is cut in
   // pieces that do (across the front/back axis first: the seams fall on the sides)
-  progress('Piezas sólidas', 0.85);
+  progress(info.sculpt ? 'Esculpido: preparando placas' : 'Piezas sólidas', info.sculpt ? 0.97 : 0.85);
   const R = solids.length && parts.length ? meshSoup(parts.map((p) => p.man)) : null;
   const fb = R && R.bb.max[0] - R.bb.min[0] > R.bb.max[1] - R.bb.min[1] ? 1 : 0;
   let stuck = 0;
@@ -1432,7 +1436,7 @@ function finishParts({ w, o, model, parts, solids, base, keep, garbage, warnings
     const mesh = manifoldToMesh(p.man);
     // shells always print along their insertion axis: visible face on top (best finish), supports only under the glued face
     const up = p.kind === 'inlay' || p.kind === 'cover' ? p.up : p.up || bestUp(mesh);
-    return { kind: p.kind, color: p.color, mesh, up, volume: p.man.volume(), n: p.kind === 'inlay' || p.kind === 'cover' ? p.up : p.n, half: p.half, fromSolid: !!p.solidCover, backCover: !!p.back };
+    return { kind: p.kind, color: p.color, mesh, up, volume: p.man.volume(), n: p.kind === 'inlay' || p.kind === 'cover' ? p.up : p.n, half: p.half, fromSolid: !!p.solidCover, backCover: !!p.back, assemblyStep: p.assemblyStep };
   });
   const counters = {};
   for (const p of out) {

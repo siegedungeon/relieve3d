@@ -4,7 +4,10 @@ import { zipSync, strToU8 } from 'fflate';
 import { applyPose, layoutPlates } from './colorsplit.js';
 
 const esc = (s) => String(s).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
-const f = (x) => (Math.round(x * 10000) / 10000).toString();
+const f = (x) => {
+  if (!Number.isFinite(x)) throw new Error('No se puede exportar una coordenada no finita');
+  return x.toString();
+};
 const safe = (s) => String(s).replace(/[\\/:*?"<>|]+/g, '-').trim();
 
 // Separate objects (one build item each) so the slicer can move / rotate every piece on its own.
@@ -115,7 +118,9 @@ export function instructions(res, opts, plates) {
     L.push('',
       `  • La BASE incluye ${body.length} pieza(s) del color principal; revisa su posición en el mapa de armado.`,
       '    Imprímela como viene (Z hacia arriba); si el slicer marca voladizos activa soportes "solo en la cama".',
-      '  • Cada COVER es una tapa delgada que copia la superficie: viene con la cara de color ARRIBA; su cara de abajo',
+      res.sculpt
+        ? '  • Las piezas de color incluyen capas exteriores y volúmenes rellenos: vienen con la cara de color ARRIBA; su cara de abajo'
+        : '  • Cada COVER es una tapa delgada que copia la superficie: viene con la cara de color ARRIBA; su cara de abajo',
       '    es curva → soportes tipo árbol "solo en la cama". Esa cara se pega y no se ve.',
       '  • Usa capas de 0.12–0.16 mm para los covers (la superficie curva sale más lisa).',
       '  • Revisa los bordes afinados y los avisos de montaje en el laminador antes de imprimir.',
@@ -125,7 +130,9 @@ export function instructions(res, opts, plates) {
       '  2. Presenta cada cover en su rebaje SIN pegamento: cada forma sólo calza en su lugar (usa el mapa de armado).',
       '  3. Pega con cianoacrilato en gel o epóxico de 5 min, en gotas pequeñas en el fondo del rebaje (no en los bordes),',
       '     y presiona unos segundos. Comprueba la alineación y la holgura antes de que cure el pegamento.',
-      '  4. Las piezas sólidas (ej. el moño) entran en su asiento en la base; pégalas al final.', '');
+      res.sculpt
+        ? '  4. Sigue el orden de montaje del esculpido detallado a continuación, también para las piezas rellenas.'
+        : '  4. Las piezas sólidas (ej. el moño) entran en su asiento en la base; pégalas al final.', '');
   } else if (res.cut) {
     L.push('',
       '  • El modelo va cortado por un plano vertical en dos mitades: FRENTE y ATRÁS. Cada archivo ya trae las piezas',
@@ -158,6 +165,14 @@ export function instructions(res, opts, plates) {
     '     Para PETG/PLA también sirve pegamento para plásticos tipo epóxico de 5 minutos.',
     '  4. Las piezas sólidas (ej. el moño) entran en su asiento en el cuerpo; pégalas al final.', '');
   }
+  if (res.sculpt && res.assemblyChecked) {
+    L.push('ORDEN DE MONTAJE DEL ESCULPIDO', '',
+      '  Primero coloca la base. Sigue este orden, no agrupes el montaje por color.',
+      '  Desliza cada pieza siguiendo el recorrido inverso del control Despiece de la app.',
+      '  Los vectores siguientes indican la SALIDA en los ejes XYZ del modelo original; la entrada es la contraria.');
+    for (const p of res.parts.filter(p => p.assemblyStep > 0)) L.push(`  ${p.assemblyStep}. ${p.name}: salida (${p.n.map(x => x.toFixed(4)).join(', ')})`);
+    L.push('', '  Es una comprobación geométrica, no una prueba física de impresión. Revisa soportes, espesores y holgura en el laminador.', '');
+  }
   if (res.warnings?.length) { L.push('AVISOS', ''); for (const w of res.warnings) L.push('  • ' + w); L.push(''); }
   L.push('LISTA DE PIEZAS', '');
   for (const p of res.parts) L.push(`  ${p.name.padEnd(28)} ${p.kind === 'body' ? (res.covers ? 'base' : 'cuerpo') : p.kind === 'solid' ? 'sólida' : p.kind === 'cover' ? 'cover' : 'incrustación'}  ${p.print.size.map((x) => x.toFixed(1)).join(' × ')} mm  ${p.volume.toFixed(1)} mm³`);
@@ -167,6 +182,7 @@ export function instructions(res, opts, plates) {
 // All files: [{ name, data }]
 export function exportFiles(res, opts = {}) {
   if (res.previewOnly) throw new Error('El esculpido es solo una vista previa: su montaje aún no está resuelto y no se puede exportar para imprimir');
+  if (res.sculpt && !res.assemblyChecked) throw new Error('Esculpido: falta la comprobación del montaje; no se permite exportar');
   const o = { bedW: 256, bedH: 256, gap: 3, clearance: 0.15, title: 'modelo', ...opts };
   const plates = platesFor(res, o);
   const files = [];

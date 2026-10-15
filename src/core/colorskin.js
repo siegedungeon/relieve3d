@@ -1,9 +1,10 @@
 // Outer colour skins. Legacy 'skin' keeps the original solid as its base.
-// The preview-only 'sculpt' prototype reconstructs the core and outer envelope, smooths the paint partition,
-// and fills monochrome source solids. Its assembly is not yet reliable on complex models.
+// 'sculpt' reconstructs the core and outer envelope, smooths the paint partition, fills monochrome source
+// solids and opens their insertion paths. Unsafe geometry or a blocked assembly is rejected.
 
 import { solidPieces } from './solidparts.js';
 import { blurGrid } from './gridfield.js';
+import { fitSculptParts } from './colorsculpt_fit.js';
 
 // squared distance point-triangle (Ericson)
 export function triDist2(px, py, pz, ax, ay, az, bx, by, bz, cx, cy, cz) {
@@ -46,7 +47,11 @@ export function buildSkin({ w, o, M, src, base, nCol, keep, warnings, progress, 
     for (const m of owned) if (!before.has(m) && !retained.has(m)) release(m);
   };
   try {
-    const parts = build({ w, o, M, src, base, nCol, keep: retain, warnings, progress, cutAxis, solids, checkpoint, releaseSince });
+    let parts = build({ w, o, M, src, base, nCol, keep: retain, warnings, progress, cutAxis, solids, checkpoint, releaseSince });
+    if (o.mode === 'sculpt') {
+      releaseSince(new Set(), new Set(parts.map(p => p.man)));
+      parts = fitSculptParts({ w, parts, keep: retain, progress, warnings });
+    }
     for (const p of parts) { owned.delete(p.man); keep(p.man); }
     return parts;
   } finally {
@@ -57,9 +62,6 @@ export function buildSkin({ w, o, M, src, base, nCol, keep, warnings, progress, 
 function build({ w, o, M, src, base, nCol, keep, warnings, progress, cutAxis, solids, checkpoint, releaseSince }) {
   const { Manifold } = w;
   const D = o.skinDepth, C2 = o.clearance / 2, smooth = o.mode === 'sculpt' ? o.skinSmooth ?? 0.6 : 0;
-  if (o.mode === 'sculpt') {
-    warnings.push('Vista previa experimental: el montaje del esculpido aún no es fiable; la exportación está desactivada');
-  }
   const mg = M.getMesh(), MV = mg.vertProperties, MT = mg.triVerts, mnp = mg.numProp;
   const bb = M.boundingBox();
   // grid: as fine as o.skinGrid, coarser on big models (memory: one float per voxel per colour)
@@ -253,7 +255,7 @@ function build({ w, o, M, src, base, nCol, keep, warnings, progress, cutAxis, so
 
   const parts = [];
   let body = core;
-  const smalls = [];
+  const smalls = [], colorPockets = [];
   cols.forEach((c, n) => {
     if (c === base) return;
     const before = checkpoint();
@@ -268,13 +270,15 @@ function build({ w, o, M, src, base, nCol, keep, warnings, progress, cutAxis, so
         }
         const otherSockets = sockets.filter(p => p.color !== c).map(p => p.man);
         if (otherSockets.length) contracted = keep(contracted.subtract(keep(Manifold.union(otherSockets))));
-        for (const q of keep(new Manifold(region.getMesh())).decompose()) {
+        if (colorPockets.length) contracted = keep(contracted.subtract(keep(Manifold.union(colorPockets))));
+        colorPockets.push(skinOf(c, C2 + Math.min(0.03, H / 10)));
+        for (const q of region.decompose()) {
           keep(q);
           if (q.volume() < o.minCover) { smalls.push(q); continue; }
           const candidates = keep(new Manifold(keep(q.intersect(contracted)).getMesh())).decompose();
           const kept = candidates.filter(p => { keep(p); return p.volume() >= o.minCover; });
           if (!kept.length) { smalls.push(q); continue; }
-          for (const p of kept) for (const h of splitFrontBack(w, p, fills.length ? null : cutAxis, tri, S, D, keep, outerIDs)) {
+          for (const p of kept) for (const h of splitFrontBack(w, p, fills.length ? null : cutAxis, tri, S, D, keep, outerIDs, C2 / 4)) {
             parts.push({ kind: 'cover', color: c, man: h.man, up: h.up });
           }
         }
@@ -287,7 +291,7 @@ function build({ w, o, M, src, base, nCol, keep, warnings, progress, cutAxis, so
         for (const h of splitFrontBack(w, q, cutAxis, tri, S, D, keep, outerIDs)) parts.push({ kind: 'cover', color: c, man: h.man, up: h.up });
       }
     } finally {
-      releaseSince(before, new Set([...parts.map(p => p.man), ...smalls]));
+      releaseSince(before, new Set([...parts.map(p => p.man), ...smalls, ...colorPockets]));
     }
   });
   progress('Capa exterior: base', 0.83);
@@ -303,7 +307,7 @@ function build({ w, o, M, src, base, nCol, keep, warnings, progress, cutAxis, so
 
 // a skin that wraps around (faces both front and back) is cut on the plane where its surface turns sideways, so
 // each half prints with its visible face up
-function splitFrontBack(w, q, axis, tri, S, D, keep, outerIDs = null) {
+function splitFrontBack(w, q, axis, tri, S, D, keep, outerIDs = null, gap = 0) {
   const info = (m) => {
     const g = m.getMesh(), P = g.vertProperties, T = g.triVerts, np = g.numProp;
     const outer = new Uint8Array(T.length / 3);
@@ -311,13 +315,14 @@ function splitFrontBack(w, q, axis, tri, S, D, keep, outerIDs = null) {
       if (outerIDs.has(g.runOriginalID[r])) outer.fill(1, g.runIndex[r] / 3, g.runIndex[r + 1] / 3);
     }
     const up = [0, 0, 0];
-    let ap = 0, an = 0, sw = 0, sx = 0;
+    let ap = 0, an = 0, area = 0, sw = 0, sx = 0;
     for (let t = 0; t < T.length / 3; t++) {
       const a = T[t * 3] * np, b = T[t * 3 + 1] * np, c = T[t * 3 + 2] * np;
       const ctr = [0, 1, 2].map((k) => (P[a + k] + P[b + k] + P[c + k]) / 3);
       if (outerIDs ? !outer[t] : tri(S, ctr) > -D / 2) continue; // only the outer (visible) face
       const u = [0, 1, 2].map((k) => P[b + k] - P[a + k]), v = [0, 1, 2].map((k) => P[c + k] - P[a + k]);
       const n = [u[1] * v[2] - u[2] * v[1], u[2] * v[0] - u[0] * v[2], u[0] * v[1] - u[1] * v[0]];
+      area += Math.hypot(...n) / 2;
       for (let k = 0; k < 3; k++) up[k] += n[k] / 2;
       if (axis) {
         const l = Math.hypot(...n) || 1, na = (n[0] * axis[0] + n[1] * axis[1] + n[2] * axis[2]) / l;
@@ -327,12 +332,13 @@ function splitFrontBack(w, q, axis, tri, S, D, keep, outerIDs = null) {
       }
     }
     const l = Math.hypot(...up) || 1;
-    return { up: up.map((x) => x / l), ap, an, mid: sw > 0 ? sx / sw : null };
+    return { up: up.map((x) => x / l), ap, an, area, mid: sw > 0 ? sx / sw : null };
   };
   const i0 = info(q);
-  if (!axis || i0.mid === null || Math.min(i0.ap, i0.an) < 0.15 * (i0.ap + i0.an)) return [{ man: q, up: i0.up }];
+  if (!axis || i0.mid === null || i0.ap + i0.an < 0.25 * i0.area || Math.min(i0.ap, i0.an) < 0.15 * (i0.ap + i0.an)) return [{ man: q, up: i0.up }];
   const out = [];
-  for (const h of q.splitByPlane(axis, i0.mid)) {
+  const halves = gap > 0 ? [q.trimByPlane(axis, i0.mid + gap), q.trimByPlane(axis.map(x => -x), -i0.mid + gap)] : q.splitByPlane(axis, i0.mid);
+  for (const h of halves) {
     keep(h);
     for (const p of h.decompose()) { keep(p); if (p.volume() > 0.5) out.push({ man: p, up: info(p).up }); }
   }

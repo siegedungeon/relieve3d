@@ -7,26 +7,29 @@ import { exportFiles } from '../src/core/colorsplit_export.js';
 const w = await Module(); w.setup();
 const { Manifold, Mesh } = w;
 
-function strip(amplitude) {
-  const V = [], T = [], tc = [], rows = 81;
-  const id = (layer, j, i) => (layer * rows + j) * 3 + i;
+function strip(amplitude, count = 2) {
+  const V = [], T = [], tc = [], rows = 81, columns = count + 1;
+  const id = (layer, j, i) => (layer * rows + j) * columns + i;
   for (let layer = 0; layer < 2; layer++) for (let j = 0; j < rows; j++) {
-    for (const x of [-6, amplitude * Math.sin(j * Math.PI / 2), 6]) V.push(x, -10 + j * 0.25, layer ? 0 : -5);
+    for (let i = 0; i < columns; i++) {
+      const x = -6 + 12 * i / count + (i > 0 && i < count ? amplitude * Math.sin(j * Math.PI / 2) : 0);
+      V.push(x, -10 + j * 0.25, layer ? 0 : -5);
+    }
   }
   const face = (a, b, c, d, color) => { T.push(a, b, c, a, c, d); tc.push(color, color); };
   for (let j = 0; j + 1 < rows; j++) {
-    for (let i = 0; i < 2; i++) {
+    for (let i = 0; i < count; i++) {
       face(id(1, j, i), id(1, j, i + 1), id(1, j + 1, i + 1), id(1, j + 1, i), i + 1);
       face(id(0, j, i), id(0, j + 1, i), id(0, j + 1, i + 1), id(0, j, i + 1), 0);
     }
     face(id(0, j, 0), id(1, j, 0), id(1, j + 1, 0), id(0, j + 1, 0), 0);
-    face(id(0, j, 2), id(0, j + 1, 2), id(1, j + 1, 2), id(1, j, 2), 0);
+    face(id(0, j, count), id(0, j + 1, count), id(1, j + 1, count), id(1, j, count), 0);
   }
-  for (let i = 0; i < 2; i++) {
+  for (let i = 0; i < count; i++) {
     face(id(0, 0, i), id(0, 0, i + 1), id(1, 0, i + 1), id(1, 0, i), 0);
     face(id(0, rows - 1, i), id(1, rows - 1, i), id(1, rows - 1, i + 1), id(0, rows - 1, i + 1), 0);
   }
-  return { palette: ['#FFFFFF', '#88DDBB', '#EEAACC'], names: ['Base', 'Green', 'Pink'],
+  return { palette: ['#FFFFFF', '#88DDBB', '#EEAACC', '#88AADD', '#DDAA88'].slice(0, columns), names: ['Base', 'Green', 'Pink', 'Blue', 'Orange'].slice(0, columns),
     parts: [{ V: Float64Array.from(V), T: Uint32Array.from(T), tc: Uint8Array.from(tc) }] };
 }
 function solid(p) {
@@ -49,21 +52,28 @@ function solid(p) {
 }
 
 for (const options of [{ skinSmooth: 0 }, { skinSmooth: -1 }, { skinSmooth: Infinity }, { skinSmooth: 4 }, { skinGrid: 0 }, { skinDepth: 0 }, { clearance: 3 }]) {
-  assert.throws(() => splitColors(w, strip(0), { mode: 'sculpt', ...options }), /esculpido|Esculpido/, 'invalid preview settings are rejected explicitly');
+  assert.throws(() => splitColors(w, strip(0), { mode: 'sculpt', ...options }), /esculpido|Esculpido/, 'invalid sculpt settings are rejected explicitly');
 }
+assert.throws(() => splitColors(w, strip(0), { mode: 'sculpt' }, message => {
+  if (message === 'Capa exterior: distancias') throw new Error('interrupted sculpt regression');
+}), /interrupted sculpt regression/, 'an interrupted job propagates its error; subsequent runs still work');
 
-for (const amplitude of [0, 0.18]) {
-  const model = strip(amplitude), original = solid(model.parts[0]);
+for (const [amplitude, count] of [[0, 2], [0.18, 2], [0.18, 4]]) {
+  const model = strip(amplitude, count), original = solid(model.parts[0]);
   assert.equal(original.status(), 'NoError');
   assert.ok(Math.abs(original.volume() - 1200) < 1e-4, 'closed fixture with unchanged external shape');
   const result = splitColors(w, model, { mode: 'sculpt' });
-  assert.equal(result.previewOnly, true, 'unfinished assembly is not presented as print-ready');
-  assert.throws(() => exportFiles(result), /vista previa/, 'preview geometry cannot be exported as printable pieces');
+  assert.equal(result.previewOnly, false);
+  assert.equal(result.assemblyChecked, true, 'exportable geometry has passed the assembly stage');
+  assert.deepEqual(result.parts.map(p => p.assemblyStep), Array.from({ length: count + 1 }, (_, i) => i));
+  assert.ok(exportFiles(result).files.some(f => f.name.endsWith('.3mf')), 'checked sculpt geometry can be exported');
+  assert.throws(() => exportFiles({ ...result, previewOnly: true }), /vista previa/, 'old previews remain blocked');
+  assert.throws(() => exportFiles({ ...result, assemblyChecked: false }), /comprobación/, 'unchecked sculpt geometry is blocked');
   const parts = result.parts.map(p => ({ ...p, man: solid(p.mesh) }));
   console.log('sculpt fixture', { amplitude, parts: parts.length, warnings: result.warnings });
-  assert.equal(parts.length, 3, 'a flat colour patch is not split because of its hidden side walls');
+  assert.equal(parts.length, count + 1, 'flat colour patches are not split because of their hidden side walls');
   assert.equal(parts.filter(p => p.kind === 'body').length, 1);
-  assert.ok(parts.some(p => p.color === 1) && parts.some(p => p.color === 2), 'both colours remain');
+  for (let c = 1; c <= count; c++) assert.ok(parts.some(p => p.color === c), `colour ${c} remains`);
   let overlap = 0;
   for (let i = 0; i < parts.length; i++) {
     const m = parts[i].man, components = m.decompose();
@@ -87,10 +97,11 @@ for (const amplitude of [0, 0.18]) {
     const edges = [[], []], gaps = [];
     for (let j = 0; j < 100; j++) {
       const y = -4 + 0.08 * j;
-      for (let c = 1; c <= 2; c++) {
+      for (let side = 0; side < 2; side++) {
+        const c = count / 2 + side;
         const hits = parts.filter(p => p.color === c).flatMap(p => p.man.rayCast([-2, y, height], [2, y, height]));
         assert.ok(hits.length, `colour ${c} has a continuous wall at ${y}, ${height}`);
-        edges[c - 1].push(hits.map(h => -2 + 4 * h.distance).sort((a, b) => Math.abs(a) - Math.abs(b))[0]);
+        edges[side].push(hits.map(h => -2 + 4 * h.distance).sort((a, b) => Math.abs(a) - Math.abs(b))[0]);
       }
       gaps.push(edges[1].at(-1) - edges[0].at(-1));
     }

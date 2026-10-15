@@ -7,7 +7,7 @@
     "postinstall": "node scripts/vendor.mjs",
     "prestart": "node scripts/vendor.mjs",
     "start": "electron .",
-    "test": "node test/pipeline.test.mjs && node test/watertight.test.mjs && node test/features.test.mjs && node test/micbody.test.mjs && node test/elements.test.mjs && node test/accuracy.test.mjs && node test/thicken.test.mjs && node test/counters.test.mjs && node test/hablador.test.mjs && node test/hablador_mockup.test.mjs && node test/solidparts.test.mjs && node test/splitjob.test.mjs && node test/colorsplit.test.mjs && node test/colorcarve.test.mjs && node test/colorseams.test.mjs && node test/colorsculpt.test.mjs",
+    "test": "node test/pipeline.test.mjs && node test/watertight.test.mjs && node test/features.test.mjs && node test/micbody.test.mjs && node test/elements.test.mjs && node test/accuracy.test.mjs && node test/thicken.test.mjs && node test/counters.test.mjs && node test/hablador.test.mjs && node test/hablador_mockup.test.mjs && node test/solidparts.test.mjs && node test/splitjob.test.mjs && node test/colorsplit.test.mjs && node test/colorcarve.test.mjs && node test/colorseams.test.mjs && node test/colorsculpt.test.mjs && node test/colorsculpt_fit.test.mjs",
     "test:e2e": "node test/e2e/run.mjs all",
     "predist": "node scripts/vendor.mjs",
     "dist": "electron-builder --win nsis"
