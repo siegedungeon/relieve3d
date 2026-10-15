@@ -4,12 +4,13 @@
 // their painted areas (straight walls perpendicular to the surface, with a small draft so each piece slides in: no
 // wedges or spikes at the junctions). The rest of the solid (the core) stays base colour and is fused to the base
 // colour's own band. Where the model is too thin for a core, the colours share the whole thickness.
-// Every piece is cut from ONE partition field, so pieces never overlap and always keep the clearance between them;
-// the core is a morphological opening (no base wall thinner than 2·r); a hidden core wrapped in a single colour
+// Shared distance fields define the colour pieces and their recesses; visible seams are refined only while retaining
+// the base's topology. The core is a morphological opening (no base wall thinner than 2·r); a hidden core in one colour
 // becomes that colour (a solid bow prints as one piece of its colour).
 
 import { triDist2 } from './colorskin.js';
 import { farView, solidPieces } from './solidparts.js';
+import { triangleQuery } from './trianglequery.js';
 
 // closest point of triangle abc to p (Ericson) → out[0..2]
 function closest(px, py, pz, ax, ay, az, bx, by, bz, cx, cy, cz, out) {
@@ -131,14 +132,14 @@ export function openPaint(col, P, np, T, merged, rho, adj = triAdjacency(P, np, 
     if (d < dB[t]) dB[t] = d;
   }
   triDijkstra(off, nb, C, dB, same);
-  // distance to the eroded area {dB ≥ rho}: what lies farther than rho from it is thinner than 2·rho (centre-to-centre
-  // paths run a bit longer than the true distance: 1.5·rho)
+  // Reconstruct from the eroded boundary, not just its sampled centres: a seed already covers dB-rho of the path.
+  // Zero seeds cut bites out of broad patches with uneven triangles.
   const dK = new Float64Array(nT).fill(Infinity);
-  for (let t = 0; t < nT; t++) if (dB[t] >= rho) dK[t] = 0;
+  for (let t = 0; t < nT; t++) if (dB[t] >= rho) dK[t] = Number.isFinite(dB[t]) ? rho - dB[t] : 0;
   triDijkstra(off, nb, C, dK, same);
   const drop = new Uint8Array(nT);
   let n = 0;
-  for (let t = 0; t < nT; t++) if (dK[t] > 1.5 * rho) { drop[t] = 1; n++; }
+  for (let t = 0; t < nT; t++) if (dK[t] > rho) { drop[t] = 1; n++; }
   if (!n) return 0;
   // painted areas (connected, one colour, one key)
   const comp = new Int32Array(nT).fill(-1), compCol = [], queue = new Int32Array(nT);
@@ -529,12 +530,20 @@ export function buildCarve({ w, o, M, mg, col, mIDs, merged, base, keep, warning
   // distance from p to the border between the areas of the nearest points q1 (sq. dist e1, triangle u) and q2 (e2, v):
   // the bisector of q1 and q2 where the two areas meet at a crease, half the |q1 q2| more where they lie on one smooth
   // surface (there q2 is the border point itself)
-  const sep = (e1, e2, u, v) => {
+  const sep = (e1, e2, u, v, p = null) => {
     const l = Math.hypot(q2[0] - q1[0], q2[1] - q1[1], q2[2] - q1[2]);
     if (l < 1e-7) return 0;
     const cosn = TN[u * 3] * TN[v * 3] + TN[u * 3 + 1] * TN[v * 3 + 1] + TN[u * 3 + 2] * TN[v * 3 + 2];
     const lam = Math.min(1, Math.max(0, (cosn - 0.5) / 0.5));
-    return (e2 - e1) / (2 * l) + (lam * l) / 2;
+    const value = (e2 - e1) / (2 * l) + (lam * l) / 2;
+    if (!p || lam === 1) return value;
+    // At a crease, use the plane bisector when both closest points lie on the faces. Fade back to finite-triangle
+    // distances at their ends: extending a plane past a paint corner can cut holes in a neighbouring colour.
+    const da = (p[0] - q1[0]) * TN[u * 3] + (p[1] - q1[1]) * TN[u * 3 + 1] + (p[2] - q1[2]) * TN[u * 3 + 2];
+    const db = (p[0] - q2[0]) * TN[v * 3] + (p[1] - q2[1]) * TN[v * 3 + 1] + (p[2] - q2[2]) * TN[v * 3 + 2];
+    const onPlanes = Math.max(0, Math.min(1, 1 - (e1 - da * da + e2 - db * db) / (l * l)));
+    const plane = Math.abs(da - db) / Math.sqrt(2 - 2 * cosn);
+    return value + (1 - lam) * onPlanes * onPlanes * (plane - value);
   };
   for (let k = 0, gg = 0; k < NZ; k++) {
     if ((k & 15) === 0) progress('Tallado: campos', 0.47 + (0.08 * k) / NZ);
@@ -576,6 +585,7 @@ export function buildCarve({ w, o, M, mg, col, mIDs, merged, base, keep, warning
   // hidden cores: a core wrapped in one single colour (no base colour around it) becomes that colour
   const PHIF = Math.max(2 * H, cl + tq * D + H);
   const NOF = 255, FC = new Uint8Array(NG).fill(NOF); // colour a core node is filled with
+  const modified = solids.length ? new Uint8Array(NG) : null;
   {
     const core = new Uint8Array(NG);
     for (let gg = 0; gg < NG; gg++) core[gg] = ins[gg] && B[gg] <= 0 ? 1 : 0;
@@ -683,6 +693,7 @@ export function buildCarve({ w, o, M, mg, col, mIDs, merged, base, keep, warning
         const m = ins[gg] ? (e > 0 ? n : -1) : ou;
         if (m < 0) continue;
         isA[li] = 1;
+        modified[gg] = 1;
         const v = t2[gg], ov = v >= 0 ? own[v] : -1;
         const z = tq * (S[gg] < 0 ? 0 : S[gg] > D ? D : S[gg]), pj = e - gF + cl / 2 + z;
         if (ou === m) PHI[gg] = ov === m ? Math.min(PHI[gg], pj) : pj;
@@ -778,6 +789,7 @@ export function buildCarve({ w, o, M, mg, col, mIDs, merged, base, keep, warning
       // the rest's fields; inside, its base also ends at the joint (U = {e > 0} there)
       for (let k = lo[2], li = 0; k <= hi[2]; k++) for (let j = lo[1]; j <= hi[1]; j++) for (let i = lo[0], gg = i + j * NX + k * SZ; i <= hi[0]; i++, gg++, li++) {
         if (isA[li] || FC[gg] !== NOF) continue;
+        modified[gg] = 1;
         const u = rt1[li];
         let c = base, phi = BIG, phib = BIG;
         if (u >= 0) {
@@ -820,18 +832,95 @@ export function buildCarve({ w, o, M, mg, col, mIDs, merged, base, keep, warning
   // ---- level sets: cover of colour c = {B > gF, ψc > cl/2}; region taken from the base U = {B > 0, ψbase < cl/2}
   //      ψc = ±PHI − draft·depth (covers narrow down with depth), ψbase = PHIB + draft·depth
   const zd = (s) => (s < 0 ? 0 : s > D ? D : s);
-  const field = (box, fn) => {
+  const precise = new Uint8Array(NG).fill(1);
+  const degree = new Uint32Array(P.length / np);
+  for (let t = 0; t < nT; t++) for (let q = adj.off[t]; q < adj.off[t + 1]; q++) {
+    if (adj.nb[q] > t && col[t] !== col[adj.nb[q]]) { degree[adj.ev[q * 2]]++; degree[adj.ev[q * 2 + 1]]++; }
+  }
+  // A four-way checker junction can have only two colours. Preserve its existing partition, not just cells that
+  // contain three colours: refining the separate branches can connect pockets underneath a thin bridge of base.
+  const jr = R + H;
+  for (let v = 0; v < degree.length; v++) if (degree[v] > 2) {
+    const x = P[v * np], y = P[v * np + 1], z = P[v * np + 2];
+    const lo = [x, y, z].map((p, k) => Math.max(0, Math.ceil((p - jr - o0[k]) / H)));
+    const hi = [x, y, z].map((p, k) => Math.min(G.n[k] - 1, Math.floor((p + jr - o0[k]) / H)));
+    for (let k = lo[2]; k <= hi[2]; k++) for (let j = lo[1]; j <= hi[1]; j++) for (let i = lo[0]; i <= hi[0]; i++) {
+      if ((o0[0] + i * H - x) ** 2 + (o0[1] + j * H - y) ** 2 + (o0[2] + k * H - z) ** 2 <= jr * jr) precise[i + j * NX + k * SZ] = 0;
+    }
+  }
+  const corners = [0, 1, NX, NX + 1, SZ, SZ + 1, SZ + NX, SZ + NX + 1];
+  for (let k = 0; k < NZ - 1; k++) for (let j = 0; j < NY - 1; j++) for (let i = 0, g = j * NX + k * SZ; i < NX - 1; i++, g++) {
+    let c0 = L1[g], c1 = -1, keepGrid = false;
+    for (const d of corners) {
+      const n = g + d;
+      if (FC[n] !== NOF || modified?.[n]) { keepGrid = true; break; }
+      if (L1[n] !== c0) {
+        if (c1 < 0) c1 = L1[n];
+        else if (L1[n] !== c1) { keepGrid = true; break; }
+      }
+    }
+    if (keepGrid) for (const d of corners) precise[g + d] = 0;
+  }
+  const nearest = triangleQuery(P, np, T, col), hit = new Float64Array(2);
+  let refine = true;
+  const depthScale = 2 * H / Math.min(H, D / 4);
+  const fade = (d) => { const x = Math.max(0, Math.min(1, (Math.abs(d) - 2 * H) / (4 * H))); return 1 - x * x * (3 - 2 * x); };
+  const precisionAt = (p) => {
+    const x = (p[0] - o0[0]) / H, y = (p[1] - o0[1]) / H, z = (p[2] - o0[2]) / H;
+    const i = Math.floor(x), j = Math.floor(y), k = Math.floor(z), u = x - i, v = y - j, s = z - k;
+    const g = i + j * NX + k * SZ;
+    let weight = 0;
+    for (let q = 0; q < 8; q++) {
+      const di = q & 1, dj = (q >> 1) & 1, dk = q >> 2;
+      weight += (di ? u : 1 - u) * (dj ? v : 1 - v) * (dk ? s : 1 - s) * precise[g + corners[q]];
+    }
+    return weight;
+  };
+  const field = (box, fn, color = base) => {
     const [i0, j0, k0] = box[0], [i1, j1, k1] = box[1];
-    return (p) => {
+    return (p, precision = null) => {
+      if (precision) precision[0] = 0;
       const fx = (p[0] - o0[0]) / H, fy = (p[1] - o0[1]) / H, fz = (p[2] - o0[2]) / H;
       if (fx <= i0 + 0.5 || fy <= j0 + 0.5 || fz <= k0 + 0.5 || fx >= i1 - 0.5 || fy >= j1 - 0.5 || fz >= k1 - 0.5) return -1;
       const i = Math.floor(fx), j = Math.floor(fy), k = Math.floor(fz), u = fx - i, v = fy - j, s = fz - k;
       const g = i + j * NX + k * SZ;
       let bS = 0, sS = 0, pS = 0;
+      let weight = 0;
       for (let c8 = 0; c8 < 8; c8++) {
         const di = c8 & 1, dj = (c8 >> 1) & 1, dk = c8 >> 2, n = g + di + dj * NX + dk * SZ;
         const wgt = (di ? u : 1 - u) * (dj ? v : 1 - v) * (dk ? s : 1 - s);
         bS += wgt * B[n]; sS += wgt * S[n]; pS += wgt * fn(n);
+        weight += wgt * precise[n];
+      }
+      // Interpolate the correction's weight too: switching it off abruptly at a protected cell creates tiny tunnels.
+      if (refine && weight > 1e-9 && Math.abs(sS) < 6 * H && Math.abs(pS) < 6 * H) {
+        nearest(p, -1, -1, hit);
+        const near = hit[0], e1 = hit[1];
+        nearest(p, -1, col[near], hit);
+        const other = hit[0], e2 = hit[1];
+        if (near >= 0 && other >= 0) {
+          tri(near, p[0], p[1], p[2], q1);
+          tri(other, p[0], p[1], p[2], q2);
+          const phi = Math.min(BIG, sep(e1, e2, near, other, p));
+          let phib = phi;
+          if (color === base && col[near] !== base) {
+            let pbs = BIG;
+            nearest(p, base, -1, hit);
+            const nearBase = hit[0], eb = hit[1];
+            if (nearBase >= 0) {
+              tri(nearBase, p[0], p[1], p[2], q2);
+              pbs = Math.min(BIG, sep(e1, eb, near, nearBase, p));
+            }
+            phib = -Math.max(phi, pbs);
+          }
+          const value = (color === base ? cl / 2 - phib : col[near] === color ? phi : -phi) - tq * zd(sS);
+          // A protected junction also protects the pocket underneath it, not just a ball around its surface vertex.
+          const strength = Math.min(weight, precisionAt(q1)) * fade(sS * depthScale) * fade(pS);
+          const refined = pS + strength * (value - pS);
+          if (precision && Math.abs(sS) < Math.min(H, D / 4)) precision[0] = strength;
+          // Do not grow little bridges of base back across an existing pocket while straightening its edge.
+          pS = color === base ? Math.max(pS, refined) : refined;
+        }
       }
       const val = Math.min(bS, pS, sS + 2 * H);
       return Number.isFinite(val) ? val : -1;
@@ -849,6 +938,39 @@ export function buildCarve({ w, o, M, mg, col, mIDs, merged, base, keep, warning
     return [[Math.max(0, lo[0] - 2), Math.max(0, lo[1] - 2), Math.max(0, lo[2] - 2)], [Math.min(NX - 1, hi[0] + 2), Math.min(NY - 1, hi[1] + 2), Math.min(NZ - 1, hi[2] + 2)]];
   };
   const bounds = (box) => ({ min: box[0].map((x, q) => o0[q] + x * H), max: box[1].map((x, q) => o0[q] + x * H) });
+  const extract = (box, sample, level = 0) => {
+    const raw = keep(Manifold.levelSet(p => sample(p) - level, bounds(box), H, 0));
+    if (!refine || raw.isEmpty()) return raw;
+    const fine = keep(raw.refineToLength(H));
+    const precision = [0], eps = H * 0.04, limit = H / 4;
+    // Refine only the visible wall vertices. Refining all level-set roots also moves protected joints and pocket
+    // floors, which can introduce overlap even when both fields have the same requested clearance.
+    return keep(fine.warp(p => {
+      sample(p, precision);
+      const strength = precision[0];
+      if (strength < 1e-6) return;
+      const origin = [...p];
+      for (let iteration = 0; iteration < 2; iteration++) {
+        const value = sample(p) - level;
+        if (Math.abs(value) < 1e-5) break;
+        const gradient = [0, 0, 0];
+        for (let k = 0; k < 3; k++) {
+          const x = p[k];
+          p[k] = x + eps; const a = sample(p);
+          p[k] = x - eps; const b = sample(p);
+          p[k] = x;
+          gradient[k] = (a - b) / (2 * eps);
+        }
+        const len2 = gradient.reduce((s, x) => s + x * x, 0);
+        if (len2 < 1e-10) break;
+        const next = p.map((x, k) => x - strength * value * gradient[k] / len2);
+        const distance = Math.hypot(...next.map((x, k) => x - origin[k]));
+        if (distance > limit) for (let k = 0; k < 3; k++) next[k] = origin[k] + (next[k] - origin[k]) * limit / distance;
+        if (Math.abs(sample(next) - level) >= Math.abs(value)) break;
+        for (let k = 0; k < 3; k++) p[k] = next[k];
+      }
+    }));
+  };
 
   const parts = [], smalls = [];
   const covCols = used.filter((c) => c !== base);
@@ -857,9 +979,31 @@ export function buildCarve({ w, o, M, mg, col, mIDs, merged, base, keep, warning
   let body = M, U = null;
   if (boxU) {
     const fU = field(boxU, (q) => cl / 2 - PHIB[q] - tq * zd(S[q]));
-    U = keep(Manifold.levelSet(fU, bounds(boxU), H, 0));
+    U = extract(boxU, fU);
     if (U.isEmpty()) U = null;
-    else body = keep(M.subtract(U));
+    else {
+      body = keep(M.subtract(U));
+      const topology = (m) => {
+        const cs = unpinched(w, m, keep).decompose();
+        const result = cs.filter(c => Math.abs(c.volume()) > 0.05).map(c => `${Math.sign(c.volume())}:${c.genus()}`).sort().join(',');
+        cs.forEach(c => c.delete());
+        return result;
+      };
+      const shape = topology(body);
+      if (shape !== topology(M)) {
+        // Refinement must not change connectivity or add handles. A real input hole or an intentional split can
+        // change the base's topology too, so compare with the existing construction, not just with a genus of zero.
+        refine = false;
+        const originalU = keep(Manifold.levelSet(fU, bounds(boxU), H, 0));
+        const originalBody = originalU.isEmpty() ? M : keep(M.subtract(originalU));
+        if (topology(originalBody) === shape) refine = true;
+        else {
+          U = originalU.isEmpty() ? null : originalU;
+          body = originalBody;
+          warnings.push('Tallado: se conservó la resolución original de los cortes para evitar nuevos túneles o cambios en la conexión de la base');
+        }
+      }
+    }
   }
   // the base beyond a piece along its slide direction (deeper than a pocket's own walls) blocks it; other colour
   // pieces there do not (a ribbon behind a bow's knot goes in first, the knot after it)
@@ -870,8 +1014,8 @@ export function buildCarve({ w, o, M, mg, col, mIDs, merged, base, keep, warning
     if (!box) return;
     // B − gF and ψc − cl/2 share one min(): fold the offsets into the node values
     const fn = (q) => (L1[q] === c ? PHI[q] : -PHI[q]) - tq * zd(S[q]) - cl / 2 + gF;
-    const f0 = field(box, fn);
-    const L = keep(Manifold.levelSet((p) => f0(p) - gF, bounds(box), H, 0));
+    const f0 = field(box, fn, c);
+    const L = extract(box, f0, gF);
     if (L.isEmpty()) return;
     const cov = keep(M.intersect(L));
     for (const q of unpinched(w, cov, keep).decompose()) {

@@ -22,7 +22,7 @@ function hslHex(h, s, l) {
 const paletteOf = (n) => Array.from({ length: n }, (_, i) => PALETTE[i] || hslHex((i * 137.508) % 360, 0.6, 0.55));
 
 // Refines `man` (takes ownership) to small triangles and paints every triangle with colorOf(centroid, unitNormal).
-function painted(man, nCol, name, colorOf) {
+export function painted(man, nCol, name, colorOf) {
   const ref = man.refineToLength(EDGE);
   const mesh = ref.getMesh();
   ref.delete();
