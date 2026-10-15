@@ -3,7 +3,8 @@ import { imageReady } from './core/imageload.js';
 import { shapesToGeometry, toWorld } from './core/geometry.js';
 import { stlBinary, threeMF, objWithMtl, svg, mergeToIndexed } from './core/exporters.js';
 import { buildFeatures, DEFAULT_SETTINGS, pencilAcross } from './core/features.js';
-import { renderTextImage, ensureFont, BUNDLED_FONTS, DEFAULT_TEXT } from './core/text.js';
+import { renderTextImage, ensureFont, BUNDLED_FONTS, DEFAULT_TEXT, decorationWidthMM } from './core/text.js';
+import { preparePencil, joinedPencilGeometry } from './core/pencil.js';
 import { MODULES, MIC_PRESETS, CAKE_PRESETS, mergeDeep } from './modules.js';
 import { detectElements, presetSelection, composeLayout, qrCanvas } from './core/elements.js';
 import { nearestBambu, luminance, labDist } from './core/bambu.js';
@@ -56,6 +57,7 @@ const S = {
 let nextId = 1;
 const pieceGeoms = new Map();
 let feat = null;             // buildFeatures() output
+let featureError = '', textError = '';
 let featParts = [];          // [{ key, name, fil, geometry, height, z, solid }]
 let ringDragPos = null;
 let bodyDragPos = null;
@@ -221,17 +223,20 @@ async function loadImageFile(file) {
 }
 
 // opts.keep: keep the current settings (text re-render / module switch with the same design)
-async function loadImage(dataURL, name, state, { keep = false, source = 'image', composed = false } = {}) {
+async function loadImage(dataURL, name, state, { keep = false, source = 'image', composed = false, textVersion = null } = {}) {
+  if (textVersion == null) { clearTimeout(textTimer); textVersion = ++textSeq; }
   const el = new Image();
   el.src = dataURL;
   try { await imageReady(el); } catch { toast('No se pudo leer la imagen.', true); return; }
+  if (textVersion !== textSeq) return;
+  if (source !== 'text') textError = '';
   S.image = { name, dataURL, el, composed };
   S.source = source;
   $('docName').textContent = source === 'text' ? '' : '· ' + name;
   $('dropZone').classList.add('hidden');
   if (!keep) { hist.stack = []; hist.idx = -1; }
   if (!state && !keep) { S.settings = moduleSettings(S.module); S.groups = []; }
-  await runProcessing(state, { keepSettings: keep });
+  await runProcessing(state, { keepSettings: keep, textVersion });
   syncProcInputs();
   syncSettingsInputs();
   syncTextInputs();
@@ -249,11 +254,12 @@ function getImageData(el, maxRes) {
 }
 
 // state: editable snapshot to apply after processing (undo / project); otherwise defaults are used.
-async function runProcessing(state = null, { keepSettings = false } = {}) {
+async function runProcessing(state = null, { keepSettings = false, textVersion = textSeq } = {}) {
   if (!S.image) return;
   showBusy('Vectorizando imagen…');
   await nextFrame();
   try {
+    if (textVersion !== textSeq) return;
     const t0 = performance.now();
     const res = processImage(getImageData(S.image.el, S.proc.maxRes), { ...S.proc, widthMM: S.settings?.widthMM });
     const prevSettings = S.settings;
@@ -278,6 +284,8 @@ async function runProcessing(state = null, { keepSettings = false } = {}) {
     }
     view2d.setContent(res, S.image.el);
     if (S.source === 'image' && !S.image.composed) setOrig();
+    await preparePencil(S.settings);
+    if (textVersion !== textSeq) return;
     rebuildFeatures();
     if (!state && !keepSettings && S.source === 'image' && kcModule()) applyTier(S.settings.kc.tier || 'medium', { commit: false, silent: true });
     view2d.resize();
@@ -287,7 +295,10 @@ async function runProcessing(state = null, { keepSettings = false } = {}) {
     if (!state || !hist.stack.length) commit();
     console.log(`Procesado en ${Math.round(performance.now() - t0)} ms: ${res.palette.length} colores, ${res.pieces.length} piezas`);
   } catch (err) {
+    if (textVersion !== textSeq) return;
     console.error(err);
+    featureError = err.message || String(err);
+    renderWarnings();
     toast(err.message || String(err), true);
   } finally {
     hideBusy();
@@ -299,7 +310,7 @@ function setDefaults(res) {
   nextId = S.filaments.length + 1;
   S.clusterFilament = res.palette.map((p, i) => i + 1);
   S.pieces = res.pieces.map((p) => ({
-    height: Math.round((1.5 + Math.min(p.level, 5) * 0.6) * 10) / 10,
+    height: S.module === 'pencil' && S.source === 'text' ? pencilRelief(p, res) : Math.round((1.5 + Math.min(p.level, 5) * 0.6) * 10) / 10,
     elevation: 0,
     filament: S.clusterFilament[p.cluster],
     enabled: true,
@@ -319,6 +330,13 @@ function setDefaults(res) {
   S.settings.rim.filament = fid;
   S.settings.accent.filament = fid;
   S.groups = [];
+}
+
+function pencilRelief(p, res = S.result) {
+  const width = decorationWidthMM(S.text), b = res.fgBBox;
+  const start = b[2] - (width + S.text.decorationGap / 2) * (b[2] - b[0]) / S.settings.widthMM;
+  const isDecoration = width > 0 && (p.bbox[0] + p.bbox[2]) / 2 > start;
+  return isDecoration ? S.settings.pencil.decorationRelief : S.settings.pencil.relief;
 }
 
 // ---------------------------------------------------------------- 3D sync & extras
@@ -377,6 +395,7 @@ function rebuildFeatures() {
   for (const fp of featParts) viewer.setExtra(fp.key, null);
   featParts = [];
   feat = null;
+  featureError = '';
   if (!S.result) { view2d.setUnderlays([]); view2d.setBounds(null); renderWarnings(); return; }
   try {
     feat = buildFeatures(S.result, S.settings, {
@@ -385,6 +404,7 @@ function rebuildFeatures() {
     });
   } catch (err) {
     console.error(err);
+    featureError = err.message || String(err);
     toast('No se pudieron generar los accesorios: ' + err.message, true);
   }
   const [cx, cy] = center();
@@ -417,7 +437,7 @@ function rebuildFeaturesDebounced() {
 }
 
 function renderWarnings() {
-  const w = feat?.warnings || [];
+  const w = [...(feat?.warnings || []), ...[featureError, textError].filter(Boolean)];
   const el = $('featWarn');
   el.hidden = !w.length;
   el.innerHTML = w.map((x) => `<div>⚠️ ${escHtml(x)}</div>`).join('');
@@ -492,7 +512,9 @@ function applyEditable(s) {
 }
 async function restore(json) {
   const s = JSON.parse(json);
-  const textChanged = s.source === 'text' && JSON.stringify(s.text) !== JSON.stringify(S.text);
+  clearTimeout(textTimer); ++textSeq; textError = '';
+  const textChanged = s.source === 'text' && (JSON.stringify(s.text) !== JSON.stringify(S.text)
+    || (s.settings.widthMM !== S.settings.widthMM && (s.text?.outline || s.text?.thicken || decorationWidthMM(s.text || {}) > 0)));
   if (textChanged || s.source !== S.source) {
     S.text = { ...DEFAULT_TEXT(), ...s.text };
     S.proc = { ...s.proc };
@@ -808,6 +830,7 @@ function syncSettingsInputs() {
   $('pencilValueLabel').textContent = p.measure === 'circumference' ? 'Circunferencia (mm)' : p.type === 'hex' ? 'Ancho entre caras (mm)' : 'Diámetro / ancho (mm)';
   const across = pencilAcross(p);
   $('pencilInfo').textContent = `Lápiz ≈ ${fmt(across)} mm de ancho · ${fmt(across * (p.type === 'round' ? Math.PI : p.type === 'hex' ? 6 / Math.sqrt(3) : 0) + (p.type === 'triangle' ? 2 * Math.sqrt(3) * Math.max(0.5, across - 2) + 2 * Math.PI : 0))} mm de circunferencia · canal interior ${fmt(across + p.tolerance)} mm`;
+  $('pencilLevels').hidden = S.module !== 'pencil' || S.source !== 'text';
   renderFilaments();
   try { renderMicBodyUI(); } catch { /* not initialised yet during startup */ }
   try { renderTierUI(); syncBackFont(); } catch { /* idem */ }
@@ -815,9 +838,9 @@ function syncSettingsInputs() {
   renderStatus();
 }
 
-function onSettingChanged(path) {
+async function onSettingChanged(path) {
   if (path === 'ring.pos' && S.settings.ring.pos === 'manual' && S.settings.ring.x == null && feat?.ring) Object.assign(S.settings.ring, { x: feat.ring.x, y: feat.ring.y });
-  if (path === 'widthMM' && S.source === 'text' && (S.text.thicken > 0 || S.text.outline)) { applyText(); return; }
+  if (path === 'widthMM' && S.source === 'text' && (S.text.thicken > 0 || S.text.outline || decorationWidthMM(S.text) > 0)) { await applyText(); return; }
   const set = S.settings;
   if (S.result && (path === 'accent.enabled' || path === 'rim.enabled')) {
     const k = path.split('.')[0];
@@ -835,6 +858,11 @@ function onSettingChanged(path) {
   }
   syncSettingsInputs();
   if (!S.result) return;
+  try { await preparePencil(S.settings); }
+  catch (err) { featureError = err.message; console.error(err); renderWarnings(); toast(featureError, true); return; }
+  if (S.module === 'pencil' && S.source === 'text' && ['pencil.relief', 'pencil.decorationRelief'].includes(path)) {
+    for (const p of S.result.pieces) S.pieces[p.id].height = pencilRelief(p);
+  }
   rebuildFeatures();
   refresh();
   if (path === 'widthMM') viewer.frame();
@@ -1027,6 +1055,7 @@ function renderStatus() {
 // ---------------------------------------------------------------- project files
 async function saveProject() {
   if (!S.image) return;
+  if (featureError || textError) { toast('Corrige el modelo antes de guardar: ' + (featureError || textError), true); return; }
   const data = JSON.stringify({ app: 'Relieve3D', version: 1, image: { name: S.image.name, dataURL: S.image.dataURL }, state: JSON.parse(snapshot()) });
   const p = await window.api.saveFile({ defaultPath: baseName() + '.r3d', filters: [{ name: 'Proyecto Relieve3D', extensions: ['r3d'] }], data });
   if (p) toast('Proyecto guardado: ' + p);
@@ -1037,6 +1066,7 @@ async function openProjectFile(file) {
     if (j.app === 'Relieve3D-Studio') { hideHome(); studio.openProject(j); return; }
     if (j.app === 'Relieve3D-Hablador') { hideHome(); await hablador.openProject(j); return; }
     if (j.app !== 'Relieve3D') throw new Error('No es un proyecto de Relieve3D');
+    clearTimeout(textTimer); ++textSeq; textError = '';
     S.module = j.state.module || 'logo';
     S.text = { ...DEFAULT_TEXT(), ...(j.state.text || {}) };
     S.proc = { ...DEFAULT_PROC, ...j.state.proc };
@@ -1052,10 +1082,15 @@ async function openProjectFile(file) {
     toast('No se pudo abrir el proyecto: ' + err.message, true);
   }
 }
-const baseName = () => (S.image?.name || 'modelo').replace(/\.[^.]+$/, '');
+const baseName = () => S.source === 'text' ? (S.text.text || 'nombre').replace(/[<>:"/\\|?*\x00-\x1f]/g, '_').replace(/[ .]+$/, '').trim() || 'nombre' : (S.image?.name || 'modelo').replace(/\.[^.]+$/, '');
 
 // ---------------------------------------------------------------- export
 function exportParts() {
+  if (featureError || textError) throw new Error(featureError || textError);
+  if (S.settings.pencil.enabled && S.settings.pencil.mount === 'integrated') {
+    if (!feat?.pencilChannel) throw new Error('Regenera la base con el canal antes de exportar.');
+    if (S.pieces.some(p => p.enabled && (p.elevation !== 0 || !(p.height > 0)))) throw new Error('Las letras y adornos deben tener altura positiva y elevación 0 para quedar unidos a la base.');
+  }
   const s = scale(), bz = baseZ();
   const byFil = new Map();
   const add = (fid, g) => { if (!byFil.has(fid)) byFil.set(fid, []); byFil.get(fid).push(g); };
@@ -1076,6 +1111,7 @@ function exportParts() {
     const geometry = mergeToIndexed([fp.solid ? toWorld(fp.geometry, s, 1, 0) : toWorld(fp.geometry, s, fp.height, fp.z)]);
     parts.push({ name: fp.name || fp.key, color: filament(fid).color, filamentIndex: filamentIndex(fid), filamentId: fid, geometry });
   }
+  if (feat?.pencilChannel) joinedPencilGeometry(parts.map(p => p.geometry)).dispose();
   return parts;
 }
 async function doExport(kind) {
@@ -1083,6 +1119,7 @@ async function doExport(kind) {
   showBusy('Generando archivo…');
   await nextFrame();
   try {
+    if (featureError || textError) throw new Error(featureError || textError);
     const name = baseName();
     let saved = null;
     if (kind === 'svg') {
@@ -1101,7 +1138,10 @@ async function doExport(kind) {
       if (kind === '3mf') {
         saved = await window.api.saveFile({ defaultPath: name + '.3mf', filters: [{ name: '3MF', extensions: ['3mf'] }], data: threeMF(parts, name, { pauses: feat?.pauses }) });
       } else if (kind === 'stl-one') {
-        saved = await window.api.saveFile({ defaultPath: name + '.stl', filters: [{ name: 'STL', extensions: ['stl'] }], data: stlBinary(parts.map((p) => p.geometry)) });
+        const joined = S.settings.pencil.enabled && S.settings.pencil.mount === 'integrated' ? joinedPencilGeometry(parts.map(p => p.geometry)) : null;
+        try {
+          saved = await window.api.saveFile({ defaultPath: name + '.stl', filters: [{ name: 'STL', extensions: ['stl'] }], data: stlBinary(joined ? [joined] : parts.map((p) => p.geometry)) });
+        } finally { joined?.dispose(); }
       } else if (kind === 'stl-folder') {
         const byF = new Map();
         for (const p of parts) { if (!byF.has(p.filamentId)) byF.set(p.filamentId, []); byF.get(p.filamentId).push(p.geometry); }
@@ -1219,7 +1259,8 @@ window.addEventListener('keydown', (e) => {
 const textFields = {
   txtText: 'text', txtFont: 'font', txtWeight: 'weight', txtItalic: 'italic', txtSpacing: 'spacing', txtLine: 'lineHeight',
   txtAlign: 'align', txtFill: 'fill', txtThicken: 'thicken', txtOutline: 'outline', txtOutlineColor: 'outlineColor',
-  txtOutlineMM: 'outlineMM', txtBaseColor: 'baseColor',
+  txtOutlineMM: 'outlineMM', txtBaseColor: 'baseColor', txtDecoration: 'decoration',
+  txtDecorationColor: 'decorationColor', txtDecorationSize: 'decorationSize', txtDecorationGap: 'decorationGap',
 };
 function fontOptions(systemFonts = []) {
   const cats = [...new Set(BUNDLED_FONTS.map((f) => f.cat))];
@@ -1251,6 +1292,7 @@ function syncTextInputs() {
     } else el.value = typeof v === 'number' ? fmt(v) : v;
   }
   document.querySelectorAll('[data-twhen]').forEach((el) => { el.hidden = !S.text[el.dataset.twhen]; });
+  $('decorationFields').hidden = S.text.decoration === 'none';
   $('fontPreview').style.fontFamily = `"${S.text.font}"`;
   $('fontPreview').style.fontWeight = S.text.weight;
   $('fontPreview').textContent = (S.text.text || 'Aa').split('\n')[0];
@@ -1262,19 +1304,27 @@ function syncTextInputs() {
 let textSeq = 0;
 async function applyText() {
   const seq = ++textSeq;
-  await ensureFont(S.text.font, S.text.weight);
-  if (seq !== textSeq) return;
-  if (!String(S.text.text).trim()) { toast('Escribe un texto.'); return; }
-  const r = renderTextImage(S.text, S.settings.widthMM);
-  S.proc = { ...DEFAULT_PROC, colors: r.colors, removeBg: 'no', maxRes: 1600, detail: 0.6, minArea: 0 };
-  await loadImage(r.dataURL, 'texto.png', null, { keep: !!S.result, source: 'text' });
+  textError = 'El texto tiene cambios pendientes de generar.';
+  try {
+    await ensureFont(S.text.font, S.text.weight);
+    if (seq !== textSeq) return;
+    if (!String(S.text.text).trim()) throw new Error('Escribe un texto.');
+    const r = renderTextImage(S.text, S.settings.widthMM);
+    S.proc = { ...DEFAULT_PROC, colors: r.colors, removeBg: 'no', maxRes: 1600, detail: 0.6, minArea: 0 };
+    await loadImage(r.dataURL, 'texto.png', null, { keep: !!S.result, source: 'text', textVersion: seq });
+    if (seq === textSeq) { textError = ''; renderWarnings(); }
+  } catch (err) {
+    if (seq !== textSeq) return;
+    textError = err.message || String(err);
+    console.error(err); renderWarnings(); toast(textError, true);
+  }
 }
 let textTimer;
 for (const [id, k] of Object.entries(textFields)) {
   const el = $(id);
   const read = () => {
     let v = el.type === 'checkbox' ? el.checked : el.value;
-    if (['weight', 'spacing', 'lineHeight', 'thicken', 'outlineMM'].includes(k)) {
+    if (['weight', 'spacing', 'lineHeight', 'thicken', 'outlineMM', 'decorationSize', 'decorationGap'].includes(k)) {
       v = parseNum(v);
       if (!Number.isFinite(v)) return false;
       if (k !== 'spacing') v = Math.max(0, v);
@@ -1282,7 +1332,12 @@ for (const [id, k] of Object.entries(textFields)) {
     S.text[k] = v;
     return true;
   };
-  const go = () => { if (read()) { syncTextInputs(); clearTimeout(textTimer); textTimer = setTimeout(applyText, k === 'text' ? 450 : 50); } };
+  const go = () => {
+    if (read()) {
+      ++textSeq; textError = 'El texto tiene cambios pendientes de generar.';
+      syncTextInputs(); clearTimeout(textTimer); textTimer = setTimeout(applyText, k === 'text' ? 450 : 50);
+    }
+  };
   if (id === 'txtText') el.addEventListener('input', go);
   else el.addEventListener('change', go);
   if (el.type === 'text') el.addEventListener('keydown', (e) => { if (e.key === 'Enter') el.blur(); });
@@ -1786,9 +1841,11 @@ function applyModuleUI() {
 $('showAllCards').addEventListener('change', applyModuleUI);
 
 function clearDesign() {
+  clearTimeout(textTimer); ++textSeq;
   viewer.clear();
   pieceGeoms.clear();
   featParts = []; feat = null;
+  featureError = ''; textError = '';
   orig = null;
   Object.assign(S, { image: null, result: null, pieces: [], filaments: [], clusterFilament: [], groups: [] });
   S.selection.clear();
@@ -1826,7 +1883,7 @@ async function enterModule(id) {
     S.settings = moduleSettings(id);
     for (const k of FIL_KEYS) S.settings[k].filament = old[k]?.filament ?? old.base.filament;
     applyModuleUI();
-    if (S.source === 'text') { await applyText(); } else { rebuildFeatures(); refresh(); viewer.frame(); commit(); }
+    if (S.source === 'text') { await applyText(); } else { await onSettingChanged('module'); viewer.frame(); }
     syncSettingsInputs();
     return;
   }
@@ -1881,7 +1938,7 @@ if (stUpdate) {
     else if (d.state === 'up-to-date' || d.state === 'error') stUpdate.hidden = true;
   });
 }
-window.__r3d = { S, setSelection, doExport, exportParts, undo, redo, commit, hist, setViewMode, enterModule, applyText, showHome, studio, hablador, colorsplit, getFeat: () => feat, onSettingChanged, placeRing, loadImageFile, view2d,
+window.__r3d = { S, setSelection, doExport, exportParts, saveProject, openProjectFile, undo, redo, commit, hist, setViewMode, enterModule, applyText, showHome, studio, hablador, colorsplit, getFeat: () => feat, onSettingChanged, placeRing, loadImageFile, view2d,
   applyTier, applyComposition, getOrig: () => orig, ringSnap, gramsEstimate, viewer, renderElements };
 
 syncProcInputs();

@@ -1,0 +1,142 @@
+const fs = require('fs');
+const path = require('path');
+const { pathToFileURL } = require('url');
+module.exports = async ({ win, run, shot, wait }) => {
+  const D = process.env.E2E_DIR, exp = process.env.R3D_AUTOSAVE_DIR;
+  const errs = [];
+  win.webContents.on('console-message', e => {
+    if ((e.level === 'error' || e.level >= 3) && !/WebGLProgram|disk_cache|canal necesita|Aumenta el ancho/.test(e.message)) errs.push(e.message);
+  });
+  const log = (...args) => console.log('[e2e]', ...args);
+  const ok = (c, m) => { log(c ? 'ok  ' : 'FAIL', m); if (!c) throw new Error(m); };
+  const read = async expr => JSON.parse(await run(`JSON.stringify(${expr})`));
+  const decorationHeight = () => run(`(()=>{
+    const {S}=window.__r3d, b=S.result.fgBBox;
+    const p=S.result.pieces.reduce((a,p)=>p.bbox[2]>a.bbox[2]?p:a);
+    return (p.bbox[3]-p.bbox[1])*S.settings.widthMM/(b[2]-b[0]);
+  })()`);
+  const set = async (selector, value) => {
+    await run(`(()=>{const e=document.querySelector(${JSON.stringify(selector)});e.value=${JSON.stringify(String(value))};e.dispatchEvent(new Event('change',{bubbles:true}));})()`);
+    await wait(1200);
+  };
+  const text = async value => {
+    await run(`(()=>{const e=document.getElementById('txtText');e.value=${JSON.stringify(value)};e.dispatchEvent(new Event('input',{bubbles:true}));})()`);
+    await wait(2000);
+  };
+  const capture = async name => { win.show(); win.focus(); await wait(500); await shot(path.join(D, name + '.png')); };
+  win.setSize(1600, 1000);
+  const { ipcMain } = require('electron');
+  let confirmation = 0;
+  ipcMain.removeHandler('confirm');
+  ipcMain.handle('confirm', () => confirmation);
+  await run(`window.__r3d.enterModule('logo')`);
+  const logo = fs.readFileSync(path.join(__dirname, '..', 'logo.png')).toString('base64');
+  await run(`window.__r3d.loadImageFile(new File([Uint8Array.from(atob('${logo}'),c=>c.charCodeAt(0))],'logo.png',{type:'image/png'}))`);
+  await run(`window.__r3d.enterModule('pencil')`);
+  ok(await run(`window.__r3d.S.source==='image' && !!window.__r3d.getFeat()?.pencilChannel`), 'reusing an image prepares the integrated engine on first use');
+  confirmation = 1;
+  await run(`window.__r3d.enterModule('logo')`);
+  await run(`window.__r3d.enterModule('pencil')`);
+  await wait(1000);
+  ok(await run(`window.__r3d.S.text.text === 'Linda' && !!window.__r3d.getFeat()?.pencilChannel`), 'Linda generated with integrated channel');
+  ok(await run(`window.__r3d.getFeat().layers.length === 0 && window.__r3d.getFeat().solids.length === 1`), 'no overlapping undrilled base or external sleeve');
+  await run(`window.__r3d.setViewMode('3d')`); await wait(700);
+  await capture('pencil_01_linda');
+  await run(`window.__r3d.viewer.frame(true)`); await capture('pencil_02_top');
+  const { checkPencilExports } = await import(pathToFileURL(path.join(__dirname, '..', 'pencil_exports.mjs')).href);
+  for (const kind of ['3mf', 'stl-one']) await run(`window.__r3d.doExport('${kind}')`);
+  const channel = await read('window.__r3d.getFeat().pencilChannel');
+  const dimensions = await checkPencilExports(exp, 'Linda', channel);
+  log('Linda', JSON.stringify(dimensions));
+  ok(Math.abs(await decorationHeight() - 14) < 0.12, 'ribbon has the requested physical height');
+  const image63 = await run(`window.__r3d.S.image.dataURL`);
+  await set('[data-set="widthMM"]', 75);
+  const image75 = await run(`window.__r3d.S.image.dataURL`);
+  ok(image63 !== image75 && Math.abs(await decorationHeight() - 14) < 0.12, 'width change preserves decoration size in mm');
+  await run(`window.__r3d.undo()`);
+  ok(await run(`window.__r3d.S.settings.widthMM===63 && window.__r3d.S.image.dataURL===${JSON.stringify(image63)}`), 'undo restores width-dependent text raster');
+  await run(`window.__r3d.redo()`);
+  ok(await run(`window.__r3d.S.settings.widthMM===75 && window.__r3d.S.image.dataURL===${JSON.stringify(image75)}`), 'redo restores width-dependent text raster');
+  await run(`window.__r3d.undo()`);
+
+  ok(await run(`(async()=>{
+    const e=document.getElementById('txtText');e.value='Pendiente';e.dispatchEvent(new Event('input',{bubbles:true}));
+    let blocked=false;try{window.__r3d.exportParts();}catch(e){blocked=/pendientes/.test(e.message);}
+    await window.__r3d.saveProject();return blocked;
+  })()`), 'export blocked immediately before text debounce');
+  ok(!fs.existsSync(path.join(exp, 'Pendiente.r3d')), 'pending text cannot save a mismatched project');
+  await text('Linda');
+
+  await set('[data-set="pencil.relief"]', 2);
+  await set('[data-set="pencil.decorationRelief"]', 2.6);
+  await set('#txtFill', '#a22ed1');
+  await set('#txtDecorationColor', '#ed8eb3');
+  await set('#txtBaseColor', '#f1e9dc');
+  await text('Violeta');
+  ok(await run(`window.__r3d.S.pieces.some(p=>p.height===2) && window.__r3d.S.pieces.some(p=>p.height===2.6)`), 'separate text and decoration heights survive recolouring and name changes');
+  await set('#txtDecoration', 'heart');
+  await set('#txtFont', 'Lilita One');
+  await set('[data-set="widthMM"]', 75);
+  await set('[data-set="pencil.value"]', 8);
+  await set('[data-set="pencil.tolerance"]', 0.3);
+  for (const kind of ['3mf', 'stl-one']) await run(`window.__r3d.doExport('${kind}')`);
+  await checkPencilExports(exp, 'Violeta', await read('window.__r3d.getFeat().pencilChannel'), { calibre: 8.3, height: 14.6 });
+  log('ok  ', 'Violeta / heart / font / size / colours / reliefs / 8.3 mm final bore');
+  await set('#txtDecoration', 'star');
+  await text('Ana María');
+  ok(await run(`window.__r3d.exportParts().length===3`), 'multiword accented name with star');
+  await set('#txtDecoration', 'none');
+  ok(await run(`window.__r3d.exportParts().length===2`), 'decoration can be removed');
+
+  await set('[data-set="base.thickness"]', 5);
+  ok(await run(`(()=>{try{window.__r3d.exportParts();return false;}catch(e){return /al menos/.test(e.message);}})()`), 'thin base rejected and export blocked');
+  await run(`window.__r3d.saveProject()`);
+  ok(!fs.existsSync(path.join(exp, 'Ana María.r3d')), 'invalid base cannot save a mismatched project');
+  await set('[data-set="base.thickness"]', 12);
+  await set('#txtDecoration', 'ribbon');
+  await set('#txtDecorationSize', 100);
+  ok(await run(`(()=>{try{window.__r3d.exportParts();return false;}catch(e){return /ancho/.test(e.message);}})()`), 'oversized decoration cannot export a stale preview');
+  await set('#txtDecorationSize', 14);
+
+  await text('Linda');
+  await set('#txtFont', 'Fredoka');
+  await set('#txtFill', '#dc397b');
+  await set('#txtDecorationColor', '#f28bb4');
+  await set('#txtBaseColor', '#ffffff');
+  await set('[data-set="widthMM"]', 63);
+  await set('[data-set="pencil.value"]', 7.8);
+  await set('[data-set="pencil.tolerance"]', 0);
+  await set('[data-set="pencil.relief"]', 1.4);
+  await set('[data-set="pencil.decorationRelief"]', 1.4);
+  const before = await read('window.__r3d.S.text');
+  await run(`window.__r3d.saveProject()`);
+  const project = fs.readFileSync(path.join(exp, 'Linda.r3d'), 'utf8');
+  const image = JSON.parse(project).image.dataURL.split(',')[1];
+  await run(`(async()=>{
+    const e=document.getElementById('txtText');e.value='Texto descartado';e.dispatchEvent(new Event('input',{bubbles:true}));
+    const bytes=Uint8Array.from(atob(${JSON.stringify(image)}),c=>c.charCodeAt(0));
+    await window.__r3d.loadImageFile(new File([bytes],'imported.png',{type:'image/png'}));
+  })()`);
+  await wait(800);
+  ok(await run(`window.__r3d.S.source==='image' && window.__r3d.S.image.name==='imported.png' && window.__r3d.exportParts().length>0`), 'loading an image cancels pending text without blocking the new model');
+  await run(`(async()=>{
+    const e=document.getElementById('txtText');e.value='Cambio temporal';e.dispatchEvent(new Event('input',{bubbles:true}));
+    await window.__r3d.openProjectFile(new File([${JSON.stringify(project)}],'Linda.r3d'));
+  })()`);
+  await wait(800);
+  ok(JSON.stringify(await read('window.__r3d.S.text')) === JSON.stringify(before), 'saved project restores editable text and decorations');
+  ok(await run(`window.__r3d.hist.stack.length===1 && window.__r3d.exportParts().length===3`), 'opening a project cancels queued text generation');
+  await text('Lina');
+  ok(await run(`window.__r3d.S.text.text==='Lina' && !!window.__r3d.getFeat()?.pencilChannel`), 'reopened project is still editable');
+  await text('Linda');
+  for (const kind of ['3mf', 'stl-one', 'svg']) await run(`window.__r3d.doExport('${kind}')`);
+  await run(`window.__r3d.saveProject()`);
+  await checkPencilExports(exp, 'Linda', await read('window.__r3d.getFeat().pencilChannel'));
+  await run(`(()=>{
+    const v=window.__r3d.viewer;v.frame();const t=v.controls.target,d=v.camera.position.distanceTo(t);
+    v.camera.position.set(t.x-d*0.5,t.y+d*0.6,t.z+d*0.65);v.controls.update();v.requestRender();
+  })()`); await capture('pencil_03_final');
+  fs.writeFileSync(path.join(D, 'result.json'), JSON.stringify({ ...dimensions, channel, project: 'Linda.r3d' }, null, 2));
+  ok(!errs.length, 'console errors: ' + (errs.join(' | ') || 'none'));
+  log('done');
+};

@@ -74,6 +74,12 @@
           <label class="row" data-twhen="outline">Color bordeado <input type="color" id="txtOutlineColor" /></label>
           <label class="row" data-twhen="outline">Grosor bordeado (mm) <input inputmode="decimal" type="text" id="txtOutlineMM" /></label>
           <label class="row">Color base / silueta <input type="color" id="txtBaseColor" /></label>
+          <label class="row">Adorno al final <select id="txtDecoration"><option value="none">Ninguno</option><option value="ribbon">Cinta de concientización</option><option value="heart">Corazón</option><option value="star">Estrella</option></select></label>
+          <div id="decorationFields" hidden>
+            <label class="row">Color adorno <input type="color" id="txtDecorationColor" /></label>
+            <label class="row">Alto adorno (mm) <input inputmode="decimal" type="text" id="txtDecorationSize" /></label>
+            <label class="row">Separación (mm) <input inputmode="decimal" type="text" id="txtDecorationGap" /></label>
+          </div>
           <p class="muted small">El ancho total se ajusta en «Tamaño». La silueta exterior se configura en «Base / silueta».</p>
         </div>
       </section>
@@ -398,7 +404,7 @@
       </section>
 
       <section class="card" data-card="pencil">
-        <h3><label class="chk"><input type="checkbox" data-set="pencil.enabled" /> Funda para lápiz / pitillo</label></h3>
+        <h3><label class="chk"><input type="checkbox" data-set="pencil.enabled" /> Canal para lápiz / pitillo</label></h3>
         <label class="row">Tipo <select data-set="pencil.type"><option value="hex">Hexagonal</option><option value="round">Redondo</option><option value="triangle">Triangular</option></select></label>
         <label class="row">Medir por <select data-set="pencil.measure"><option value="diameter">Diámetro / ancho</option><option value="circumference">Circunferencia</option></select></label>
         <label class="row"><span id="pencilValueLabel">Calibre (mm)</span> <input inputmode="decimal" type="text" data-set="pencil.value" data-min="2" /></label>
@@ -410,11 +416,16 @@
         <div class="muted small" id="pencilInfo"></div>
         <label class="row">Holgura (mm) <input inputmode="decimal" type="text" data-set="pencil.tolerance" /></label>
         <label class="row">Pared (mm) <input inputmode="decimal" type="text" data-set="pencil.wall" data-min="0.8" /></label>
-        <label class="row">Montaje <select data-set="pencil.mount"><option value="side">Acostado bajo el nombre</option><option value="tip">En la punta (vertical)</option></select></label>
-        <label class="row">Largo funda (mm, 0 = auto) <input inputmode="decimal" type="text" data-set="pencil.length" /></label>
+        <label class="row">Montaje <select data-set="pencil.mount"><option value="integrated">Dentro de la base del nombre</option><option value="side">Acostado bajo el nombre</option><option value="tip">En la punta (vertical)</option></select></label>
+        <p class="muted small" data-when="pencil.mount=integrated">Canal horizontal abierto por ambos extremos. El calibre final es medida + holgura. La base se refuerza entre letras; ajusta su espesor en «Base / silueta».</p>
+        <label class="row" data-when="pencil.mount!=integrated">Largo funda (mm, 0 = auto) <input inputmode="decimal" type="text" data-set="pencil.length" /></label>
         <label class="row" data-when="pencil.mount=side">Extremos <select data-set="pencil.ends"><option value="closed-right">Cerrado a la derecha</option><option value="closed-left">Cerrado a la izquierda</option><option value="open">Abierto a ambos lados</option></select></label>
-        <label class="row">Desplazar (mm) <input inputmode="decimal" type="text" data-set="pencil.offset" data-allowneg="1" /></label>
-        <label class="row">Filamento <select data-set="pencil.filament" class="fil-select"></select></label>
+        <label class="row">Desplazar eje (mm) <input inputmode="decimal" type="text" data-set="pencil.offset" data-allowneg="1" /></label>
+        <label class="row" data-when="pencil.mount!=integrated">Filamento funda <select data-set="pencil.filament" class="fil-select"></select></label>
+        <div id="pencilLevels">
+          <label class="row">Relieve letras (mm) <input inputmode="decimal" type="text" data-set="pencil.relief" data-min="0.4" /></label>
+          <label class="row">Relieve adorno (mm) <input inputmode="decimal" type="text" data-set="pencil.decorationRelief" data-min="0.4" /></label>
+        </div>
       </section>
 
       <section class="card" data-card="sticks">

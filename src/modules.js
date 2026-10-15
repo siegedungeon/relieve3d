@@ -8,9 +8,10 @@ export const MODULES = [
   },
   {
     id: 'pencil', group: '3d', icon: '✏️', title: 'Marcador de lápiz', source: 'text',
-    desc: 'Nombre con funda para lápiz redondo, hexagonal o triangular.',
+    desc: 'Nombre en relieve con canal dentro de la base y adornos personalizables.',
     cards: ['text', 'base', 'pencil'],
-    patch: { widthMM: 60, base: { enabled: true, margin: 2, thickness: 2.4 }, pencil: { enabled: true } },
+    patch: { widthMM: 63, base: { enabled: true, margin: 2, thickness: 12 }, pencil: { enabled: true, mount: 'integrated', type: 'round', value: 7.8, tolerance: 0, ends: 'open' } },
+    text: { text: 'Linda', font: 'Fredoka', weight: 700, outline: false, fill: '#dc397b', baseColor: '#ffffff', decoration: 'ribbon' },
   },
   {
     id: 'mic', group: '3d', icon: '🎤', title: 'Logo para micrófono', source: 'image',

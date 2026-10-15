@@ -34,7 +34,7 @@ Al abrir aparece una **pantalla de inicio** para elegir qué crear (botón **Ini
 | Módulo | Qué hace |
 |---|---|
 | Llavero | Módulo completo para marcas y merchandising (ver abajo) |
-| Marcador de lápiz | Nombre con funda para lápiz redondo, hexagonal o triangular (calibre, largo, ancho del nombre, borde/silueta, fuentes del equipo) |
+| Marcador de lápiz | Nombre en relieve con **canal horizontal dentro de la base**, calibre redondo/hexagonal/triangular y adorno al final (cinta, corazón o estrella). Conserva los montajes antiguos con funda exterior |
 | Logo para micrófono | **Cuerpo completo** del mic flag (cuadrado, estrella, corazón, círculo, hexágono) con bordes redondeados, hueco inferior para el micrófono + ranura del clip (DJI, Hollyland, chinos verticales), aros laterales opcionales y el logo encima. El logo/cuerpo se mueve con el asa ✥ morada, se rota y el botón **Centrar hueco** ajusta el hueco para paredes uniformes. También puedes **cargar tu propio cuerpo STL** (queda guardado en la biblioteca) |
 | Logo / figura en relieve | Cualquier imagen a modelo multicolor por capas |
 | Imán de nevera | Figura con bolsillo oculto para imán |
@@ -60,6 +60,20 @@ Los módulos de texto usan las fuentes más populares y las instaladas en el equ
   - **Láminas de corte**: tamaño de la lámina de cada material (p. ej. negro 450 × 300, blanco 120 × 300), separación entre piezas (2 mm) y margen del borde. Las piezas se acomodan por su **forma real** (las letras pequeñas entran en los huecos de las grandes, rotaciones de 90°) dejando el sobrante en un solo retazo; la barra de estado muestra el % aprovechado.
 
   Todo sale en curvas Bézier suaves (sin escalones, picos ni trazos finos, con control automático), acomodado en láminas y exportado como **SVG para CorelDRAW** (línea roja de 0,01 mm, página del tamaño de la lámina). Los proyectos se guardan como `.r3h` (incluyen el mockup).
+
+### Marcadores de lápiz con nombre
+
+El montaje **Dentro de la base del nombre** reproduce la construcción de una base gruesa con el lápiz atravesándola de extremo a extremo, no un tubo pegado debajo. Parte de «Linda» en Fredoka, letras fucsias, cinta rosa de concientización y base blanca. Todo es editable.
+
+- **Texto y adorno**: nombre, fuente, grosor, colores independientes, alto del adorno y separación. El ancho en «Tamaño» incluye el nombre y el adorno; el margen de la base se añade por fuera. Los tamaños del adorno y del borde se conservan en mm al cambiar el ancho.
+- **Niveles**: espesor de base en «Base / silueta» y alturas de letras y adorno en «Canal para lápiz». Estos dos relieves se conservan al cambiar nombre, fuente o colores. También puedes editar piezas/niveles en los grupos; mantén elevación **0** para que apoyen en la base.
+- **Calibre**: el canal final es **medida + holgura**. La referencia inicial es redonda, **7.8 mm finales**, base de **12 mm** y relieve de **1.4 mm**. Para hexágonos se mide entre caras; también se puede introducir la circunferencia. La pared mínima debe caber arriba y abajo; una combinación imposible bloquea la exportación en vez de quitar silenciosamente la base.
+- La base sigue la silueta y se refuerza entre letras con extremos redondeados para mantener el canal cerrado lateralmente. «Desplazar eje» mueve el canal hacia arriba/abajo en el plano del nombre (positivo hacia arriba). El modo integrado usa el color de la base, siempre atraviesa ambos extremos y no combina accesorios como imanes, NFC o argolla; las fundas exterior y de punta mantienen sus opciones anteriores.
+- Guarda el **`.r3d`** para seguir personalizando. El **3MF** mantiene los colores ensamblados; el **STL único** fusiona base y relieves en un sólido. SVG representa la vista superior, no el agujero horizontal. Los STL por color son volúmenes del modelo multicolor, no piezas con encajes para armar por separado.
+
+**Impresión**: apoya la cara plana inferior sobre la cama y revisa el techo del canal en el laminador (puentes/soportes según impresora y material). El calibre es geométrico: imprime una muestra para ajustar la holgura a tu lápiz antes de hacer un lote; no se ha validado un ajuste físico universal.
+
+Regresiones: `node test\pencil.test.mjs` comprueba sólidos, calibre y paredes; `node test\e2e\run.mjs pencil` recorre edición, guardado/reapertura y verifica los archivos 3MF/STL reales.
 
 ### Módulo Llavero (marcas y empresas)
 

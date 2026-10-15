@@ -7,6 +7,7 @@ import {
   edt, dilate, erode, removeSmall, fillHoles, union, subtract, countOn, fillPolygon, fillCircle, fillCapsule, shapePolygon, traceMask, maskBBox, connectIslands,
 } from './raster.js';
 import { DEFAULT_BODY, buildParametricBody, hull2D } from './micbody.js';
+import { integratedPencil } from './pencil.js';
 
 export const DEFAULT_SETTINGS = () => ({
   widthMM: 60,
@@ -23,7 +24,7 @@ export const DEFAULT_SETTINGS = () => ({
   magnets: { enabled: false, count: 1, diameter: 10, depth: 2, spacing: 20, clearance: 0.2 },
   tongue: { enabled: false, width: 14, length: 18, thickness: 2 },
   sticks: { enabled: false, count: 2, length: 70, width: 5, tip: true, bar: false, barHeight: 4, thickness: 3 },
-  pencil: { enabled: false, type: 'hex', measure: 'diameter', value: 7, tolerance: 0.4, wall: 1.6, mount: 'side', length: 0, ends: 'closed-right', offset: 0, filament: null },
+  pencil: { enabled: false, type: 'hex', measure: 'diameter', value: 7, tolerance: 0.4, wall: 1.6, mount: 'side', length: 0, ends: 'closed-right', offset: 0, filament: null, relief: 1.4, decorationRelief: 1.4 },
   cutter: { enabled: false, wall: 1, height: 14, flange: 4, flangeT: 1.6, offset: 0,
     // embosser that fits inside the cutter and prints the design onto the dough (printed beside the cutter, relief up)
     mirror: true, stamp: true, stampClear: 0.6, stampBase: 3, stampRelief: 2.5, stampBold: 0.2, stampSource: 'auto' },
@@ -44,11 +45,11 @@ export function pencilAcross(p) {
 }
 
 // Channel cross-section centred on the axis, flat side down. Returns { pts: [[u,v]], maxR, halfWidth }.
-export function pencilProfile(type, size) {
+export function pencilProfile(type, size, segments = 64) {
   const pts = [];
   if (type === 'round') {
     const r = size / 2;
-    for (let i = 0; i < 64; i++) { const a = (i / 64) * Math.PI * 2; pts.push([r * Math.cos(a), r * Math.sin(a)]); }
+    for (let i = 0; i < segments; i++) { const a = (i / segments) * Math.PI * 2; pts.push([r * Math.cos(a), r * Math.sin(a)]); }
     return { pts, maxR: r };
   }
   if (type === 'hex') {
@@ -134,6 +135,11 @@ const rectPoly = (x0, y0, x1, y1) => [[x0, y0], [x1, y0], [x1, y1], [x0, y1]];
  */
 export function buildFeatures(result, settings, opts) {
   const set = { ...DEFAULT_SETTINGS(), ...settings };
+  if (set.pencil.enabled && set.pencil.mount === 'integrated') {
+    for (const key of ['ring', 'holes', 'magnets', 'nfc', 'back', 'bevel', 'rim', 'accent', 'tongue', 'sticks', 'micBody', 'cutter']) {
+      if (set[key]?.enabled) throw new Error(`Desactiva «${key}» para usar el canal integrado.`);
+    }
+  }
   // Mic body: the logo plate sits on top of a solid body with the mic cavity — magnets / clip tongue make no sense there.
   const MB = set.micBody?.enabled && !set.cutter?.enabled ? { ...DEFAULT_BODY(), ...set.micBody } : null;
   if (MB) { set.magnets = { ...set.magnets, enabled: false }; set.tongue = { ...set.tongue, enabled: false }; }
@@ -175,7 +181,7 @@ export function buildFeatures(result, settings, opts) {
   let pencilAcrossMM = 0, prof = null, cross = null;
   if (pen) {
     pencilAcrossMM = pencilAcross(set.pencil);
-    prof = pencilProfile(set.pencil.type, pencilAcrossMM + set.pencil.tolerance);
+    prof = pencilProfile(set.pencil.type, pencilAcrossMM + set.pencil.tolerance, set.pencil.mount === 'integrated' ? 192 : 64);
     cross = sleeveCrossSection(prof, set.pencil.wall);
     if (set.pencil.mount === 'tip') padB += mm((set.pencil.length || 25) + 6);
     else { padB += mm(cross.R * 2 + 4); padX += mm(Math.max(0, (set.pencil.length || 0) - (x1 - x0) * s) / 2 + 4); }
@@ -203,7 +209,7 @@ export function buildFeatures(result, settings, opts) {
   }
   const gcx = gx((fb[0] + fb[2]) / 2), gcy = gy((fb[1] + fb[3]) / 2);
 
-  let pencilInfo = null, tongue = null, ringInfo = null, pieceZ = 0, magnetMarks = null, ringRef = null;
+  let pencilInfo = null, pencilChannel = null, tongue = null, ringInfo = null, pieceZ = 0, magnetMarks = null, ringRef = null;
   const pauses = [];
   const fmt1 = (v) => (Math.round(v * 10) / 10).toString();
   // back text mask {data (w*h 0/1 or RGBA), w, h, mmW, mmH} → grid mask, mirrored (read from below), centred on the base
@@ -313,6 +319,28 @@ export function buildFeatures(result, settings, opts) {
       if (countOn(outside) > countOn(fg) * 0.02) warnings.push('El diseño sobresale de la forma de la placa: agranda la placa o reduce el ancho del diseño.');
       base = union(plate, silhouette(Math.min(B.margin, 1)));
     }
+  }
+  if (pen && set.pencil.mount === 'integrated') {
+    if (!base) throw new Error('Activa la base para alojar el canal del lápiz.');
+    // Choose the row requiring the least added material, favouring the lower half of the name.
+    const bb = maskBBox(base, GW, GH), half = Math.ceil(gmm(prof.maxR + set.pencil.wall));
+    const rows = new Int32Array(GH + 1);
+    for (let y = 0; y < GH; y++) {
+      rows[y + 1] = rows[y];
+      for (let x = bb[0]; x < bb[2]; x++) rows[y + 1] += base[y * GW + x];
+    }
+    let best = -Infinity, axis = (bb[1] + bb[3]) / 2;
+    for (let y = bb[1]; y < bb[3]; y++) {
+      const covered = rows[Math.min(GH, y + half)] - rows[Math.max(0, y - half)];
+      const score = covered - Math.abs(y - (bb[1] + (bb[3] - bb[1]) * 0.6)) * 0.01;
+      if (score > best) { best = score; axis = y; }
+    }
+    const built = integratedPencil(trace(base), prof, set, { scale: s, center: [cx, cy], axisY: toImg([0, axis])[1] });
+    solids.push({ key: 'base', name: 'Base con canal de lápiz', fil: 'base', geometry: built.geometry, footprint: built.footprint });
+    pencilChannel = built.channel;
+    pieceZ = B.thickness;
+    warnings.push('Canal horizontal: revisa puentes/soportes en el laminador y prueba el ajuste con tu lápiz antes de producir un lote.');
+    return finish();
   }
   // reference body for attachments when there is no base
   const body = () => base || dilate(fg, GW, GH, gmm(0.5));
@@ -638,13 +666,13 @@ export function buildFeatures(result, settings, opts) {
     const grow = (p) => { bx0 = Math.min(bx0, p[0]); by0 = Math.min(by0, p[1]); bx1 = Math.max(bx1, p[0]); by1 = Math.max(by1, p[1]); };
     for (const L of layers) for (const sh of L.shapes) for (const p of sh.outer) grow(p);
     for (const so of solids) for (const sh of so.footprint) for (const p of sh.outer) grow(p);
-    let zTop = 0;
+    let zTop = pencilChannel ? B.thickness : 0;
     for (const L of layers) zTop = Math.max(zTop, L.z + L.height);
     if (pencilInfo) zTop = Math.max(zTop, cross.top + (bodyInfo?.top || 0));
     if (bodyInfo) zTop = Math.max(zTop, bodyInfo.top);
     return {
       layers, solids, bounds: [bx0, by0, bx1, by1], ring: ringInfo, warnings: [...new Set(warnings)], hidePieces: cut,
-      pieceZ: cut ? 0 : pieceZ, zTop, magnets: magnetMarks, pencilAcross: pencilAcrossMM || null, body: bodyInfo,
+      pieceZ: cut ? 0 : pieceZ, zTop, magnets: magnetMarks, pencilAcross: pencilAcrossMM || null, pencilChannel, body: bodyInfo,
             pauses: pauses.map((p) => ({ ...p, z: Math.round(p.z * 100) / 100 })), ringRef,
           };
   }
