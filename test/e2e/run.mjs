@@ -1,5 +1,5 @@
 // End-to-end runner: starts the real Electron app and drives a whole module flow.
-//   node test/e2e/run.mjs [colorsplit|logo|hablador|pencil|all] [input file]
+//   node test/e2e/run.mjs [colorsplit|logo|hablador|pencil|coloring|all] [input file]
 // Defaults use synthetic inputs (painted sphere 3MF, test/logo.png, generated LOVECUBE mockup).
 // Screenshots and exports go to test/out/e2e/<name>. Exits 1 if any check prints FAIL or the flow didn't finish.
 import fs from 'fs';
@@ -17,6 +17,7 @@ const inputs = {
   colorsplit: () => { const f = path.join(outRoot, 'painted_sphere.3mf'); fs.mkdirSync(outRoot, { recursive: true }); fs.writeFileSync(f, paintedSphere3MF()); return f; },
   logo: () => path.join(root, 'test', 'logo.png'),
   pencil: () => path.join(root, 'test', 'logo.png'),
+  coloring: () => path.join(root, 'src', 'examples', 'coloring-scene.svg'),
   hablador: () => {
     const f = path.join(root, 'test', 'out', 'mockup_LOVECUBE.png');
     if (!fs.existsSync(f)) spawnSync(process.execPath, [path.join(root, 'test', 'hablador_mockup.test.mjs')], { stdio: 'ignore' });
@@ -50,7 +51,7 @@ function runOne(name) {
 }
 
 const names = which === 'all' ? Object.keys(inputs) : [which];
-if (!names.every((n) => inputs[n])) { console.log('usage: node test/e2e/run.mjs [colorsplit|logo|hablador|pencil|all] [input]'); process.exit(2); }
+if (!names.every((n) => inputs[n])) { console.log('usage: node test/e2e/run.mjs [colorsplit|logo|hablador|pencil|coloring|all] [input]'); process.exit(2); }
 let allOk = true;
 for (const n of names) allOk = (await runOne(n)) && allOk;
 console.log(allOk ? '\ne2e OK' : '\ne2e FAILED');

@@ -68,6 +68,10 @@ export const MODULES = [
     desc: 'Vectoriza, quita fondo, engrosa, reduce colores, borde y silueta. Luego pásalo a 3D.',
   },
   {
+    id: 'coloring', group: '2d', icon: '🖍️', title: 'Láminas para colorear',
+    desc: 'Imagen a contornos negros sobre blanco. Limpieza ajustable, goma y borrado por zona; PNG, SVG y PDF para imprimir.',
+  },
+  {
     id: 'cakelaser', group: '2d', icon: '✂️', title: 'Cake topper láser',
     desc: 'Letras soldadas en una sola pieza con palitos, SVG listo para Corel.',
   },

@@ -267,3 +267,12 @@ textarea { width: 100%; font: inherit; font-size: 14px; padding: 6px 8px; border
 .cs-pc { cursor: pointer; border-radius: 5px; padding: 2px 4px; }
 .cs-pc:hover { background: #f1f5f9; }
 .cs-pc.sel { background: #dbeafe; }
+
+/* Láminas para colorear */
+.studio .coloring-layout { grid-template-columns: 285px minmax(0, 1fr) 240px; }
+.coloring-layout .views { grid-template-rows: minmax(0, 1fr); }
+.coloring-layout .st-view { touch-action: none; }
+.coloring-layout .coloring-tools { display: grid; gap: 6px; }
+.coloring-layout [aria-invalid=true] { border-color: #dc2626 !important; background: #fff1f2; }
+.coloring-layout .hb-warn { color: #b45309; font-size: 12px; }
+.coloring-layout [data-a="original"] { width: auto; padding: 6px; font-size: 12px; }

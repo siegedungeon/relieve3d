@@ -1,0 +1,228 @@
+import { processImage, modeFilter, computeForeground } from './processing.js';
+import { components, edt, dilate, fillCapsule, traceMask, countOn } from './raster.js';
+
+export const COLORING_DEFAULTS = Object.freeze({
+  colors: 10, minDetail: 0.25, minArea: 0.4, contrast: 16, smooth: 1,
+  lineWidth: 0.6, keepInk: true, cleanBackground: true, backgroundTolerance: 50,
+  pageWidth: 210, pageHeight: 297, margin: 10, dpi: 300,
+});
+
+export function coloringOptions(input = {}) {
+  const o = { ...COLORING_DEFAULTS, ...input };
+  const limits = {
+    colors: [2, 24, 'Cantidad de colores'], minDetail: [0, 5, 'Detalle mínimo'],
+    minArea: [0, 100, 'Área mínima'], contrast: [0, 120, 'Contraste mínimo'],
+    smooth: [0, 4, 'Suavizado'], lineWidth: [0.15, 3, 'Grosor de línea'],
+    pageWidth: [50, 500, 'Ancho de página'], pageHeight: [50, 500, 'Alto de página'],
+    margin: [0, 80, 'Margen'], dpi: [72, 300, 'Resolución'],
+    backgroundTolerance: [0, 120, 'Tolerancia de fondo'],
+  };
+  for (const [key, [min, max, label]] of Object.entries(limits)) {
+    if (!Number.isFinite(o[key]) || o[key] < min || o[key] > max) throw new Error(`${label}: usa un valor entre ${min} y ${max}.`);
+  }
+  if (![o.colors, o.smooth, o.dpi].every(Number.isInteger)) throw new Error('Colores, suavizado y resolución deben ser enteros.');
+  if (typeof o.keepInk !== 'boolean' || typeof o.cleanBackground !== 'boolean') throw new Error('Las opciones de trazos y fondo deben ser sí/no.');
+  if (o.margin * 2 + 10 > Math.min(o.pageWidth, o.pageHeight)) throw new Error('El margen deja menos de 10 mm para el dibujo.');
+  if (Math.ceil(o.pageWidth * o.dpi / 25.4) * Math.ceil(o.pageHeight * o.dpi / 25.4) > 36000000) {
+    throw new Error('La página supera 36 megapíxeles: reduce su tamaño o la resolución.');
+  }
+  return o;
+}
+
+export function coloringLayout(W, H, input) {
+  const o = coloringOptions(input);
+  const scale = Math.min((o.pageWidth - 2 * o.margin) / W, (o.pageHeight - 2 * o.margin) / H);
+  return { scale, x: (o.pageWidth - W * scale) / 2, y: (o.pageHeight - H * scale) / 2, width: W * scale, height: H * scale };
+}
+
+// Zhang-Suen thinning keeps source ink as one line, not the two edges of a dark stripe.
+function thinInk(mask, W, H) {
+  const w = W + 2, h = H + 2, m = new Uint8Array(w * h), drop = [];
+  for (let y = 0; y < H; y++) m.set(mask.subarray(y * W, (y + 1) * W), (y + 1) * w + 1);
+  let changed;
+  do {
+    changed = false;
+    for (let pass = 0; pass < 2; pass++) {
+      drop.length = 0;
+      for (let y = 1; y < h - 1; y++) for (let x = 1; x < w - 1; x++) {
+        const i = y * w + x;
+        if (!m[i]) continue;
+        const p = [m[i - w], m[i - w + 1], m[i + 1], m[i + w + 1], m[i + w], m[i + w - 1], m[i - 1], m[i - w - 1]];
+        const n = p.reduce((a, b) => a + b, 0);
+        if (n < 2 || n > 6) continue;
+        let changes = 0;
+        for (let j = 0; j < 8; j++) if (!p[j] && p[(j + 1) % 8]) changes++;
+        if (changes !== 1) continue;
+        if (pass === 0 ? p[0] * p[2] * p[4] || p[2] * p[4] * p[6] : p[0] * p[2] * p[6] || p[0] * p[4] * p[6]) continue;
+        drop.push(i);
+      }
+      for (const i of drop) m[i] = 0;
+      changed ||= drop.length > 0;
+    }
+  } while (changed);
+  const out = new Uint8Array(W * H);
+  for (let y = 0; y < H; y++) out.set(m.subarray((y + 1) * w + 1, (y + 1) * w + 1 + W), y * W);
+  return out;
+}
+
+export function createColoring(img, input = {}, progress = () => {}) {
+  const o = coloringOptions(input), { width: W, height: H } = img;
+  if (!Number.isInteger(W) || !Number.isInteger(H) || W < 2 || H < 2 || W * H > 4000000 || img.data?.length !== W * H * 4) {
+    throw new Error('La imagen debe tener al menos 2 × 2 píxeles y no superar 4 megapíxeles de trabajo.');
+  }
+  const layout = coloringLayout(W, H, o), ppm = 1 / layout.scale;
+  const rgba = new Uint8ClampedArray(img.data.length);
+  for (let i = 0; i < W * H; i++) {
+    const a = img.data[i * 4 + 3] / 255;
+    for (let c = 0; c < 3; c++) rgba[i * 4 + c] = img.data[i * 4 + c] * a + 255 * (1 - a);
+    rgba[i * 4 + 3] = 255;
+  }
+  if (o.cleanBackground && [0, W - 1, W * (H - 1), W * H - 1].every(i => {
+    const rgb = rgba.subarray(i * 4, i * 4 + 3);
+    return Math.min(...rgb) >= 185 && Math.max(...rgb) - Math.min(...rgb) <= 50;
+  })) {
+    const foreground = computeForeground({ data: rgba, width: W, height: H }, { removeBg: 'yes', tolerance: o.backgroundTolerance });
+    for (let i = 0; i < foreground.length; i++) if (!foreground[i]) rgba[i * 4] = rgba[i * 4 + 1] = rgba[i * 4 + 2] = 255;
+  }
+  progress('Simplificando las zonas de color…');
+  const r = processImage({ data: rgba, width: W, height: H }, {
+    colors: o.colors, removeBg: 'no', minHoleMM: 0, upscale: false, trace: false,
+    minWidth: o.minDetail > 0 ? o.minDetail * ppm : -1, minArea: Math.max(1, o.minArea * ppm * ppm),
+  });
+  let labels = Int16Array.from(r.comp, id => id < 0 ? -1 : r.pieces[id].cluster);
+  for (let p = 0; p < o.smooth; p++) labels = modeFilter(labels, W, H, r.palette.length);
+  const roots = r.palette.map((_, i) => i);
+  const root = i => { while (roots[i] !== i) i = roots[i]; return i; };
+  for (let a = 0; a < roots.length; a++) for (let b = 0; b < a; b++) {
+    const ca = r.palette[a], cb = r.palette[b];
+    if (Math.hypot(ca.r - cb.r, ca.g - cb.g, ca.b - cb.b) <= o.contrast) roots[root(a)] = root(b);
+  }
+  const ink = new Uint8Array(W * H), linePx = o.lineWidth * ppm;
+  if (o.keepInk) {
+    const dark = r.palette.map(c => Math.max(c.r, c.g, c.b) < 85 && Math.max(c.r, c.g, c.b) - Math.min(c.r, c.g, c.b) < 35);
+    const mask = Uint8Array.from(labels, c => c >= 0 && dark[c] ? 1 : 0);
+    if (mask.includes(1)) {
+      const { labels: ids, comps } = components(mask, W, H);
+      const distance = edt(Uint8Array.from(mask, v => 1 - v), W, H), thick = new Uint32Array(comps.length);
+      for (let i = 0; i < mask.length; i++) if (ids[i] >= 0 && distance[i] > Math.max(3, linePx * 2)) thick[ids[i]]++;
+      // A few wider intersections must not turn an otherwise thin ink network into double contours.
+      const narrow = comps.map((c, i) => thick[i] <= c.area * 0.05);
+      for (let i = 0; i < mask.length; i++) ink[i] = ids[i] >= 0 && narrow[ids[i]] ? 1 : 0;
+    }
+  }
+  progress('Dibujando contornos negros…');
+  const edge = ink.includes(1) ? thinInk(ink, W, H) : ink.slice();
+  const different = (i, j) => !ink[i] && !ink[j] && labels[i] >= 0 && labels[j] >= 0 && root(labels[i]) !== root(labels[j]);
+  for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) {
+    const i = y * W + x;
+    if ((x + 1 < W && different(i, i + 1)) || (y + 1 < H && different(i, i + W))) edge[i] = 1;
+  }
+  const mask = dilate(edge, W, H, Math.max(0, linePx / 2));
+  const pixels = countOn(mask);
+  if (!pixels) throw new Error('No se encontraron contornos. Reduce la limpieza o usa una imagen con formas y colores diferentes.');
+  return { width: W, height: H, mask, colors: r.palette.length, pixels };
+}
+
+export function validateColoringEdits(edits) {
+  if (!Array.isArray(edits) || edits.length > 2000) throw new Error('El proyecto contiene demasiadas ediciones o una lista inválida.');
+  let points = 0;
+  for (const e of edits) {
+    if (!e || !['erase', 'draw', 'rect'].includes(e.kind) || !Array.isArray(e.points) || !e.points.length) throw new Error('Edición de coloreado inválida.');
+    if (e.kind === 'rect' ? e.points.length !== 2 : !Number.isFinite(e.width) || e.width <= 0 || e.width > 2) throw new Error('Tamaño de edición inválido.');
+    points += e.points.length;
+    for (const p of e.points) if (!Array.isArray(p) || p.length !== 2 || !p.every(v => Number.isFinite(v) && v >= 0 && v <= 1)) throw new Error('Coordenadas de edición inválidas.');
+  }
+  if (points > 100000) throw new Error('El proyecto supera 100000 puntos de edición.');
+}
+
+export function applyColoringEdit(mask, W, H, edit) {
+  validateColoringEdits([edit]);
+  const points = edit.points.map(([x, y]) => [x * W, y * H]);
+  if (edit.kind === 'rect') {
+    const [[ax, ay], [bx, by]] = points;
+    for (let y = Math.max(0, Math.floor(Math.min(ay, by))); y < Math.min(H, Math.ceil(Math.max(ay, by))); y++) {
+      mask.fill(0, y * W + Math.max(0, Math.floor(Math.min(ax, bx))), y * W + Math.min(W, Math.ceil(Math.max(ax, bx))));
+    }
+  } else {
+    const radius = edit.width * Math.max(W, H) / 2, value = edit.kind === 'draw' ? 1 : 0;
+    for (let i = 0; i < points.length; i++) {
+      const a = points[Math.max(0, i - 1)], b = points[i];
+      fillCapsule(mask, W, H, a[0], a[1], b[0], b[1], radius, value);
+    }
+  }
+}
+
+export function applyColoringEdits(result, edits) {
+  validateColoringEdits(edits);
+  const mask = result.mask.slice();
+  for (const edit of edits) applyColoringEdit(mask, result.width, result.height, edit);
+  return mask;
+}
+
+export function coloringShapes(mask, W, H) {
+  return traceMask(mask, W, H, 0.3, 1);
+}
+
+const fmt = n => String(Math.round(n * 10000) / 10000);
+export function coloringSVG(shapes, W, H, input) {
+  const o = coloringOptions(input), l = coloringLayout(W, H, o);
+  // Trace grouping can attach an island's holes to a containing outline; fill all loops together.
+  const d = shapes.flatMap(s => [s.outer, ...s.holes]).map(loop => 'M' + loop.map(([x, y]) => `${fmt(l.x + x * l.scale)} ${fmt(l.y + y * l.scale)}`).join(' L') + ' Z').join(' ');
+  return `<?xml version="1.0" encoding="UTF-8"?>\n<svg xmlns="http://www.w3.org/2000/svg" width="${fmt(o.pageWidth)}mm" height="${fmt(o.pageHeight)}mm" viewBox="0 0 ${fmt(o.pageWidth)} ${fmt(o.pageHeight)}"><rect width="100%" height="100%" fill="#FFFFFF"/>\n<path d="${d}" fill="#000000" fill-rule="evenodd"/>\n</svg>`;
+}
+
+// A vector-only PDF needs no fonts, image encoder or external service.
+export function coloringPDF(shapes, W, H, input) {
+  const o = coloringOptions(input), l = coloringLayout(W, H, o), pt = 72 / 25.4;
+  const pw = o.pageWidth * pt, ph = o.pageHeight * pt;
+  const content = [`1 g 0 0 ${fmt(pw)} ${fmt(ph)} re f\n0 g\n`];
+  for (const s of shapes) {
+    for (const loop of [s.outer, ...s.holes]) {
+      loop.forEach(([x, y], i) => content.push(`${fmt((l.x + x * l.scale) * pt)} ${fmt(ph - (l.y + y * l.scale) * pt)} ${i ? 'l' : 'm'}\n`));
+      content.push('h\n');
+    }
+  }
+  content.push('f*\n');
+  const stream = content.join('');
+  const objects = [
+    '<< /Type /Catalog /Pages 2 0 R >>',
+    '<< /Type /Pages /Kids [3 0 R] /Count 1 >>',
+    `<< /Type /Page /Parent 2 0 R /MediaBox [0 0 ${fmt(pw)} ${fmt(ph)}] /Resources << >> /Contents 4 0 R >>`,
+    `<< /Length ${stream.length} >>\nstream\n${stream}endstream`,
+  ];
+  let pdf = '%PDF-1.4\n', offsets = [0];
+  objects.forEach((body, i) => { offsets.push(pdf.length); pdf += `${i + 1} 0 obj\n${body}\nendobj\n`; });
+  const xref = pdf.length;
+  pdf += `xref\n0 ${objects.length + 1}\n0000000000 65535 f \n`;
+  for (const offset of offsets.slice(1)) pdf += `${String(offset).padStart(10, '0')} 00000 n \n`;
+  pdf += `trailer\n<< /Size ${objects.length + 1} /Root 1 0 R >>\nstartxref\n${xref}\n%%EOF\n`;
+  return new TextEncoder().encode(pdf);
+}
+
+export function coloringPngDPI(png, dpi) {
+  if (!Number.isFinite(dpi) || dpi < 72 || dpi > 300 || png.length < 33 ||
+    ![137, 80, 78, 71, 13, 10, 26, 10].every((v, i) => png[i] === v)) throw new Error('PNG o resolución inválidos.');
+  const chunk = new Uint8Array(21), view = new DataView(chunk.buffer);
+  view.setUint32(0, 9); chunk.set([112, 72, 89, 115], 4);
+  view.setUint32(8, Math.round(dpi / 0.0254)); view.setUint32(12, Math.round(dpi / 0.0254)); chunk[16] = 1;
+  let crc = 0xffffffff;
+  for (const byte of chunk.subarray(4, 17)) {
+    crc ^= byte;
+    for (let b = 0; b < 8; b++) crc = (crc >>> 1) ^ ((crc & 1) ? 0xedb88320 : 0);
+  }
+  view.setUint32(17, (crc ^ 0xffffffff) >>> 0);
+  const parts = [png.subarray(0, 8)], source = new DataView(png.buffer, png.byteOffset, png.byteLength);
+  for (let i = 8; i < png.length;) {
+    if (i + 12 > png.length) throw new Error('PNG incompleto.');
+    const length = source.getUint32(i), end = i + length + 12;
+    if (end > png.length) throw new Error('Bloque PNG incompleto.');
+    const type = String.fromCharCode(...png.subarray(i + 4, i + 8));
+    if (type !== 'pHYs') parts.push(png.subarray(i, end));
+    if (type === 'IHDR') parts.push(chunk);
+    i = end;
+  }
+  const out = new Uint8Array(parts.reduce((sum, p) => sum + p.length, 0));
+  let offset = 0;
+  for (const part of parts) { out.set(part, offset); offset += part.length; }
+  return out;
+}

@@ -305,7 +305,7 @@ function peelBackground(labels, lab, centers, bg, W, H) {
   }
 }
 
-function modeFilter(labels, W, H, k) {
+export function modeFilter(labels, W, H, k) {
   const out = labels.slice();
   const counts = new Int32Array(k);
   for (let y = 1; y < H - 1; y++) {
@@ -897,7 +897,7 @@ export function processImage(img, opts = {}) {
   }
 
   const pieces = comps.map((c, id) => {
-    const raw = traceRegion(comp, W, H, id, c.minX, c.minY, c.maxX, c.maxY);
+    const raw = o.trace === false ? null : traceRegion(comp, W, H, id, c.minX, c.minY, c.maxX, c.maxY);
     return {
       id,
       cluster: remap.get(c.label),
@@ -906,7 +906,7 @@ export function processImage(img, opts = {}) {
       depth: Math.max(0, depth[id]),
       level: level[id],
       neighbors: [...adj[id]],
-      shapes: buildShapes(raw, o.detail, o.smooth, sc),
+      shapes: raw ? buildShapes(raw, o.detail, o.smooth, sc) : [],
     };
   });
 

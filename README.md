@@ -51,6 +51,7 @@ Los módulos de texto usan las fuentes más populares y las instaladas en el equ
 
 **Diseño 2D**:
 - **Preparar logo**: vectoriza, quita fondo, reduce a 3–4 colores, engrosa colores finos, reorganiza elementos (mover/escalar/rotar/ocultar), añade borde y silueta de separación. **Engrosar por elemento** (slogans/letras finas): mantiene estilo y posición, separa letras y renglones para que no se peguen, conserva huecos (o, a, e), botón *Ajustar al trazo deseado* (p.ej. 1.2 mm) y *Reacomodar al engrosar* empuja los demás elementos. Tip: si el logo tiene base blanca, pon ese color en *Quitar* y baja *Agrupar partes* (~0.3 mm) para separar el slogan. Exporta SVG/PNG, guarda el proyecto `.r3s` para revisión del cliente o **Pasa a 3D** (llavero, micrófono, imán…).
+- **Láminas para colorear**: imagen a contornos negros sólidos sobre blanco, limpieza ajustable, goma, borrado por zona y lápiz negro; exportación PNG, SVG y PDF y proyectos `.r3c` (ver abajo).
 - **Cake topper láser**: letras engrosadas y soldadas en **una sola pieza** (sin letras sueltas ni huecos pequeños), puentes automáticos, palitos según tamaño de torta, doble capa opcional. Exporta **SVG de corte** para CorelDRAW.
 - **Hablador acrílico**: despiece completo de un hablador/señalizador de mesa para corte láser (acrílico blanco y negro con espesores configurables, p. ej. 4 mm y 3 mm). A partir de un mockup genera:
   - panel negro con **techo asimétrico** (aleros y pendientes configurables) que abraza el ícono con un borde negro, más angosto que la base; **calibres respetados en cada unión**: pestañas del largo del espesor de la base negra, ranuras a presión = calibre de la pieza que entra − 0,2 mm (ajustable: lámina de 3 mm → ranura de 2,8 mm, de 4 mm → 3,8 mm), laterales del porta tarjetas que cubren el canto del frente; soportes traseros y porta tarjetas opcional con laterales por fuera del frente;
@@ -62,6 +63,18 @@ Los módulos de texto usan las fuentes más populares y las instaladas en el equ
   - **Láminas de corte**: tamaño de la lámina de cada material (p. ej. negro 450 × 300, blanco 120 × 300), separación entre piezas (2 mm) y margen del borde. Las piezas se acomodan por su **forma real** (las letras pequeñas entran en los huecos de las grandes, rotaciones de 90°) dejando el sobrante en un solo retazo; la barra de estado muestra el % aprovechado.
 
   Todo sale en curvas Bézier suaves (sin escalones, picos ni trazos finos, con control automático), acomodado en láminas y exportado como **SVG para CorelDRAW** (línea roja de 0,01 mm, página del tamaño de la lámina). Los proyectos se guardan como `.r3h` (incluyen el mockup).
+
+### Láminas para colorear
+
+En **Inicio → Diseño 2D → Láminas para colorear**, abre una imagen o pulsa **Probar ejemplo**. La conversión es local, sin IA ni envío de imágenes a servicios externos. Funciona mejor con ilustraciones de colores planos; las fotos se simplifican por zonas de color y pueden requerir más limpieza, no se redibujan semánticamente.
+
+- **Generar / actualizar** aplica los parámetros: cantidad de colores, contraste mínimo entre zonas, detalle mínimo en mm, área mínima de motas en mm², suavizado y grosor negro (0.6 mm inicialmente). Los controles de detalle actúan antes de dibujar los contornos, no adelgazando indiscriminadamente la línea final.
+- **Conservar trazos originales** evita duplicar los bordes de líneas oscuras estrechas; las áreas oscuras grandes quedan vacías por dentro. **Limpiar fondo claro** blanquea fondos claros conectados al borde, incluidos dameros grises incrustados. Ajusta su tolerancia o desactívalo si elimina detalles pálidos que quieras conservar.
+- **Goma** borra líneas; **Borrar zona / elemento** elimina todo dentro del rectángulo arrastrado; **Lápiz negro** permite cerrar o añadir trazos. La rueda hace zoom y el botón derecho desplaza la vista. Las ediciones se conservan al recalcular; **deshacer/rehacer** recupera tanto ediciones como parámetros.
+- **Página** ofrece A4, Carta, tamaño personalizado, orientación y margen. El dibujo se centra sin deformarlo. **PNG** es blanco/negro puro, opaco, con dimensiones y metadatos de 150/300 ppp; **SVG** usa un trazado vectorial compuesto con huecos blancos; **PDF** contiene una página vectorial por imagen, lista para imprimir al 100%. No añade textos ni marcas.
+- Guarda el **`.r3c`** para conservar la imagen, los parámetros y las ediciones. Se puede reabrir desde el módulo, desde Inicio o arrastrándolo a la aplicación. Mientras haya parámetros pendientes, errores o una conversión activa, no se puede guardar/exportar una vista desactualizada. Salir del módulo cancela el cálculo pendiente sin perder el trabajo.
+
+Regresiones: `node test\coloring.test.mjs` mide limpieza, contornos únicos, zonas blancas anidadas y formatos; `node test\e2e\run.mjs coloring` recorre importación, edición real con ratón, deshacer/rehacer, guardado/reapertura, cancelación y exportación de los tres formatos.
 
 ### Marcadores de lápiz con nombre
 

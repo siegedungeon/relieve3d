@@ -14,6 +14,7 @@ import { View2D, isTyping } from './view2d.js';
 import { Studio } from './studio.js';
 import { HabladorStudio } from './hablador_ui.js';
 import { ColorSplitStudio } from './colorsplit_ui.js';
+import { ColoringStudio } from './coloring_ui.js';
 
 const $ = (id) => document.getElementById(id);
 const fmt = (v) => String(Math.round(v * 100) / 100);
@@ -1062,7 +1063,20 @@ async function saveProject() {
 }
 async function openProjectFile(file) {
   try {
+    if (/\.r3c$/i.test(file.name)) {
+      if (await coloring.loadFile(file)) {
+        hideHome(); $('studio').hidden = true; $('hablador').hidden = true; $('colorsplit').hidden = true;
+      }
+      return;
+    }
     const j = JSON.parse(await file.text());
+    if (j.app === 'Relieve3D-Coloring') {
+      if (await coloring.openProject(j)) {
+        hideHome(); $('studio').hidden = true; $('hablador').hidden = true; $('colorsplit').hidden = true;
+      }
+      return;
+    }
+    if (['Relieve3D', 'Relieve3D-Studio', 'Relieve3D-Hablador'].includes(j.app)) coloring.close();
     if (j.app === 'Relieve3D-Studio') { hideHome(); studio.openProject(j); return; }
     if (j.app === 'Relieve3D-Hablador') { hideHome(); await hablador.openProject(j); return; }
     if (j.app !== 'Relieve3D') throw new Error('No es un proyecto de Relieve3D');
@@ -1227,6 +1241,11 @@ document.addEventListener('drop', (e) => {
   if (S.image || S.source === 'text') dz.classList.add('hidden');
   const f = e.dataTransfer.files[0];
   if (!f) return;
+  if (/\.r3c$/i.test(f.name)) { openProjectFile(f); return; }
+  if (!$('coloring').hidden) {
+    if (/\.(r3d|r3s|r3h)$/i.test(f.name)) openProjectFile(f); else coloring.loadFile(f);
+    return;
+  }
   if (!$('studio').hidden) { studio.loadFile(f); return; }
   if (!$('hablador').hidden) { if (/\.(r3h|json)$/i.test(f.name)) openProjectFile(f); else hablador.loadLogo(f); return; }
   if (!$('colorsplit').hidden) { colorsplit.loadFile(f); return; }
@@ -1238,7 +1257,7 @@ document.addEventListener('drop', (e) => {
 
 // keyboard
 window.addEventListener('keydown', (e) => {
-  if (isTyping(e) || !$('home').hidden || !$('studio').hidden || !$('hablador').hidden || !$('colorsplit').hidden) return;
+  if (isTyping(e) || !$('home').hidden || !$('studio').hidden || !$('hablador').hidden || !$('colorsplit').hidden || !$('coloring').hidden) return;
   const k = e.key.toLowerCase(), ctrl = e.ctrlKey || e.metaKey;
   if (ctrl && k === 'z' && !e.shiftKey) { e.preventDefault(); undo(); }
   else if (ctrl && (k === 'y' || (k === 'z' && e.shiftKey))) { e.preventDefault(); redo(); }
@@ -1810,6 +1829,7 @@ const studio = new Studio($('studio'), {
 });
 const hablador = new HabladorStudio($('hablador'), { toast, showBusy, hideBusy, onBack: () => showHome() });
 const colorsplit = new ColorSplitStudio($('colorsplit'), { toast, showBusy, hideBusy, onBack: () => showHome() });
+const coloring = new ColoringStudio($('coloring'), { toast, showBusy, hideBusy, onBack: () => showHome() });
 
 function renderHome() {
   const card = (m) => `<button class="home-card" data-mod="${m.id}"><span class="hc-icon">${m.icon}</span><span class="hc-title">${escHtml(m.title)}</span><span class="hc-desc">${escHtml(m.desc)}</span></button>`;
@@ -1817,6 +1837,7 @@ function renderHome() {
   $('homeGrid2d').innerHTML = MODULES.filter((m) => m.group === '2d').map(card).join('');
 }
 function showHome() {
+  coloring.close();
   $('studio').hidden = true;
   $('hablador').hidden = true;
   $('colorsplit').hidden = true;
@@ -1866,6 +1887,11 @@ function clearDesign() {
 
 async function enterModule(id) {
   const m = moduleDef(id);
+  if (id === 'coloring') {
+    hideHome(); $('studio').hidden = true; $('hablador').hidden = true; $('colorsplit').hidden = true;
+    await coloring.open(); return;
+  }
+  coloring.close();
   if (id === 'hablador') { hideHome(); await hablador.open(); return; }
   if (id === 'colorsplit') { hideHome(); await colorsplit.open(); return; }
   if (m.group === '2d') { hideHome(); studio.open(id); return; }
@@ -1938,7 +1964,7 @@ if (stUpdate) {
     else if (d.state === 'up-to-date' || d.state === 'error') stUpdate.hidden = true;
   });
 }
-window.__r3d = { S, setSelection, doExport, exportParts, saveProject, openProjectFile, undo, redo, commit, hist, setViewMode, enterModule, applyText, showHome, studio, hablador, colorsplit, getFeat: () => feat, onSettingChanged, placeRing, loadImageFile, view2d,
+window.__r3d = { S, setSelection, doExport, exportParts, saveProject, openProjectFile, undo, redo, commit, hist, setViewMode, enterModule, applyText, showHome, studio, hablador, colorsplit, coloring, getFeat: () => feat, onSettingChanged, placeRing, loadImageFile, view2d,
   applyTier, applyComposition, getOrig: () => orig, ringSnap, gramsEstimate, viewer, renderElements };
 
 syncProcInputs();

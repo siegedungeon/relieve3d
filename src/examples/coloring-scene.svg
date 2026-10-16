@@ -1,0 +1,34 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="800" height="600" viewBox="0 0 800 600">
+  <rect width="800" height="600" fill="#fff"/>
+  <g stroke="#202020" stroke-width="4" stroke-linejoin="round" stroke-linecap="round">
+    <circle cx="650" cy="105" r="45" fill="#ffd45c"/>
+    <g fill="none"><path d="M650 35v-15 M650 175v15 M580 105h-15 M720 105h15 M600 55l-12-12 M700 55l12-12 M600 155l-12 12 M700 155l12 12"/></g>
+    <path d="M94 124c-20-34 15-67 46-47 13-45 76-40 83 2 42-14 67 33 38 53H105c-5 0-9-3-11-8Z" fill="#b4e7f4"/>
+    <path d="M380 94c-16-29 14-50 36-34 10-34 55-32 62 1 32-11 48 23 27 41H390c-5 0-8-3-10-8Z" fill="#daf1fa"/>
+    <path d="M60 515 Q200 415 340 499 Q475 433 740 515 V550H60Z" fill="#91cb75"/>
+    <path d="M210 274H460V496H210Z" fill="#f8c96b"/>
+    <path d="M178 278 335 150 492 278Z" fill="#ef8e89"/>
+    <path d="M394 182V132H433V214" fill="#d88370"/>
+    <rect x="294" y="366" width="82" height="130" rx="18" fill="#bd91cf"/>
+    <circle cx="358" cy="432" r="5" fill="#202020"/>
+    <rect x="236" y="308" width="62" height="63" rx="8" fill="#a9dcf1"/>
+    <path d="M267 308V371 M236 339H298" fill="none"/>
+    <rect x="383" y="308" width="52" height="63" rx="8" fill="#a9dcf1"/>
+    <path d="M409 308V371 M383 339H435" fill="none"/>
+    <path d="M335 190 350 212H320Z" fill="#f6dfa5"/>
+    <path d="M566 500V315H597V500Z" fill="#c6a17a"/>
+    <path d="M516 337c-52-10-54-79-14-97-17-52 38-82 75-53 33-34 91-10 85 39 47 8 54 72 13 91-33 47-76 40-96 17-17 24-45 22-63 3Z" fill="#72be91"/>
+    <path d="M582 362V288 M582 324l-33-26 M582 306l30-29" fill="none"/>
+    <path d="M321 497 284 546H418L360 497" fill="#eee0c3"/>
+    <g transform="translate(134 440)">
+      <path d="M0 10V65 M0 45c-30 5-40-13-40-21 23-3 36 3 40 21 M0 53c27 2 39-11 39-23-23-3-35 5-39 23" fill="#72be91"/>
+      <g fill="#e79bc6"><circle cy="-21" r="18"/><circle cx="22" cy="-7" r="18"/><circle cx="14" cy="18" r="18"/><circle cx="-14" cy="18" r="18"/><circle cx="-22" cy="-7" r="18"/></g>
+      <circle r="14" fill="#f8d461"/>
+    </g>
+    <path d="M631 95q7-8 14 0 M664 95q7-8 14 0 M641 121q16 16 31-1" fill="none"/>
+    <g transform="translate(675 405)">
+      <path d="M0 0C-60-54-52 28-4 17-42 67 12 68 5 21 37 68 65 33 16 12 79-1 31-57 8 0Z" fill="#d1acf1"/>
+      <path d="M7 1 8 30 M7 2-3-9 M7 2 19-9" fill="none"/>
+    </g>
+  </g>
+</svg>
