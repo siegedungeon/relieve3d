@@ -1,9 +1,12 @@
 import { COLORING_DEFAULTS, coloringOptions, coloringLayout, validateColoringEdits,
   coloringShapes, coloringPathData, coloringSVG, coloringPDF, coloringPngDPI } from './core/coloring.js';
 import { imageReady } from './core/imageload.js';
+import { DECORATION_ASSETS, DECORATION_THEMES, validateDecorations, decorationScene, decorationPathData,
+  decorationIcon, fitDecoration } from './core/coloring_decorations.js';
 
 const fmt = n => String(Math.round(n * 100) / 100);
 const safeName = s => String(s || '').replace(/[<>:"/\\|?*\x00-\x1f]/g, '_').replace(/[ .]+$/, '').trim() || 'lamina-colorear';
+const newSeed = () => crypto.getRandomValues(new Uint32Array(1))[0];
 const fields = [
   ['colors', 'Colores a distinguir', 'Menos colores simplifica sombras y zonas pequeñas. Entre 2 y 24.'],
   ['contrast', 'Contraste mínimo', 'Une colores parecidos. Sube este valor para quitar fronteras entre sombras suaves.'],
@@ -18,7 +21,8 @@ const fields = [
 export class ColoringStudio {
   constructor(root, cb) {
     this.root = root; this.cb = cb;
-    this.state = { name: 'lamina-colorear', source: null, options: { ...COLORING_DEFAULTS, mode: 'illustration', colors: 16, curveSmooth: 0.6 }, edits: [] };
+    this.state = { name: 'lamina-colorear', source: null, options: { ...COLORING_DEFAULTS, mode: 'illustration', colors: 16, curveSmooth: 0.6 }, edits: [], decorations: validateDecorations() };
+    this.decorationScene = []; this.decorationPaths = []; this.decorWarnings = [];
     this.hist = []; this.hidx = -1; this.seq = 0; this.loadSeq = 0;
     this.fieldErrors = new Map(); this.stale = true; this.loading = false;
     this.tool = 'erase'; this.brushMM = 3; this.original = false;
@@ -76,6 +80,24 @@ export class ColoringStudio {
         </section>
         <aside class="panel right">
           <section class="card">
+            <h3>Adornos opcionales</h3>
+            <label class="row">Activar adornos <input type="checkbox" data-opt="decorate" /></label>
+            <label class="row">Temática <select data-opt="decorTheme">${Object.entries(DECORATION_THEMES).map(([key, name]) => `<option value="${key}">${name}</option>`).join('')}</select></label>
+            ${row(['decorCount', 'Cantidad (4–24)', 'Cantidad deseada. Si no caben sin tapar el dibujo, se indica cuántos se pudieron colocar.'])}
+            <button class="btn primary wide" data-a="surprise">✨ Sorpréndeme</button>
+            <p class="small muted">Cada sorpresa cambia la composición. Reserva espacio sin deformar el dibujo ni llenar su centro. Tema y cantidad recomponen los adornos; deshacer recupera la versión anterior.</p>
+            <details><summary>Agregar un recurso</summary><div class="coloring-assets">${Object.entries(DECORATION_ASSETS).map(([kind, asset]) =>
+              `<button class="btn" data-decor-kind="${kind}" title="${asset.name}">${decorationIcon(kind)}<span>${asset.name}</span></button>`).join('')}</div></details>
+            <button class="btn wide" data-tool="decor">Seleccionar / mover adorno</button>
+            <div data-r="decor-selection" hidden>
+              <p class="small" data-r="decor-name"></p>
+              <label class="row">Tamaño (mm)<input type="text" inputmode="decimal" data-r="decor-size" /></label>
+              <label class="row">Giro (°)<input type="text" inputmode="decimal" data-r="decor-angle" /></label>
+              <button class="btn wide" data-a="decor-remove">Quitar adorno seleccionado</button>
+            </div>
+            <p class="small muted" data-r="decor-info">Desactivados. El dibujo se conserva sin adornos.</p>
+          </section>
+          <section class="card">
             <h3>Editar líneas y elementos</h3>
             <div class="coloring-tools">
               <button class="btn" data-tool="pan">Mano / mover vista</button>
@@ -85,7 +107,8 @@ export class ColoringStudio {
             </div>
             <label class="row">Goma / lápiz (mm)<input type="text" inputmode="decimal" data-r="brush" value="3" /></label>
             <p class="small muted">Arrastra para editar. «Borrar zona» elimina todo dentro del rectángulo. Rueda: zoom. Botón derecho: mover vista.</p>
-            <button class="btn wide" data-a="reset">Quitar ediciones manuales</button>
+            <p class="small muted" data-r="decor-edit-note" hidden>La goma y el lápiz editan el dibujo. Los adornos son una capa aparte: selecciónalos arriba para moverlos, girarlos o quitarlos.</p>
+            <button class="btn wide" data-a="reset">Quitar ediciones del dibujo</button>
             <p class="small muted">Las ediciones se conservan al ajustar la limpieza y al guardar el proyecto. Deshacer y rehacer también recuperan parámetros.</p>
           </section>
           <section class="card">
@@ -112,7 +135,9 @@ export class ColoringStudio {
         const action = e.target.closest('[data-a]')?.dataset.a;
         const tool = e.target.closest('[data-tool]')?.dataset.tool;
         const format = e.target.closest('[data-export]')?.dataset.export;
-        if (tool) { this.tool = tool; this.original = false; this.sync(); this.draw(); }
+        const kind = e.target.closest('[data-decor-kind]')?.dataset.decorKind;
+        if (kind) this.chooseDecoration(kind);
+        if (tool) { this.tool = tool; this.addKind = null; this.original = false; this.sync(); this.draw(); }
         if (format) await this.export(format);
         if (action === 'home') this.cb.onBack();
         else if (action === 'image') this.$('file').click();
@@ -121,6 +146,8 @@ export class ColoringStudio {
         else if (action === 'undo') await this.undo();
         else if (action === 'redo') await this.redo();
         else if (action === 'generate') await this.generate();
+        else if (action === 'surprise') await this.surprise();
+        else if (action === 'decor-remove') this.removeDecoration();
         else if (action === 'fit') this.fit();
         else if (action === 'original') { this.original = !this.original; this.sync(); this.draw(); }
         else if (action === 'rotate') this.setOptions({ pageWidth: this.state.options.pageHeight, pageHeight: this.state.options.pageWidth });
@@ -133,15 +160,20 @@ export class ColoringStudio {
         }
       } catch (error) { this.report(error); }
     });
-    this.root.addEventListener('change', e => {
+    this.root.addEventListener('change', async e => {
       const el = e.target, key = el.dataset.opt;
       try {
         if (key) {
-          const value = key === 'mode' ? el.value : el.type === 'checkbox' ? el.checked : Number(el.value.trim().replace(',', '.'));
+          const value = ['mode', 'decorTheme'].includes(key) ? el.value : el.type === 'checkbox' ? el.checked : Number(el.value.trim().replace(',', '.'));
           if (el.type !== 'checkbox' && !el.value.trim()) throw new Error('Escribe un valor numérico.');
           this.setOptions({ [key]: value }); this.fieldErrors.delete(key); el.removeAttribute('aria-invalid'); this.sync();
+          if (['decorate', 'decorTheme', 'decorCount'].includes(key) && this.sourceCanvas) await this.generate();
         } else if (el === this.$('paper') && el.value !== 'custom') {
           this.setOptions(el.value === 'a4' ? { pageWidth: 210, pageHeight: 297 } : { pageWidth: 215.9, pageHeight: 279.4 });
+        } else if (el === this.$('decor-size') || el === this.$('decor-angle')) {
+          const value = Number(el.value.trim().replace(',', '.'));
+          if (!el.value.trim() || !Number.isFinite(value)) throw new Error('Escribe un tamaño o giro numérico.');
+          this.updateDecoration(el === this.$('decor-size') ? { size: value / this.decorUnit() } : { angle: value });
         } else if (el === this.$('brush')) {
           const value = Number(el.value.trim().replace(',', '.'));
           if (!Number.isFinite(value) || value < 0.2 || value > 30) throw new Error('Usa una goma o lápiz entre 0.2 y 30 mm.');
@@ -150,6 +182,7 @@ export class ColoringStudio {
       } catch (error) {
         if (key) { this.fieldErrors.set(key, error.message); el.setAttribute('aria-invalid', 'true'); this.sync(); }
         else if (el === this.$('brush')) el.value = fmt(this.brushMM);
+        else this.sync();
         this.report(error);
       }
     });
@@ -167,10 +200,12 @@ export class ColoringStudio {
     this.canvas.addEventListener('pointerdown', e => this.pointerDown(e));
     this.canvas.addEventListener('pointermove', e => this.pointerMove(e));
     this.canvas.addEventListener('pointerup', e => this.pointerUp(e));
-    this.canvas.addEventListener('pointercancel', () => { this.drag = null; this.draw(); });
+    this.canvas.addEventListener('pointercancel', () => { this.drag = null; this.refreshDecorations(); this.draw(); });
     window.addEventListener('keydown', async e => {
-      if (this.root.hidden || /INPUT|TEXTAREA|SELECT/.test(e.target.tagName) || !(e.ctrlKey || e.metaKey)) return;
+      if (this.root.hidden || /INPUT|TEXTAREA|SELECT/.test(e.target.tagName)) return;
       try {
+        if (e.key === 'Delete' && this.tool === 'decor' && this.selectedDecoration) { e.preventDefault(); this.removeDecoration(); return; }
+        if (!(e.ctrlKey || e.metaKey)) return;
         const k = e.key.toLowerCase();
         if (k === 'z' || k === 'y') { e.preventDefault(); await (k === 'y' || e.shiftKey ? this.redo() : this.undo()); }
         else if (k === 's') { e.preventDefault(); await this.saveProject(); }
@@ -181,8 +216,9 @@ export class ColoringStudio {
   report(error) { console.error(error); this.cb.toast(error.message || String(error), true); }
   status(message) { this.$('status').textContent = message; }
   ready() { return !!this.base && !this.stale && !this.worker && !this.loading && !this.fieldErrors.size; }
+  hasArtwork() { return !!this.pixels || (this.state.options.decorate && this.decorationScene.length > 0); }
   assertReady() {
-    if (!this.ready() || this.drag?.edit) throw new Error('Termina la edición y pulsa «Generar / actualizar» antes de guardar o exportar.');
+    if (!this.ready() || this.drag?.edit || this.drag?.decoration) throw new Error('Termina la edición y pulsa «Generar / actualizar» antes de guardar o exportar.');
   }
   sync() {
     for (const el of this.root.querySelectorAll('[data-opt]')) {
@@ -198,29 +234,53 @@ export class ColoringStudio {
     this.root.querySelector('[data-a="redo"]').disabled = this.hidx >= this.hist.length - 1 || this.loading;
     this.root.querySelector('[data-a="generate"]').disabled = !this.sourceCanvas || this.loading || this.fieldErrors.size > 0;
     this.root.querySelector('[data-a="save"]').disabled = !this.ready();
-    for (const el of this.root.querySelectorAll('[data-export]')) el.disabled = !this.ready() || !this.pixels;
+    for (const el of this.root.querySelectorAll('[data-export]')) el.disabled = !this.ready() || !this.hasArtwork();
     for (const el of this.root.querySelectorAll('[data-tool]')) el.classList.toggle('primary', this.tool === el.dataset.tool && !this.original);
     this.root.querySelector('[data-a="original"]').classList.toggle('active', this.original);
     this.$('empty').hidden = !!this.sourceCanvas;
-    this.$('warning').textContent = [...this.fieldErrors.values()][0] || this.error || (this.stale && this.sourceCanvas ? 'Hay cambios pendientes. Genera de nuevo antes de exportar.' : '');
+    this.$('warning').textContent = [...this.fieldErrors.values()][0] || this.error || (this.stale && this.sourceCanvas ? 'Hay cambios pendientes. Genera de nuevo antes de exportar.' : this.decorWarnings.join(' '));
     this.$('info').textContent = this.base ? `${this.base.colors} colores de origen → negro y blanco. ${this.state.edits.length} ediciones manuales. Página ${fmt(o.pageWidth)} × ${fmt(o.pageHeight)} mm.` : 'Solo negro sólido y blanco, sin rellenos de color.';
-    this.canvas.style.cursor = this.tool === 'pan' ? 'grab' : 'crosshair';
+    const selected = this.selectedItem();
+    this.root.querySelector('[data-opt="decorate"]').disabled = !this.sourceCanvas || this.loading || !!this.worker;
+    this.root.querySelector('[data-a="surprise"]').disabled = !this.ready();
+    this.root.querySelector('[data-tool="decor"]').disabled = !this.ready() || !o.decorate;
+    for (const el of this.root.querySelectorAll('[data-decor-kind]')) {
+      el.disabled = !this.ready() || !o.decorate; el.classList.toggle('primary', this.addKind === el.dataset.decorKind);
+    }
+    this.$('decor-selection').hidden = !o.decorate || !selected;
+    this.$('decor-size').disabled = this.$('decor-angle').disabled = !this.ready();
+    this.root.querySelector('[data-a="decor-remove"]').disabled = !this.ready() || !selected;
+    if (selected) {
+      this.$('decor-name').textContent = DECORATION_ASSETS[selected.kind].name;
+      this.$('decor-size').value = fmt(selected.size * this.decorUnit()); this.$('decor-angle').value = fmt(selected.angle);
+    }
+    this.$('decor-edit-note').hidden = !o.decorate;
+    this.$('decor-info').textContent = o.decorate ? `${this.state.decorations.items?.length || 0} adornos. Elige un recurso y haz clic en la página; arrastra para moverlo. Desactivar conserva la composición para volver a mostrarla.` : 'Desactivados. El dibujo se conserva sin adornos.';
+    this.canvas.style.cursor = this.tool === 'pan' || (this.tool === 'decor' && !this.addKind) ? 'grab' : 'crosshair';
   }
 
   async open() {
     this.root.hidden = false; this.resize(); this.fit(); this.sync();
     if (this.sourceCanvas && this.stale && !this.loading && !this.worker && !this.fieldErrors.size) await this.generate();
   }
-  close() { this.root.hidden = true; ++this.loadSeq; this.loading = false; this.drag = null; this.cancelJob(); }
+  close() { this.root.hidden = true; ++this.loadSeq; this.loading = false; this.cancelJob(); }
   cancelJob() {
     ++this.seq; this.worker?.terminate(); this.worker = null;
+    const movingDecoration = !!this.drag?.decoration; this.drag = null;
+    if (movingDecoration) this.refreshDecorations();
     this.pendingEdit = null;
     this.cancelResolve?.({ cancelled: true }); this.cancelResolve = null;
   }
   setOptions(patch) {
     if (this.loading) throw new Error('Espera a que termine de abrirse la imagen.');
     const options = coloringOptions({ ...this.state.options, ...patch });
+    const rebuild = ['decorTheme', 'decorCount'].some(key => options[key] !== this.state.options[key]);
+    const firstDecoration = options.decorate && !this.state.options.decorate && this.state.decorations.items === null;
     this.cancelJob(); this.state.options = options; this.stale = true; this.error = '';
+    this.state.decorations = { seed: firstDecoration ? newSeed() : this.state.decorations.seed, items: rebuild ? null : this.state.decorations.items?.map(p => fitDecoration(p, options)) ?? null };
+    if (options.decorate && ['decorate', 'decorTheme', 'decorCount'].some(key => key in patch)) this.original = false;
+    if (rebuild) { this.selectedDecoration = null; this.addKind = null; }
+    if (!options.decorate) { this.selectedDecoration = null; this.addKind = null; if (this.tool === 'decor') this.tool = 'erase'; }
     this.commit(); this.sync(); this.draw();
   }
   async prepare(dataURL) {
@@ -252,7 +312,8 @@ export class ColoringStudio {
       const canvas = await this.prepare(dataURL);
       if (ticket !== this.loadSeq) return;
       this.sourceCanvas = canvas;
-      this.state = { name: safeName(file.name.replace(/\.[^.]+$/, '')), source: { dataURL: canvas.toDataURL('image/png') }, options: { ...this.state.options }, edits: [] };
+      this.state = { name: safeName(file.name.replace(/\.[^.]+$/, '')), source: { dataURL: canvas.toDataURL('image/png') }, options: { ...this.state.options, decorate: false }, edits: [], decorations: validateDecorations() };
+      this.selectedDecoration = null; this.addKind = null;
       this.base = null; this.mask = null; this.error = ''; this.fieldErrors.clear(); this.original = false;
       this.hist = []; this.hidx = -1; this.loading = false; this.stale = true; this.commit(); this.fit();
       await this.generate();
@@ -284,10 +345,10 @@ export class ColoringStudio {
           else if (data.error) reject(new Error(data.error)); else resolve(data);
         };
         worker.onerror = e => { e.preventDefault(); reject(new Error(e.message || 'Falló la conversión de la imagen.')); };
-        worker.postMessage({ ...payload, options, edits: this.state.edits }, payload.image ? [payload.image.data.buffer] : []);
+        worker.postMessage({ ...payload, options, edits: this.state.edits, decorations: this.state.decorations }, payload.image ? [payload.image.data.buffer] : []);
       });
       if (answer.cancelled || ticket !== this.seq) return false;
-      this.compose(answer); this.stale = false; this.commit();
+      this.compose(answer); this.stale = false; this.commit(true);
       this.status('Lámina lista. Borra lo que no necesites o exporta.');
       return true;
     } catch (error) {
@@ -297,9 +358,10 @@ export class ColoringStudio {
       if (ticket === this.seq) { this.worker?.terminate(); this.worker = null; this.cancelResolve = null; this.pendingEdit = null; this.sync(); this.draw(); }
     }
   }
-  compose({ result, mask, shapes }) {
+  compose({ result, mask, shapes, decorations, warnings }) {
     const artworkPath = shapes ? new Path2D(coloringPathData(shapes)) : null;
     this.base = result; this.mask = mask; this.shapes = shapes; this.artworkPath = artworkPath; this.pixels = 0;
+    this.state.decorations = decorations; this.decorWarnings = warnings; this.refreshDecorations();
     this.bitmap.width = this.base.width; this.bitmap.height = this.base.height;
     const ctx = this.bitmap.getContext('2d'), image = ctx.createImageData(this.base.width, this.base.height);
     for (let i = 0; i < this.mask.length; i++) {
@@ -309,10 +371,11 @@ export class ColoringStudio {
     ctx.putImageData(image, 0, 0);
     this.sync(); this.draw();
   }
-  commit() {
+  commit(replace = false) {
     if (!this.state.source) return;
-    const snapshot = JSON.stringify({ name: this.state.name, options: this.state.options, edits: this.state.edits });
+    const snapshot = JSON.stringify({ name: this.state.name, options: this.state.options, edits: this.state.edits, decorations: this.state.decorations });
     if (this.hist[this.hidx] === snapshot) return;
+    if (replace && this.hidx >= 0) { this.hist[this.hidx] = snapshot; this.sync(); return; }
     this.hist = this.hist.slice(0, this.hidx + 1); this.hist.push(snapshot);
     if (this.hist.length > 50) this.hist.shift();
     this.hidx = this.hist.length - 1; this.sync();
@@ -321,12 +384,58 @@ export class ColoringStudio {
     if (index < 0 || index >= this.hist.length || this.loading) return;
     this.cancelJob(); const old = JSON.stringify(this.state.options), next = JSON.parse(this.hist[index]);
     this.hidx = index; Object.assign(this.state, next); this.fieldErrors.clear(); this.error = ''; this.drag = null;
+    this.addKind = null;
     if (old !== JSON.stringify(next.options) || this.stale) await this.generate();
     else await this.renderJob({ result: this.base });
     this.sync();
   }
   async undo() { await this.restore(this.hidx - 1); }
   async redo() { await this.restore(this.hidx + 1); }
+
+  decorUnit() { const o = this.state.options; return Math.min(o.pageWidth, o.pageHeight) - 2 * o.margin; }
+  selectedItem() { return this.state.decorations.items?.find(p => p.id === this.selectedDecoration); }
+  refreshDecorations(preview = null) {
+    const model = preview ? { ...this.state.decorations, items: this.state.decorations.items.map(p => p.id === preview.id ? preview : p) } : this.state.decorations;
+    this.decorationScene = decorationScene(model, this.state.options);
+    this.decorationPaths = this.decorationScene.map(p => ({ ...p, paths: p.paths.map(q => ({ ...q, path: new Path2D(decorationPathData(q)) })) }));
+    if (!this.selectedItem()) this.selectedDecoration = null;
+  }
+  async surprise() {
+    this.assertReady();
+    this.state.options = coloringOptions({ ...this.state.options, decorate: true });
+    let seed = newSeed(); if (seed === this.state.decorations.seed) seed = (seed + 1) >>> 0;
+    this.state.decorations = { seed, items: null }; this.selectedDecoration = null; this.addKind = null;
+    this.original = false;
+    this.commit(); return this.generate();
+  }
+  chooseDecoration(kind) {
+    this.assertReady();
+    if (!this.state.options.decorate) throw new Error('Activa los adornos antes de agregar un recurso.');
+    this.addKind = kind; this.tool = 'decor'; this.selectedDecoration = null; this.original = false;
+    this.status('Haz clic en la página para colocar: ' + DECORATION_ASSETS[kind].name); this.sync(); this.draw();
+  }
+  addDecoration(kind, point) {
+    const o = this.state.options, items = this.state.decorations.items;
+    const item = fitDecoration({ id: Math.max(0, ...items.map(p => p.id)) + 1, kind, variant: newSeed(),
+      x: (point[0] - o.margin) / (o.pageWidth - 2 * o.margin), y: (point[1] - o.margin) / (o.pageHeight - 2 * o.margin),
+      size: ['bouquet', 'sprig'].includes(kind) ? 0.2 : kind === 'bubble' ? 0.025 : 0.09, angle: 0 }, o);
+    this.state.decorations = validateDecorations({ ...this.state.decorations, items: [...items, item] });
+    this.selectedDecoration = item.id; this.addKind = null; this.refreshDecorations(); this.commit(); this.sync(); return item;
+  }
+  updateDecoration(patch) {
+    this.assertReady(); const selected = this.selectedItem();
+    if (!selected) throw new Error('Selecciona primero un adorno.');
+    const item = fitDecoration({ ...selected, ...patch }, this.state.options);
+    this.state.decorations = validateDecorations({ ...this.state.decorations, items: this.state.decorations.items.map(p => p.id === item.id ? item : p) });
+    this.refreshDecorations(); this.commit(); this.sync(); this.draw();
+  }
+  removeDecoration() {
+    this.assertReady();
+    if (!this.selectedItem()) throw new Error('Selecciona primero un adorno.');
+    this.state.decorations = { ...this.state.decorations, items: this.state.decorations.items.filter(p => p.id !== this.selectedDecoration) };
+    this.selectedDecoration = null; this.refreshDecorations(); this.commit(); this.sync(); this.draw();
+  }
+  pagePoint(e) { const p = this.screen(e); return [(p.x - this.view.x) / this.view.scale, (p.y - this.view.y) / this.view.scale]; }
 
   resize() {
     const rect = this.$('view').getBoundingClientRect();
@@ -368,6 +477,18 @@ export class ColoringStudio {
           ctx.stroke();
         }
       }
+      if (!this.original && o.decorate) {
+        ctx.lineCap = ctx.lineJoin = 'round';
+        for (const item of this.decorationPaths) for (const p of item.paths) {
+          if (p.fill) { ctx.fillStyle = '#ffffff'; ctx.fill(p.path); }
+          ctx.strokeStyle = '#000000'; ctx.lineWidth = p.strokeWidth; ctx.stroke(p.path);
+        }
+        const selected = this.decorationScene.find(p => p.id === this.selectedDecoration);
+        if (selected && this.tool === 'decor') {
+          const b = selected.bounds; ctx.strokeStyle = '#2563eb'; ctx.lineWidth = 1 / v.scale;
+          ctx.strokeRect(b.x0 - 0.8, b.y0 - 0.8, b.x1 - b.x0 + 1.6, b.y1 - b.y0 + 1.6);
+        }
+      }
     }
   }
   screen(e) { const b = this.canvas.getBoundingClientRect(); return { x: e.clientX - b.left, y: e.clientY - b.top }; }
@@ -382,6 +503,20 @@ export class ColoringStudio {
     if (e.button === 2 || this.tool === 'pan') this.drag = { start: this.screen(e), view: { ...this.view } };
     else {
       if (!this.ready() || this.original) { this.cb.toast('Genera la lámina y desactiva «Original» para editar.', true); return; }
+      if (this.tool === 'decor') {
+        try {
+          if (!this.state.options.decorate) throw new Error('Activa los adornos para editarlos.');
+          const p = this.pagePoint(e), o = this.state.options;
+          if (p[0] < o.margin || p[1] < o.margin || p[0] > o.pageWidth - o.margin || p[1] > o.pageHeight - o.margin) return;
+          const hit = this.addKind ? this.addDecoration(this.addKind, p) : [...this.decorationScene].reverse().find(item => {
+            const b = item.bounds; return p[0] >= b.x0 && p[0] <= b.x1 && p[1] >= b.y0 && p[1] <= b.y1;
+          });
+          this.selectedDecoration = hit?.id ?? null;
+          if (hit) { const item = this.selectedItem(); this.drag = { decoration: item, preview: item, start: p }; }
+          this.sync(); this.draw();
+          if (hit) this.canvas.setPointerCapture(e.pointerId); e.preventDefault(); return;
+        } catch (error) { this.report(error); return; }
+      }
       const p = this.imagePoint(e); if (!p) return;
       const l = coloringLayout(this.base.width, this.base.height, this.state.options);
       this.drag = { edit: { kind: this.tool, points: this.tool === 'rect' ? [p, p] : [p], width: this.brushMM / l.scale / Math.max(this.base.width, this.base.height) } };
@@ -392,6 +527,11 @@ export class ColoringStudio {
     if (!this.drag) return;
     if (this.drag.view) {
       const p = this.screen(e); this.view.x = this.drag.view.x + p.x - this.drag.start.x; this.view.y = this.drag.view.y + p.y - this.drag.start.y;
+    } else if (this.drag.decoration) {
+      const p = this.pagePoint(e), o = this.state.options, d = this.drag;
+      d.preview = fitDecoration({ ...d.decoration, x: d.decoration.x + (p[0] - d.start[0]) / (o.pageWidth - 2 * o.margin),
+        y: d.decoration.y + (p[1] - d.start[1]) / (o.pageHeight - 2 * o.margin) }, o);
+      this.refreshDecorations(d.preview);
     } else {
       const p = this.imagePoint(e, true), points = this.drag.edit.points, last = points[points.length - 1];
       if (this.drag.edit.kind === 'rect') points[1] = p;
@@ -401,7 +541,7 @@ export class ColoringStudio {
   }
   async pointerUp(e) {
     if (!this.drag) return;
-    this.pointerMove(e); const edit = this.drag.edit; this.drag = null;
+    this.pointerMove(e); const edit = this.drag.edit, decoration = this.drag.decoration ? this.drag.preview : null; this.drag = null;
     if (this.canvas.hasPointerCapture(e.pointerId)) this.canvas.releasePointerCapture(e.pointerId);
     if (edit) {
       try {
@@ -410,22 +550,30 @@ export class ColoringStudio {
       }
       catch (error) { this.report(error); }
     }
+    if (decoration) {
+      try { this.updateDecoration({ x: decoration.x, y: decoration.y }); }
+      catch (error) { this.refreshDecorations(); this.report(error); }
+    }
     this.draw();
   }
   async saveProject() {
     this.assertReady();
-    const data = JSON.stringify({ app: 'Relieve3D-Coloring', version: 1, state: this.state });
+    const version = this.state.options.decorate || this.state.decorations.items !== null ? 2 : 1;
+    const data = JSON.stringify({ app: 'Relieve3D-Coloring', version, state: this.state });
     const saved = await window.api.saveFile({ defaultPath: this.state.name + '.r3c', filters: [{ name: 'Proyecto para colorear', extensions: ['r3c'] }], data });
     if (saved) this.cb.toast('Proyecto guardado: ' + saved);
   }
   async openProject(j, ticket) {
-    if (j?.app !== 'Relieve3D-Coloring' || j.version !== 1 || !j.state?.source) throw new Error('No es un proyecto válido para colorear.');
+    if (j?.app !== 'Relieve3D-Coloring' || ![1, 2].includes(j.version) || !j.state?.source ||
+      (j.version === 2 && j.state.decorations === undefined)) throw new Error('No es un proyecto válido para colorear.');
     const options = coloringOptions(j.state.options); validateColoringEdits(j.state.edits);
+    const decorations = validateDecorations(j.state.decorations);
     ticket ??= ++this.loadSeq; this.cancelJob(); this.loading = true; this.sync();
     try {
       const canvas = await this.prepare(j.state.source.dataURL);
       if (ticket !== this.loadSeq) return false;
-      this.state = { name: safeName(j.state.name), source: { dataURL: canvas.toDataURL('image/png') }, options, edits: JSON.parse(JSON.stringify(j.state.edits)) };
+      this.state = { name: safeName(j.state.name), source: { dataURL: canvas.toDataURL('image/png') }, options, edits: JSON.parse(JSON.stringify(j.state.edits)), decorations };
+      this.selectedDecoration = null; this.addKind = null;
       this.sourceCanvas = canvas; this.base = null; this.mask = null; this.error = ''; this.fieldErrors.clear();
       this.hist = []; this.hidx = -1; this.loading = false; this.stale = true; this.original = false;
       this.root.hidden = false; this.resize(); this.fit(); this.commit(); await this.generate();
@@ -436,18 +584,18 @@ export class ColoringStudio {
   async export(kind) {
     this.assertReady();
     if (!['png', 'svg', 'pdf'].includes(kind)) throw new Error('Formato de exportación desconocido.');
-    if (!this.pixels) throw new Error('La lámina está vacía. Deshaz el borrado o dibuja antes de exportar.');
-    const { width: W, height: H } = this.base, o = { ...this.state.options }, name = this.state.name, mask = this.mask.slice(), cachedShapes = this.shapes;
+    if (!this.hasArtwork()) throw new Error('La lámina está vacía. Deshaz el borrado o dibuja antes de exportar.');
+    const { width: W, height: H } = this.base, o = { ...this.state.options }, name = this.state.name, mask = this.mask.slice(), cachedShapes = this.shapes, decorations = this.decorationScene;
     this.cb.showBusy('Preparando lámina…');
     try {
       await new Promise(resolve => setTimeout(resolve, 30));
       const shapes = cachedShapes || coloringShapes(mask, W, H, o);
-      if (!shapes.length) throw new Error('No hay contornos exportables.');
+      if (!shapes.length && !(o.decorate && decorations.length)) throw new Error('No hay contornos exportables.');
       let data;
-      if (kind === 'svg') data = coloringSVG(shapes, W, H, o);
-      else if (kind === 'pdf') data = coloringPDF(shapes, W, H, o);
+      if (kind === 'svg') data = coloringSVG(shapes, W, H, o, decorations);
+      else if (kind === 'pdf') data = coloringPDF(shapes, W, H, o, decorations);
       else {
-        const image = new Image(); image.src = 'data:image/svg+xml;charset=utf-8,' + encodeURIComponent(coloringSVG(shapes, W, H, o)); await imageReady(image);
+        const image = new Image(); image.src = 'data:image/svg+xml;charset=utf-8,' + encodeURIComponent(coloringSVG(shapes, W, H, o, decorations)); await imageReady(image);
         const canvas = document.createElement('canvas'); canvas.width = Math.round(o.pageWidth * o.dpi / 25.4); canvas.height = Math.round(o.pageHeight * o.dpi / 25.4);
         const ctx = canvas.getContext('2d', { willReadFrequently: true }); ctx.drawImage(image, 0, 0, canvas.width, canvas.height);
         const pixels = ctx.getImageData(0, 0, canvas.width, canvas.height);

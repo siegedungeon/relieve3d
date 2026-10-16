@@ -1,12 +1,14 @@
 import { processImage, modeFilter, computeForeground, smoothLoop, signedArea } from './processing.js';
 import { components, edt, dilate, fillCapsule, traceMask, countOn } from './raster.js';
 import { fitClosed, cubicsToPath } from './curvefit.js';
+import { DECORATION_THEMES, decorationSVG, decorationPDF } from './coloring_decorations.js';
 
 export const COLORING_DEFAULTS = Object.freeze({
   colors: 10, minDetail: 0.25, minArea: 0.4, contrast: 16, smooth: 1,
   lineWidth: 0.6, keepInk: true, cleanBackground: true, backgroundTolerance: 50,
   mode: 'regions', shadowTolerance: 70, curveSmooth: 0,
   pageWidth: 210, pageHeight: 297, margin: 10, dpi: 300,
+  decorate: false, decorTheme: 'nature', decorCount: 14,
 });
 
 export function coloringOptions(input = {}) {
@@ -20,12 +22,14 @@ export function coloringOptions(input = {}) {
     backgroundTolerance: [0, 120, 'Tolerancia de fondo'],
     shadowTolerance: [0, 120, 'Sombras'],
     curveSmooth: [0, 1.2, 'Pulido de curvas'],
+    decorCount: [4, 24, 'Densidad de adornos'],
   };
   for (const [key, [min, max, label]] of Object.entries(limits)) {
     if (!Number.isFinite(o[key]) || o[key] < min || o[key] > max) throw new Error(`${label}: usa un valor entre ${min} y ${max}.`);
   }
   if (![o.colors, o.smooth, o.dpi].every(Number.isInteger)) throw new Error('Colores, suavizado y resolución deben ser enteros.');
   if (!['regions', 'illustration'].includes(o.mode)) throw new Error('Modo de conversión inválido.');
+  if (typeof o.decorate !== 'boolean' || !Object.hasOwn(DECORATION_THEMES, o.decorTheme) || !Number.isInteger(o.decorCount)) throw new Error('Opciones de adornos inválidas.');
   if (typeof o.keepInk !== 'boolean' || typeof o.cleanBackground !== 'boolean') throw new Error('Las opciones de trazos y fondo deben ser sí/no.');
   if (o.margin * 2 + 10 > Math.min(o.pageWidth, o.pageHeight)) throw new Error('El margen deja menos de 10 mm para el dibujo.');
   if (Math.ceil(o.pageWidth * o.dpi / 25.4) * Math.ceil(o.pageHeight * o.dpi / 25.4) > 36000000) {
@@ -36,7 +40,7 @@ export function coloringOptions(input = {}) {
 
 export function coloringLayout(W, H, input) {
   const o = coloringOptions(input);
-  const scale = Math.min((o.pageWidth - 2 * o.margin) / W, (o.pageHeight - 2 * o.margin) / H);
+  const scale = Math.min((o.pageWidth - 2 * o.margin) * (o.decorate ? 0.74 : 1) / W, (o.pageHeight - 2 * o.margin) * (o.decorate ? 0.82 : 1) / H);
   return { scale, x: (o.pageWidth - W * scale) / 2, y: (o.pageHeight - H * scale) / 2, width: W * scale, height: H * scale };
 }
 
@@ -120,7 +124,8 @@ export function createColoring(img, input = {}, progress = () => {}) {
   if (!Number.isInteger(W) || !Number.isInteger(H) || W < 2 || H < 2 || W * H > 4000000 || img.data?.length !== W * H * 4) {
     throw new Error('La imagen debe tener al menos 2 × 2 píxeles y no superar 4 megapíxeles de trabajo.');
   }
-  const layout = coloringLayout(W, H, o), ppm = 1 / layout.scale;
+  // Decorations change the page composition, not which source details are retained.
+  const layout = coloringLayout(W, H, o), ppm = 1 / coloringLayout(W, H, { ...o, decorate: false }).scale;
   const rgba = new Uint8ClampedArray(img.data.length);
   for (let i = 0; i < W * H; i++) {
     const a = img.data[i * 4 + 3] / 255;
@@ -187,7 +192,7 @@ export function createColoring(img, input = {}, progress = () => {}) {
     const i = y * W + x;
     if ((x + 1 < W && different(i, i + 1)) || (y + 1 < H && different(i, i + W))) edge[i] = 1;
   }
-  const mask = dilate(edge, W, H, Math.max(0, linePx / 2));
+  const mask = dilate(edge, W, H, Math.max(0, o.lineWidth / layout.scale / 2));
   const pixels = countOn(mask);
   if (!pixels) throw new Error('No se encontraron contornos. Reduce la limpieza o usa una imagen con formas y colores diferentes.');
   return { width: W, height: H, mask, colors: r.palette.length, pixels };
@@ -265,15 +270,15 @@ export function coloringPathData(shapes, transform = p => p) {
     : [s.outer, ...s.holes].map(loop => 'M' + loop.map(p => transform(p).map(fmt).join(' ')).join(' L') + ' Z')).join(' ');
 }
 
-export function coloringSVG(shapes, W, H, input) {
+export function coloringSVG(shapes, W, H, input, decorations = []) {
   const o = coloringOptions(input), l = coloringLayout(W, H, o);
   // Trace grouping can attach an island's holes to a containing outline; fill all loops together.
   const d = coloringPathData(shapes, ([x, y]) => [l.x + x * l.scale, l.y + y * l.scale]);
-  return `<?xml version="1.0" encoding="UTF-8"?>\n<svg xmlns="http://www.w3.org/2000/svg" width="${fmt(o.pageWidth)}mm" height="${fmt(o.pageHeight)}mm" viewBox="0 0 ${fmt(o.pageWidth)} ${fmt(o.pageHeight)}"><rect width="100%" height="100%" fill="#FFFFFF"/>\n<path d="${d}" fill="#000000" fill-rule="evenodd"/>\n</svg>`;
+  return `<?xml version="1.0" encoding="UTF-8"?>\n<svg xmlns="http://www.w3.org/2000/svg" width="${fmt(o.pageWidth)}mm" height="${fmt(o.pageHeight)}mm" viewBox="0 0 ${fmt(o.pageWidth)} ${fmt(o.pageHeight)}"><rect width="100%" height="100%" fill="#FFFFFF"/>\n<path d="${d}" fill="#000000" fill-rule="evenodd"/>\n${o.decorate ? decorationSVG(decorations) : ''}</svg>`;
 }
 
 // A vector-only PDF needs no fonts, image encoder or external service.
-export function coloringPDF(shapes, W, H, input) {
+export function coloringPDF(shapes, W, H, input, decorations = []) {
   const o = coloringOptions(input), l = coloringLayout(W, H, o), pt = 72 / 25.4;
   const pw = o.pageWidth * pt, ph = o.pageHeight * pt;
   const content = [`1 g 0 0 ${fmt(pw)} ${fmt(ph)} re f\n0 g\n`];
@@ -293,6 +298,7 @@ export function coloringPDF(shapes, W, H, input) {
     }
   }
   content.push('f*\n');
+  if (o.decorate && decorations.length) content.push(decorationPDF(decorations, o.pageHeight));
   const stream = content.join('');
   const objects = [
     '<< /Type /Catalog /Pages 2 0 R >>',
