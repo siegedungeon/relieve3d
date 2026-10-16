@@ -54,6 +54,14 @@ module.exports = async ({ win, run, shot, wait }) => {
   await run(`document.querySelector('#coloring [data-a="original"]').click()`);
   await capture('coloring_02_contours');
   ok(await run(`window.__r3d.coloring.mask.every(v=>v===0||v===1)`), 'working artwork is pure black/white');
+  ok(await run(`window.__r3d.coloring.state.options.mode==='illustration'&&window.__r3d.coloring.state.options.colors===16&&!document.querySelector('#coloring [data-opt="shadowTolerance"]').disabled`), 'new images start in illustration mode with adjustable shadow cleanup');
+  await run('window.__coloringIllustration=window.__r3d.coloring.mask.slice()');
+  await set('mode', 'regions');
+  ok(await run(`window.__r3d.coloring.stale&&document.querySelector('#coloring [data-opt="shadowTolerance"]').disabled`), 'legacy color-region mode disables the illustration-only control');
+  ok(await run('window.__r3d.coloring.generate()'), 'legacy color-region mode still generates artwork');
+  await set('mode', 'illustration');
+  ok(await run('window.__r3d.coloring.generate()'), 'illustration mode can be selected from its actual control');
+  ok(await sameMask('window.__coloringIllustration'), 'switching modes and back reproduces the same contours exactly');
   ok(await run(`(async()=>{
     const c=window.__r3d.coloring;
     const old=JSON.stringify({app:'Relieve3D-Coloring',version:1,state:{...c.state,name:'Proyecto anterior'}});
@@ -118,6 +126,15 @@ module.exports = async ({ win, run, shot, wait }) => {
   await run(`window.__r3d.openProjectFile(new File([${JSON.stringify(project)}],'Bosque.v1.r3c'))`);
   ok(await run(`!document.getElementById('coloring').hidden&&window.__r3d.coloring.state.name==='Bosque.v1'`), 'global project opening restores the module and filename');
   ok(await sameMask('window.__coloringSaved'), 'save/reopen reproduces the exact edited contours');
+  ok(await run(`window.__r3d.coloring.state.options.mode==='illustration'&&window.__r3d.coloring.state.options.shadowTolerance===70`), 'project preserves illustration mode and shadow tolerance');
+  ok(await run(`(async()=>{
+    const c=window.__r3d.coloring,old=JSON.parse(${JSON.stringify(project)});
+    delete old.state.options.mode;delete old.state.options.shadowTolerance;
+    await c.openProject(old);
+    return c.ready()&&c.state.options.mode==='regions'&&document.querySelector('#coloring [data-opt="shadowTolerance"]').disabled&&c.state.edits.length===3;
+  })()`), 'older projects reopen in legacy mode without discarding manual edits');
+  await run(`window.__r3d.openProjectFile(new File([${JSON.stringify(project)}],'Bosque.v1.r3c'))`);
+  ok(await sameMask('window.__coloringSaved'), 'returning to the illustration project restores its precise edited result');
   ok(await run(`(async()=>{
     const c=window.__r3d.coloring;
     try{await c.openProject({app:'Relieve3D-Coloring',version:99,state:{}});return false;}

@@ -11,12 +11,13 @@ const fields = [
   ['minArea', 'Quitar motas (mm²)', 'Fusiona elementos pequeños con su alrededor. 0 conserva las motas.'],
   ['smooth', 'Suavizado (0–4)', 'Pasadas adicionales para limpiar bordes irregulares.'],
   ['lineWidth', 'Grosor negro (mm)', 'Grosor de los contornos en la página final.'],
+  ['shadowTolerance', 'Quitar sombras (0–120)', 'En modo ilustración une tonos del mismo color sin convertir cada sombra en un contorno. 0 conserva las sombras.'],
 ];
 
 export class ColoringStudio {
   constructor(root, cb) {
     this.root = root; this.cb = cb;
-    this.state = { name: 'lamina-colorear', source: null, options: { ...COLORING_DEFAULTS }, edits: [] };
+    this.state = { name: 'lamina-colorear', source: null, options: { ...COLORING_DEFAULTS, mode: 'illustration', colors: 16 }, edits: [] };
     this.hist = []; this.hidx = -1; this.seq = 0; this.loadSeq = 0;
     this.fieldErrors = new Map(); this.stale = true; this.loading = false;
     this.tool = 'erase'; this.brushMM = 3; this.original = false;
@@ -44,8 +45,9 @@ export class ColoringStudio {
         <aside class="panel left">
           <section class="card">
             <h3>Convertir a contornos</h3>
+            <label class="row">Conversión <select data-opt="mode"><option value="illustration">Ilustración sin sombras</option><option value="regions">Zonas de color</option></select></label>
             ${fields.map(row).join('')}
-            <label class="row" title="Conserva líneas oscuras estrechas como un solo trazo, no como dos bordes paralelos. Las áreas oscuras grandes se vacían.">Conservar trazos originales <input type="checkbox" data-opt="keepInk" /></label>
+            <label class="row" title="Conserva líneas oscuras estrechas y, en modo ilustración, marcos de color como un solo trazo. Las áreas oscuras grandes se vacían.">Conservar trazos originales <input type="checkbox" data-opt="keepInk" /></label>
             <label class="row" title="Blanquea fondos claros conectados al borde, incluidos dameros grises incrustados. No quita fondos oscuros o de color intenso.">Limpiar fondo claro <input type="checkbox" data-opt="cleanBackground" /></label>
             ${row(['backgroundTolerance', 'Tolerancia de fondo', 'Diferencia RGB admitida al limpiar el fondo claro. Baja el valor si se pierden zonas pálidas del dibujo.'])}
             <button class="btn primary wide" data-a="generate">Generar / actualizar</button>
@@ -134,7 +136,7 @@ export class ColoringStudio {
       const el = e.target, key = el.dataset.opt;
       try {
         if (key) {
-          const value = el.type === 'checkbox' ? el.checked : Number(el.value.trim().replace(',', '.'));
+          const value = key === 'mode' ? el.value : el.type === 'checkbox' ? el.checked : Number(el.value.trim().replace(',', '.'));
           if (el.type !== 'checkbox' && !el.value.trim()) throw new Error('Escribe un valor numérico.');
           this.setOptions({ [key]: value }); this.fieldErrors.delete(key); el.removeAttribute('aria-invalid'); this.sync();
         } else if (el === this.$('paper') && el.value !== 'custom') {
@@ -187,6 +189,7 @@ export class ColoringStudio {
       if (this.fieldErrors.has(key)) continue;
       el.removeAttribute('aria-invalid');
       if (el.type === 'checkbox') el.checked = this.state.options[key]; else el.value = this.state.options[key];
+      if (key === 'shadowTolerance') el.disabled = this.state.options.mode !== 'illustration';
     }
     const o = this.state.options;
     this.$('paper').value = o.pageWidth === 210 && o.pageHeight === 297 ? 'a4' : o.pageWidth === 215.9 && o.pageHeight === 279.4 ? 'letter' : 'custom';

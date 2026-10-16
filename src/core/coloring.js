@@ -4,6 +4,7 @@ import { components, edt, dilate, fillCapsule, traceMask, countOn } from './rast
 export const COLORING_DEFAULTS = Object.freeze({
   colors: 10, minDetail: 0.25, minArea: 0.4, contrast: 16, smooth: 1,
   lineWidth: 0.6, keepInk: true, cleanBackground: true, backgroundTolerance: 50,
+  mode: 'regions', shadowTolerance: 70,
   pageWidth: 210, pageHeight: 297, margin: 10, dpi: 300,
 });
 
@@ -16,11 +17,13 @@ export function coloringOptions(input = {}) {
     pageWidth: [50, 500, 'Ancho de página'], pageHeight: [50, 500, 'Alto de página'],
     margin: [0, 80, 'Margen'], dpi: [72, 300, 'Resolución'],
     backgroundTolerance: [0, 120, 'Tolerancia de fondo'],
+    shadowTolerance: [0, 120, 'Sombras'],
   };
   for (const [key, [min, max, label]] of Object.entries(limits)) {
     if (!Number.isFinite(o[key]) || o[key] < min || o[key] > max) throw new Error(`${label}: usa un valor entre ${min} y ${max}.`);
   }
   if (![o.colors, o.smooth, o.dpi].every(Number.isInteger)) throw new Error('Colores, suavizado y resolución deben ser enteros.');
+  if (!['regions', 'illustration'].includes(o.mode)) throw new Error('Modo de conversión inválido.');
   if (typeof o.keepInk !== 'boolean' || typeof o.cleanBackground !== 'boolean') throw new Error('Las opciones de trazos y fondo deben ser sí/no.');
   if (o.margin * 2 + 10 > Math.min(o.pageWidth, o.pageHeight)) throw new Error('El margen deja menos de 10 mm para el dibujo.');
   if (Math.ceil(o.pageWidth * o.dpi / 25.4) * Math.ceil(o.pageHeight * o.dpi / 25.4) > 36000000) {
@@ -65,8 +68,53 @@ function thinInk(mask, W, H) {
   return out;
 }
 
+function sameShade(a, b, tolerance) {
+  if (!tolerance || Math.max(Math.abs(a.r - b.r), Math.abs(a.g - b.g), Math.abs(a.b - b.b)) > tolerance) return false;
+  if (Math.min(a.r, a.g, a.b, b.r, b.g, b.b) >= 180 &&
+    Math.max(a.r, a.g, a.b) - Math.min(a.r, a.g, a.b) <= 45 &&
+    Math.max(b.r, b.g, b.b) - Math.min(b.r, b.g, b.b) <= 45) return true;
+  const hue = c => {
+    const max = Math.max(c.r, c.g, c.b), min = Math.min(c.r, c.g, c.b), d = max - min;
+    if (d <= 25) return null;
+    return ((max === c.r ? (c.g - c.b) / d : max === c.g ? (c.b - c.r) / d + 2 : (c.r - c.g) / d + 4) * 60 + 360) % 360;
+  };
+  const ha = hue(a), hb = hue(b);
+  if (ha === null || hb === null) return ha === hb && Math.min(a.r, a.g, a.b, b.r, b.g, b.b) >= 128;
+  return Math.min(Math.abs(ha - hb), 360 - Math.abs(ha - hb)) <= 12;
+}
+
+function coloredStrokes(result, W, H, radius) {
+  const { comp, pieces, palette } = result, n = pieces.length;
+  const boundary = new Uint8Array(W * H), total = new Uint32Array(n), lighter = new Uint32Array(n), neighbors = new Uint32Array(n);
+  const light = palette.map(c => c.r * 0.2126 + c.g * 0.7152 + c.b * 0.0722);
+  const pair = (i, j) => {
+    const a = comp[i], b = comp[j];
+    if (a === b || a < 0 || b < 0) return;
+    boundary[i] = boundary[j] = 1; total[a]++; total[b]++;
+    const ca = pieces[a].cluster, cb = pieces[b].cluster;
+    if (light[cb] - light[ca] > 4) { lighter[a]++; neighbors[a] |= 1 << cb; }
+    if (light[ca] - light[cb] > 4) { lighter[b]++; neighbors[b] |= 1 << ca; }
+  };
+  for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) {
+    const i = y * W + x;
+    if (x + 1 < W) pair(i, i + 1);
+    if (y + 1 < H) pair(i, i + W);
+  }
+  const distance = edt(boundary, W, H), thick = new Uint32Array(n);
+  for (let i = 0; i < comp.length; i++) if (comp[i] >= 0 && distance[i] > radius) thick[comp[i]]++;
+  // A colored stroke is a narrow band darker than different regions on both sides, not a small filled detail.
+  const bands = pieces.map((p, id) => {
+    const c = palette[p.cluster], hues = neighbors[id];
+    if (Math.max(c.r, c.g, c.b) < 85 && Math.max(c.r, c.g, c.b) - Math.min(c.r, c.g, c.b) < 35) return false;
+    return thick[id] <= p.area * 0.05 && lighter[id] > total[id] * 0.72 && !!(hues & (hues - 1)) &&
+      (Math.max(c.r, c.g, c.b) - Math.min(c.r, c.g, c.b) > 25 || light[p.cluster] < 180);
+  });
+  return Uint8Array.from(comp, id => id >= 0 && bands[id] ? 1 : 0);
+}
+
 export function createColoring(img, input = {}, progress = () => {}) {
   const o = coloringOptions(input), { width: W, height: H } = img;
+  const illustration = o.mode === 'illustration';
   if (!Number.isInteger(W) || !Number.isInteger(H) || W < 2 || H < 2 || W * H > 4000000 || img.data?.length !== W * H * 4) {
     throw new Error('La imagen debe tener al menos 2 × 2 píxeles y no superar 4 megapíxeles de trabajo.');
   }
@@ -79,9 +127,16 @@ export function createColoring(img, input = {}, progress = () => {}) {
   }
   if (o.cleanBackground && [0, W - 1, W * (H - 1), W * H - 1].every(i => {
     const rgb = rgba.subarray(i * 4, i * 4 + 3);
-    return Math.min(...rgb) >= 185 && Math.max(...rgb) - Math.min(...rgb) <= 50;
+    return Math.min(...rgb) >= 185 && Math.max(...rgb) - Math.min(...rgb) <= (illustration ? 25 : 50);
   })) {
-    const foreground = computeForeground({ data: rgba, width: W, height: H }, { removeBg: 'yes', tolerance: o.backgroundTolerance });
+    const background = illustration ? rgba.slice() : rgba;
+    if (illustration) for (let i = 0; i < W * H; i++) {
+      const [r, g, b] = rgba.subarray(i * 4, i * 4 + 3);
+      // Flood neutral shadows without leaking through a pale colored outline into the drawing.
+      if (Math.max(r, g, b) - Math.min(r, g, b) > 25) background[i * 4] = background[i * 4 + 1] = background[i * 4 + 2] = 0;
+    }
+    const tolerance = illustration ? Math.max(o.backgroundTolerance, o.shadowTolerance * Math.sqrt(3)) : o.backgroundTolerance;
+    const foreground = computeForeground({ data: background, width: W, height: H }, { removeBg: 'yes', tolerance });
     for (let i = 0; i < foreground.length; i++) if (!foreground[i]) rgba[i * 4] = rgba[i * 4 + 1] = rgba[i * 4 + 2] = 255;
   }
   progress('Simplificando las zonas de color…');
@@ -95,24 +150,37 @@ export function createColoring(img, input = {}, progress = () => {}) {
   const root = i => { while (roots[i] !== i) i = roots[i]; return i; };
   for (let a = 0; a < roots.length; a++) for (let b = 0; b < a; b++) {
     const ca = r.palette[a], cb = r.palette[b];
-    if (Math.hypot(ca.r - cb.r, ca.g - cb.g, ca.b - cb.b) <= o.contrast) roots[root(a)] = root(b);
+    if (Math.hypot(ca.r - cb.r, ca.g - cb.g, ca.b - cb.b) <= o.contrast || (illustration && sameShade(ca, cb, o.shadowTolerance))) {
+      // Assign each fringe once; never use it to join two already established colors.
+      roots[root(a)] = root(b);
+      if (illustration) break;
+    }
   }
   const ink = new Uint8Array(W * H), linePx = o.lineWidth * ppm;
+  const protectedRegions = new Uint8Array(r.pieces.length);
   if (o.keepInk) {
     const dark = r.palette.map(c => Math.max(c.r, c.g, c.b) < 85 && Math.max(c.r, c.g, c.b) - Math.min(c.r, c.g, c.b) < 35);
     const mask = Uint8Array.from(labels, c => c >= 0 && dark[c] ? 1 : 0);
     if (mask.includes(1)) {
       const { labels: ids, comps } = components(mask, W, H);
       const distance = edt(Uint8Array.from(mask, v => 1 - v), W, H), thick = new Uint32Array(comps.length);
-      for (let i = 0; i < mask.length; i++) if (ids[i] >= 0 && distance[i] > Math.max(3, linePx * 2)) thick[ids[i]]++;
+      for (let i = 0; i < mask.length; i++) if (ids[i] >= 0 && distance[i] > Math.max(3, linePx * (illustration ? 3 : 2))) thick[ids[i]]++;
       // A few wider intersections must not turn an otherwise thin ink network into double contours.
-      const narrow = comps.map((c, i) => thick[i] <= c.area * 0.05);
+      const narrow = comps.map((c, i) => thick[i] <= c.area * 0.05 && (!illustration || c.area >= o.minArea * ppm * ppm));
       for (let i = 0; i < mask.length; i++) ink[i] = ids[i] >= 0 && narrow[ids[i]] ? 1 : 0;
+    }
+    if (illustration) {
+      const bands = coloredStrokes(r, W, H, Math.max(3, linePx * 3));
+      for (let i = 0; i < ink.length; i++) if (bands[i]) ink[i] = 1;
+      const overlap = new Uint32Array(r.pieces.length);
+      for (let i = 0; i < ink.length; i++) if (ink[i] && r.comp[i] >= 0) overlap[r.comp[i]]++;
+      for (const piece of r.pieces) if (dark[piece.cluster] && overlap[piece.id] >= piece.area * 0.25) protectedRegions[piece.id] = 1;
     }
   }
   progress('Dibujando contornos negros…');
   const edge = ink.includes(1) ? thinInk(ink, W, H) : ink.slice();
-  const different = (i, j) => !ink[i] && !ink[j] && labels[i] >= 0 && labels[j] >= 0 && root(labels[i]) !== root(labels[j]);
+  const protectedInk = illustration ? dilate(Uint8Array.from(ink, (v, i) => v || protectedRegions[r.comp[i]] ? 1 : 0), W, H, Math.max(1, ppm * 0.18)) : ink;
+  const different = (i, j) => !protectedInk[i] && !protectedInk[j] && labels[i] >= 0 && labels[j] >= 0 && root(labels[i]) !== root(labels[j]);
   for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) {
     const i = y * W + x;
     if ((x + 1 < W && different(i, i + 1)) || (y + 1 < H && different(i, i + W))) edge[i] = 1;
