@@ -1,5 +1,5 @@
-import { COLORING_DEFAULTS, coloringOptions, coloringLayout, applyColoringEdits, validateColoringEdits,
-  coloringShapes, coloringSVG, coloringPDF, coloringPngDPI } from './core/coloring.js';
+import { COLORING_DEFAULTS, coloringOptions, coloringLayout, validateColoringEdits,
+  coloringShapes, coloringPathData, coloringSVG, coloringPDF, coloringPngDPI } from './core/coloring.js';
 import { imageReady } from './core/imageload.js';
 
 const fmt = n => String(Math.round(n * 100) / 100);
@@ -9,15 +9,16 @@ const fields = [
   ['contrast', 'Contraste mínimo', 'Une colores parecidos. Sube este valor para quitar fronteras entre sombras suaves.'],
   ['minDetail', 'Quitar detalles finos (mm)', 'Elimina zonas de color más estrechas que esto antes de dibujar sus bordes. 0 conserva los detalles.'],
   ['minArea', 'Quitar motas (mm²)', 'Fusiona elementos pequeños con su alrededor. 0 conserva las motas.'],
-  ['smooth', 'Suavizado (0–4)', 'Pasadas adicionales para limpiar bordes irregulares.'],
+  ['smooth', 'Suavizado de zonas (0–4)', 'Limpia las zonas de color antes de dibujar. Para mejorar el acabado de la línea usa Pulir curvas.'],
   ['lineWidth', 'Grosor negro (mm)', 'Grosor de los contornos en la página final.'],
   ['shadowTolerance', 'Quitar sombras (0–120)', 'En modo ilustración une tonos del mismo color sin convertir cada sombra en un contorno. 0 conserva las sombras.'],
+  ['curveSmooth', 'Pulir curvas (mm)', 'Suaviza los escalones y ajusta curvas Bézier en la vista y los archivos. 0 conserva el acabado anterior; hasta 1.2 mm.'],
 ];
 
 export class ColoringStudio {
   constructor(root, cb) {
     this.root = root; this.cb = cb;
-    this.state = { name: 'lamina-colorear', source: null, options: { ...COLORING_DEFAULTS, mode: 'illustration', colors: 16 }, edits: [] };
+    this.state = { name: 'lamina-colorear', source: null, options: { ...COLORING_DEFAULTS, mode: 'illustration', colors: 16, curveSmooth: 0.6 }, edits: [] };
     this.hist = []; this.hidx = -1; this.seq = 0; this.loadSeq = 0;
     this.fieldErrors = new Map(); this.stale = true; this.loading = false;
     this.tool = 'erase'; this.brushMM = 3; this.original = false;
@@ -124,7 +125,7 @@ export class ColoringStudio {
         else if (action === 'original') { this.original = !this.original; this.sync(); this.draw(); }
         else if (action === 'rotate') this.setOptions({ pageWidth: this.state.options.pageHeight, pageHeight: this.state.options.pageWidth });
         else if (action === 'reset' && this.state.edits.length) {
-          this.assertReady(); this.state.edits = []; this.compose(); this.commit();
+          this.assertReady(); this.state.edits = []; this.commit(); await this.renderJob({ result: this.base });
         } else if (action === 'example') {
           const response = await fetch('./examples/coloring-scene.svg');
           if (!response.ok) throw new Error('No se pudo cargar el ejemplo.');
@@ -213,6 +214,7 @@ export class ColoringStudio {
   close() { this.root.hidden = true; ++this.loadSeq; this.loading = false; this.drag = null; this.cancelJob(); }
   cancelJob() {
     ++this.seq; this.worker?.terminate(); this.worker = null;
+    this.pendingEdit = null;
     this.cancelResolve?.({ cancelled: true }); this.cancelResolve = null;
   }
   setOptions(patch) {
@@ -261,14 +263,18 @@ export class ColoringStudio {
   }
   async generate() {
     if (!this.sourceCanvas) { this.cb.toast('Abre una imagen primero.', true); return false; }
+    const image = this.sourceCanvas.getContext('2d').getImageData(0, 0, this.sourceCanvas.width, this.sourceCanvas.height);
+    return this.renderJob({ image });
+  }
+  async renderJob(payload, previewEdit = null) {
     this.cancelJob();
+    this.pendingEdit = previewEdit;
     const ticket = this.seq;
     this.stale = true; this.error = ''; this.sync();
     try {
       if (this.fieldErrors.size) throw new Error('Corrige los parámetros marcados.');
       const options = coloringOptions(this.state.options);
-      const image = this.sourceCanvas.getContext('2d').getImageData(0, 0, this.sourceCanvas.width, this.sourceCanvas.height);
-      this.status('Preparando la conversión…');
+      this.status(payload.image ? 'Preparando la conversión…' : 'Actualizando las líneas…');
       const answer = await new Promise((resolve, reject) => {
         const worker = new Worker(new URL('./coloring_worker.js', import.meta.url), { type: 'module' });
         this.worker = worker; this.cancelResolve = resolve;
@@ -278,29 +284,30 @@ export class ColoringStudio {
           else if (data.error) reject(new Error(data.error)); else resolve(data);
         };
         worker.onerror = e => { e.preventDefault(); reject(new Error(e.message || 'Falló la conversión de la imagen.')); };
-        worker.postMessage({ image, options }, [image.data.buffer]);
+        worker.postMessage({ ...payload, options, edits: this.state.edits }, payload.image ? [payload.image.data.buffer] : []);
       });
       if (answer.cancelled || ticket !== this.seq) return false;
-      this.base = answer.result; this.stale = false; this.compose(); this.commit();
+      this.compose(answer); this.stale = false; this.commit();
       this.status('Lámina lista. Borra lo que no necesites o exporta.');
       return true;
     } catch (error) {
       if (ticket === this.seq) { this.error = error.message; this.status('No se pudo generar la lámina.'); this.report(error); }
       return false;
     } finally {
-      if (ticket === this.seq) { this.worker?.terminate(); this.worker = null; this.cancelResolve = null; this.sync(); this.draw(); }
+      if (ticket === this.seq) { this.worker?.terminate(); this.worker = null; this.cancelResolve = null; this.pendingEdit = null; this.sync(); this.draw(); }
     }
   }
-  compose() {
-    if (!this.base) return;
-    this.mask = applyColoringEdits(this.base, this.state.edits); this.pixels = 0;
+  compose({ result, mask, shapes }) {
+    const artworkPath = shapes ? new Path2D(coloringPathData(shapes)) : null;
+    this.base = result; this.mask = mask; this.shapes = shapes; this.artworkPath = artworkPath; this.pixels = 0;
     this.bitmap.width = this.base.width; this.bitmap.height = this.base.height;
     const ctx = this.bitmap.getContext('2d'), image = ctx.createImageData(this.base.width, this.base.height);
     for (let i = 0; i < this.mask.length; i++) {
       const v = this.mask[i] ? 0 : 255; this.pixels += this.mask[i];
       image.data[i * 4] = image.data[i * 4 + 1] = image.data[i * 4 + 2] = v; image.data[i * 4 + 3] = 255;
     }
-    ctx.putImageData(image, 0, 0); this.sync(); this.draw();
+    ctx.putImageData(image, 0, 0);
+    this.sync(); this.draw();
   }
   commit() {
     if (!this.state.source) return;
@@ -315,7 +322,7 @@ export class ColoringStudio {
     this.cancelJob(); const old = JSON.stringify(this.state.options), next = JSON.parse(this.hist[index]);
     this.hidx = index; Object.assign(this.state, next); this.fieldErrors.clear(); this.error = ''; this.drag = null;
     if (old !== JSON.stringify(next.options) || this.stale) await this.generate();
-    else this.compose();
+    else await this.renderJob({ result: this.base });
     this.sync();
   }
   async undo() { await this.restore(this.hidx - 1); }
@@ -342,10 +349,13 @@ export class ColoringStudio {
     if (this.sourceCanvas) {
       const l = coloringLayout(this.sourceCanvas.width, this.sourceCanvas.height, o);
       ctx.imageSmoothingEnabled = v.scale * l.scale < 2;
-      const source = this.original || !this.mask ? this.sourceCanvas : this.bitmap;
-      ctx.drawImage(source, l.x, l.y, l.width, l.height);
-      if (this.drag?.edit) {
-        const edit = this.drag.edit, points = edit.points.map(([x, y]) => [l.x + x * l.width, l.y + y * l.height]);
+      if (!this.original && this.mask && this.artworkPath) {
+        ctx.save(); ctx.translate(l.x, l.y); ctx.scale(l.scale, l.scale);
+        ctx.fillStyle = '#000000'; ctx.fill(this.artworkPath, 'evenodd'); ctx.restore();
+      } else ctx.drawImage(this.original || !this.mask ? this.sourceCanvas : this.bitmap, l.x, l.y, l.width, l.height);
+      const edit = this.drag?.edit || this.pendingEdit;
+      if (edit) {
+        const points = edit.points.map(([x, y]) => [l.x + x * l.width, l.y + y * l.height]);
         ctx.lineJoin = ctx.lineCap = 'round';
         if (edit.kind === 'rect') {
           ctx.strokeStyle = '#2563eb'; ctx.lineWidth = 1 / v.scale;
@@ -389,12 +399,15 @@ export class ColoringStudio {
     }
     this.draw();
   }
-  pointerUp(e) {
+  async pointerUp(e) {
     if (!this.drag) return;
     this.pointerMove(e); const edit = this.drag.edit; this.drag = null;
     if (this.canvas.hasPointerCapture(e.pointerId)) this.canvas.releasePointerCapture(e.pointerId);
     if (edit) {
-      try { validateColoringEdits([...this.state.edits, edit]); this.state.edits.push(edit); this.compose(); this.commit(); }
+      try {
+        validateColoringEdits([...this.state.edits, edit]); this.state.edits.push(edit); this.commit();
+        await this.renderJob({ result: this.base }, edit);
+      }
       catch (error) { this.report(error); }
     }
     this.draw();
@@ -424,11 +437,11 @@ export class ColoringStudio {
     this.assertReady();
     if (!['png', 'svg', 'pdf'].includes(kind)) throw new Error('Formato de exportación desconocido.');
     if (!this.pixels) throw new Error('La lámina está vacía. Deshaz el borrado o dibuja antes de exportar.');
-    const { width: W, height: H } = this.base, o = { ...this.state.options }, name = this.state.name, mask = this.mask.slice();
+    const { width: W, height: H } = this.base, o = { ...this.state.options }, name = this.state.name, mask = this.mask.slice(), cachedShapes = this.shapes;
     this.cb.showBusy('Preparando lámina…');
     try {
       await new Promise(resolve => setTimeout(resolve, 30));
-      const shapes = coloringShapes(mask, W, H);
+      const shapes = cachedShapes || coloringShapes(mask, W, H, o);
       if (!shapes.length) throw new Error('No hay contornos exportables.');
       let data;
       if (kind === 'svg') data = coloringSVG(shapes, W, H, o);

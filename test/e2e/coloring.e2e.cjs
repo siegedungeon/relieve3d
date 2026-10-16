@@ -15,12 +15,20 @@ module.exports = async ({ win, run, shot, wait }) => {
     e.value=${JSON.stringify(String(value))};e.dispatchEvent(new Event('change',{bubbles:true}));
   })()`);
   const sameMask = expression => run(`(()=>{const a=window.__r3d.coloring.mask,b=${expression};return a.length===b.length&&a.every((v,i)=>v===b[i]);})()`);
+  const waitReady = async () => {
+    for (let i = 0; i < 600; i++) {
+      if (await run('window.__r3d.coloring.ready()')) return;
+      await wait(50);
+    }
+    throw new Error('The coloring worker did not finish the edit');
+  };
   const rectEmpty = () => run(`(()=>{
     const c=window.__r3d.coloring,W=c.base.width,H=c.base.height;
     for(let y=Math.ceil(H*0.04);y<Math.floor(H*0.29);y++)for(let x=Math.ceil(W*0.73);x<Math.floor(W*0.93);x++)if(c.mask[y*W+x])return false;
     return true;
   })()`);
   const drag = async (tool, a, b) => {
+    await waitReady();
     await run(`document.querySelector('#coloring [data-tool="${tool}"]').click()`);
     const points = await read(`(()=>{
       const c=window.__r3d.coloring,r=c.canvas.getBoundingClientRect(),o=c.state.options;
@@ -35,7 +43,7 @@ module.exports = async ({ win, run, shot, wait }) => {
       await wait(15);
     }
     win.webContents.sendInputEvent({ type: 'mouseUp', button: 'left', clickCount: 1, ...points[1] });
-    await wait(200);
+    await wait(50); await waitReady();
   };
   win.setSize(1600, 1000);
   ok(await run(`!!document.querySelector('#homeGrid2d [data-mod="coloring"]')`), 'coloring module is available on the home screen');
@@ -56,6 +64,42 @@ module.exports = async ({ win, run, shot, wait }) => {
   ok(await run(`window.__r3d.coloring.mask.every(v=>v===0||v===1)`), 'working artwork is pure black/white');
   ok(await run(`window.__r3d.coloring.state.options.mode==='illustration'&&window.__r3d.coloring.state.options.colors===16&&!document.querySelector('#coloring [data-opt="shadowTolerance"]').disabled`), 'new images start in illustration mode with adjustable shadow cleanup');
   await run('window.__coloringIllustration=window.__r3d.coloring.mask.slice()');
+  ok(await run(`window.__r3d.coloring.state.options.curveSmooth===0.6&&window.__r3d.coloring.artworkPath instanceof Path2D`), 'new artwork has a scalable smooth vector preview, not an enlarged binary bitmap');
+  ok(await run(`(()=>{
+    const c=window.__r3d.coloring,o=c.state.options,r=c.canvas.getBoundingClientRect(),oldView=c.view;
+    const bitmap=c.bitmap.getContext('2d'),saved=bitmap.getImageData(0,0,c.bitmap.width,c.bitmap.height);
+    const k=Math.min((o.pageWidth-2*o.margin)/c.base.width,(o.pageHeight-2*o.margin)/c.base.height);
+    const scale=3/k,x=(o.pageWidth-c.base.width*k)/2,y=(o.pageHeight-c.base.height*k)/2;
+    try{
+      bitmap.fillStyle='#ff00ff';bitmap.fillRect(0,0,c.bitmap.width,c.bitmap.height);
+      c.view={scale,x:r.width/2-(x+c.base.width*.49*k)*scale,y:r.height/2-(y+c.base.height*.54*k)*scale};c.draw();
+      const pixels=c.ctx.getImageData(0,0,c.canvas.width,c.canvas.height).data;let ink=0;
+      for(let i=0;i<pixels.length;i+=4){
+        if(pixels[i+3]&&(pixels[i]!==pixels[i+1]||pixels[i]!==pixels[i+2]))return false;
+        if(pixels[i+3]===255&&pixels[i]<128)ink++;
+      }
+      return ink>100;
+    }finally{bitmap.putImageData(saved,0,0);c.view=oldView;c.draw();}
+  })()`), 'zoomed preview draws the curves directly, independently of the low-resolution bitmap');
+  await run('window.__coloringCurves=JSON.stringify(window.__r3d.coloring.shapes)');
+  await set('curveSmooth', 0.3);
+  ok(await run('window.__r3d.coloring.generate()'), 'the real curve-finishing control updates the artwork');
+  ok(await sameMask('window.__coloringIllustration'), 'finishing changes geometry without damaging the original editing mask');
+  ok(await run('JSON.stringify(window.__r3d.coloring.shapes)!==window.__coloringCurves'), 'the finishing control actually changes the curves');
+  await run('window.__r3d.coloring.undo()');
+  ok(await run('window.__r3d.coloring.state.options.curveSmooth===0.6&&JSON.stringify(window.__r3d.coloring.shapes)===window.__coloringCurves'), 'undo restores precisely the previous curve geometry');
+  ok(await run(`(async()=>{
+    const c=window.__r3d.coloring;let ticks=0;
+    const timer=setInterval(()=>ticks++,20);
+    try{return await c.renderJob({result:c.base})&&ticks>2;}
+    finally{clearInterval(timer);}
+  })()`), 'curve finishing and manual recomposition run in a worker while the UI responds');
+  ok(await run(`(async()=>{
+    const c=window.__r3d.coloring,base=c.base;
+    const old=c.renderJob({result:{...base,mask:new Uint8Array(base.mask.length)}});
+    const latest=await c.renderJob({result:base});
+    return !(await old)&&latest&&c.ready()&&JSON.stringify(c.shapes)===window.__coloringCurves;
+  })()`), 'a cancelled finishing job cannot replace newer curves or detach the source mask');
   await set('mode', 'regions');
   ok(await run(`window.__r3d.coloring.stale&&document.querySelector('#coloring [data-opt="shadowTolerance"]').disabled`), 'legacy color-region mode disables the illustration-only control');
   ok(await run('window.__r3d.coloring.generate()'), 'legacy color-region mode still generates artwork');
@@ -100,13 +144,21 @@ module.exports = async ({ win, run, shot, wait }) => {
   await run('window.__coloringBefore=window.__r3d.coloring.mask.slice()');
   await drag('rect', [0.71, 0.025], [0.95, 0.31]);
   ok(await rectEmpty(), 'dragging a rectangle removes an entire unwanted element');
+  ok(await run(`(()=>{
+    const c=window.__r3d.coloring,W=c.base.width,H=c.base.height,ctx=document.createElement('canvas').getContext('2d');
+    for(let y=Math.ceil(H*.04);y<Math.floor(H*.29);y+=3)for(let x=Math.ceil(W*.73);x<Math.floor(W*.93);x+=3)
+      if(ctx.isPointInPath(c.artworkPath,x+.5,y+.5,'evenodd'))return false;
+    return true;
+  })()`), 'curve finishing does not redraw an erased element');
   ok(await run('window.__r3d.coloring.state.edits.length===1'), 'rectangle gesture creates one undoable edit');
   await run('window.__coloringRect=window.__r3d.coloring.mask.slice()');
+  await run('window.__coloringRectCurves=JSON.stringify(window.__r3d.coloring.shapes)');
   await drag('erase', [0.27, 0.463], [0.56, 0.463]);
   ok(!(await sameMask('window.__coloringRect')), 'eraser removes selected lines');
   await run('window.__coloringErased=window.__r3d.coloring.mask.slice()');
   await run('window.__r3d.coloring.undo()');
   ok(await sameMask('window.__coloringRect'), 'undo restores the erased lines exactly');
+  ok(await run('JSON.stringify(window.__r3d.coloring.shapes)===window.__coloringRectCurves'), 'undo also restores the exact vector preview after erasing');
   await run('window.__r3d.coloring.redo()');
   ok(await sameMask('window.__coloringErased'), 'redo restores the edited artwork exactly');
   const beforeDraw = await run('window.__r3d.coloring.pixels');
@@ -118,6 +170,7 @@ module.exports = async ({ win, run, shot, wait }) => {
   ok(await rectEmpty(), 'manual removals survive changing automatic cleanup');
   ok(await run('window.__r3d.coloring.state.edits.length===3'), 'automatic cleanup does not discard edits');
   await run('window.__coloringSaved=window.__r3d.coloring.mask.slice()');
+  await run('window.__coloringSavedCurves=JSON.stringify(window.__r3d.coloring.shapes)');
   await run('window.__r3d.coloring.saveProject()');
   const projectPath = path.join(exp, 'Bosque.v1.r3c');
   ok(fs.existsSync(projectPath), 'editable coloring project is saved');
@@ -126,12 +179,13 @@ module.exports = async ({ win, run, shot, wait }) => {
   await run(`window.__r3d.openProjectFile(new File([${JSON.stringify(project)}],'Bosque.v1.r3c'))`);
   ok(await run(`!document.getElementById('coloring').hidden&&window.__r3d.coloring.state.name==='Bosque.v1'`), 'global project opening restores the module and filename');
   ok(await sameMask('window.__coloringSaved'), 'save/reopen reproduces the exact edited contours');
+  ok(await run('window.__r3d.coloring.state.options.curveSmooth===0.6&&JSON.stringify(window.__r3d.coloring.shapes)===window.__coloringSavedCurves'), 'project reopening restores the finishing setting and identical curves');
   ok(await run(`window.__r3d.coloring.state.options.mode==='illustration'&&window.__r3d.coloring.state.options.shadowTolerance===70`), 'project preserves illustration mode and shadow tolerance');
   ok(await run(`(async()=>{
     const c=window.__r3d.coloring,old=JSON.parse(${JSON.stringify(project)});
-    delete old.state.options.mode;delete old.state.options.shadowTolerance;
+    delete old.state.options.mode;delete old.state.options.shadowTolerance;delete old.state.options.curveSmooth;
     await c.openProject(old);
-    return c.ready()&&c.state.options.mode==='regions'&&document.querySelector('#coloring [data-opt="shadowTolerance"]').disabled&&c.state.edits.length===3;
+    return c.ready()&&c.state.options.mode==='regions'&&c.state.options.curveSmooth===0&&!c.artworkPath&&document.querySelector('#coloring [data-opt="shadowTolerance"]').disabled&&c.state.edits.length===3;
   })()`), 'older projects reopen in legacy mode without discarding manual edits');
   await run(`window.__r3d.openProjectFile(new File([${JSON.stringify(project)}],'Bosque.v1.r3c'))`);
   ok(await sameMask('window.__coloringSaved'), 'returning to the illustration project restores its precise edited result');
@@ -148,10 +202,10 @@ module.exports = async ({ win, run, shot, wait }) => {
   ok(await rectEmpty(), 'cancel/recompute also preserves manual removals');
   await run(`(async()=>{
     const c=window.__r3d.coloring,pending=c.export('svg');
-    c.setOptions({pageWidth:148});await pending;
+    c.setOptions({pageWidth:148,curveSmooth:0});await pending;
   })()`);
   const snapshotSVG = fs.readFileSync(path.join(exp, 'Bosque.v1.svg'), 'utf8');
-  ok(snapshotSVG.includes('width="210mm"'), 'export takes a consistent snapshot before later parameter changes');
+  ok(snapshotSVG.includes('width="210mm"')&&/\bC[-\d]/.test(snapshotSVG), 'export snapshots the page and curves before later parameter changes');
   await run('window.__r3d.coloring.undo()');
   for (const kind of ['png', 'svg', 'pdf']) await run(`window.__r3d.coloring.export('${kind}')`);
   const pngBytes = fs.readFileSync(path.join(exp, 'Bosque.v1.png')), png = PNG.sync.read(pngBytes);
@@ -163,6 +217,22 @@ module.exports = async ({ win, run, shot, wait }) => {
     if (!v) black++;
   }
   ok(black > 10000 && black < png.width * png.height / 3, 'PNG has solid black outlines on opaque white, not filled colours');
+  const previewDifference = await run(`(async()=>{
+    const c=window.__r3d.coloring,image=new Image();
+    image.src='data:image/png;base64,${pngBytes.toString('base64')}';await image.decode();
+    const expected=document.createElement('canvas');expected.width=image.naturalWidth;expected.height=image.naturalHeight;
+    const ctx=expected.getContext('2d');ctx.drawImage(image,0,0);
+    const target=ctx.getImageData(0,0,expected.width,expected.height).data;
+    const saved={view:c.view,width:c.canvas.width,height:c.canvas.height,original:c.original};
+    try{
+      c.original=false;c.canvas.width=expected.width;c.canvas.height=expected.height;
+      c.view={x:0,y:0,scale:expected.width/c.state.options.pageWidth/devicePixelRatio};c.draw();
+      const actual=c.ctx.getImageData(0,0,c.canvas.width,c.canvas.height).data;let different=0;
+      for(let i=0;i<actual.length;i+=4)if((actual[i+3]<128||actual[i]>=128?255:0)!==target[i])different++;
+      return different/(actual.length/4);
+    }finally{c.canvas.width=saved.width;c.canvas.height=saved.height;c.view=saved.view;c.original=saved.original;c.draw();}
+  })()`);
+  ok(previewDifference < 0.003, `actual canvas preview and exported PNG use matching geometry (${(previewDifference * 100).toFixed(3)}% rasterization difference)`);
   const pixelAtArtwork = (x, y) => {
     const mmX = 10 + x / 800 * 190, mmY = (297 - 142.5) / 2 + y / 600 * 142.5;
     return png.data[(Math.round(mmY * 300 / 25.4) * png.width + Math.round(mmX * 300 / 25.4)) * 4];
@@ -175,9 +245,11 @@ module.exports = async ({ win, run, shot, wait }) => {
   ok(phys === 1, 'exactly one PNG resolution record');
   const svg = fs.readFileSync(path.join(exp, 'Bosque.v1.svg'), 'utf8');
   ok(svg.includes('width="210mm"') && svg.includes('height="297mm"') && !svg.includes('<image'), 'SVG preserves physical paper size and vector paths');
+  ok(/\bC[-\d]/.test(svg), 'SVG exports real smooth cubic curves');
   ok([...svg.matchAll(/fill="([^"]+)"/g)].every(m => ['#FFFFFF', '#000000'].includes(m[1])), 'SVG uses only black and white');
   const pdf = fs.readFileSync(path.join(exp, 'Bosque.v1.pdf'), 'ascii');
   ok(pdf.startsWith('%PDF-1.4') && pdf.includes('/Count 1') && pdf.includes('/MediaBox [0 0 595.2756 841.8898]'), 'PDF is a single vector A4 page');
+  ok(/\sc\n/.test(pdf), 'PDF exports the same real cubic curves, not pixel-edge polygons');
   ok(await run(`(async()=>{
     const c=window.__r3d.coloring,job=c.generate();window.__r3d.showHome();
     return !(await job)&&!c.worker&&document.getElementById('coloring').hidden;
@@ -191,6 +263,6 @@ module.exports = async ({ win, run, shot, wait }) => {
   ok(await run('window.__r3d.coloring.ready()'), 'coloring workspace can be resumed after visiting other modules');
   await capture('coloring_04_final');
   ok(errors.length === 0, 'renderer errors: ' + (errors.join(' | ') || 'none'));
-  fs.writeFileSync(path.join(out, 'result.json'), JSON.stringify({ exports: ['png', 'svg', 'pdf', 'r3c'], width: png.width, height: png.height, blackPixels: black, manualEdits: 3 }, null, 2));
+  fs.writeFileSync(path.join(out, 'result.json'), JSON.stringify({ exports: ['png', 'svg', 'pdf', 'r3c'], width: png.width, height: png.height, blackPixels: black, manualEdits: 3, previewDifference }, null, 2));
   console.log('[e2e] done');
 };

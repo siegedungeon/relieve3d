@@ -1,10 +1,11 @@
-import { processImage, modeFilter, computeForeground } from './processing.js';
+import { processImage, modeFilter, computeForeground, smoothLoop, signedArea } from './processing.js';
 import { components, edt, dilate, fillCapsule, traceMask, countOn } from './raster.js';
+import { fitClosed, cubicsToPath } from './curvefit.js';
 
 export const COLORING_DEFAULTS = Object.freeze({
   colors: 10, minDetail: 0.25, minArea: 0.4, contrast: 16, smooth: 1,
   lineWidth: 0.6, keepInk: true, cleanBackground: true, backgroundTolerance: 50,
-  mode: 'regions', shadowTolerance: 70,
+  mode: 'regions', shadowTolerance: 70, curveSmooth: 0,
   pageWidth: 210, pageHeight: 297, margin: 10, dpi: 300,
 });
 
@@ -18,6 +19,7 @@ export function coloringOptions(input = {}) {
     margin: [0, 80, 'Margen'], dpi: [72, 300, 'Resolución'],
     backgroundTolerance: [0, 120, 'Tolerancia de fondo'],
     shadowTolerance: [0, 120, 'Sombras'],
+    curveSmooth: [0, 1.2, 'Pulido de curvas'],
   };
   for (const [key, [min, max, label]] of Object.entries(limits)) {
     if (!Number.isFinite(o[key]) || o[key] < min || o[key] > max) throw new Error(`${label}: usa un valor entre ${min} y ${max}.`);
@@ -227,15 +229,46 @@ export function applyColoringEdits(result, edits) {
   return mask;
 }
 
-export function coloringShapes(mask, W, H) {
-  return traceMask(mask, W, H, 0.3, 1);
+function curveLoop(loop, radius, linePx) {
+  const lengths = loop.map((a, i) => {
+    const b = loop[(i + 1) % loop.length];
+    return Math.hypot(b[0] - a[0], b[1] - a[1]);
+  });
+  const perimeter = lengths.reduce((sum, v) => sum + v, 0);
+  const count = Math.max(12, Math.ceil(perimeter)), step = perimeter / count, points = [];
+  let index = 0, start = 0;
+  for (let i = 0; i < count; i++) {
+    const distance = i * step;
+    while (index < loop.length - 1 && start + lengths[index] < distance) start += lengths[index++];
+    const a = loop[index], b = loop[(index + 1) % loop.length], t = (distance - start) / (lengths[index] || 1);
+    points.push([a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t]);
+  }
+  // Arc-length sampling avoids stair steps; size and area/perimeter caps protect tiny or narrow loops.
+  const reach = Math.min(radius, perimeter / 32, Math.abs(signedArea(loop)) / perimeter);
+  const smooth = smoothLoop(points, reach / step);
+  const curves = fitClosed(smooth, { tol: Math.max(0.02, Math.min(reach / 4, linePx / 5)), cornerDeg: 180 });
+  if (!curves.length) throw new Error('No se pudo ajustar un contorno a curvas.');
+  return curves;
+}
+
+export function coloringShapes(mask, W, H, input = {}) {
+  const o = coloringOptions(input), shapes = traceMask(mask, W, H, 0.3, 1);
+  if (!o.curveSmooth) return shapes;
+  const ppm = 1 / coloringLayout(W, H, o).scale;
+  return shapes.map(s => ({ ...s, curves: [s.outer, ...s.holes].map(loop => curveLoop(loop, o.curveSmooth * ppm, o.lineWidth * ppm)) }));
 }
 
 const fmt = n => String(Math.round(n * 10000) / 10000);
+export function coloringPathData(shapes, transform = p => p) {
+  return shapes.flatMap(s => s.curves
+    ? s.curves.map(loop => cubicsToPath(loop.map(c => c.map(transform)), fmt))
+    : [s.outer, ...s.holes].map(loop => 'M' + loop.map(p => transform(p).map(fmt).join(' ')).join(' L') + ' Z')).join(' ');
+}
+
 export function coloringSVG(shapes, W, H, input) {
   const o = coloringOptions(input), l = coloringLayout(W, H, o);
   // Trace grouping can attach an island's holes to a containing outline; fill all loops together.
-  const d = shapes.flatMap(s => [s.outer, ...s.holes]).map(loop => 'M' + loop.map(([x, y]) => `${fmt(l.x + x * l.scale)} ${fmt(l.y + y * l.scale)}`).join(' L') + ' Z').join(' ');
+  const d = coloringPathData(shapes, ([x, y]) => [l.x + x * l.scale, l.y + y * l.scale]);
   return `<?xml version="1.0" encoding="UTF-8"?>\n<svg xmlns="http://www.w3.org/2000/svg" width="${fmt(o.pageWidth)}mm" height="${fmt(o.pageHeight)}mm" viewBox="0 0 ${fmt(o.pageWidth)} ${fmt(o.pageHeight)}"><rect width="100%" height="100%" fill="#FFFFFF"/>\n<path d="${d}" fill="#000000" fill-rule="evenodd"/>\n</svg>`;
 }
 
@@ -244,9 +277,18 @@ export function coloringPDF(shapes, W, H, input) {
   const o = coloringOptions(input), l = coloringLayout(W, H, o), pt = 72 / 25.4;
   const pw = o.pageWidth * pt, ph = o.pageHeight * pt;
   const content = [`1 g 0 0 ${fmt(pw)} ${fmt(ph)} re f\n0 g\n`];
+  const point = ([x, y]) => `${fmt((l.x + x * l.scale) * pt)} ${fmt(ph - (l.y + y * l.scale) * pt)}`;
   for (const s of shapes) {
+    if (s.curves) {
+      for (const loop of s.curves) {
+        content.push(point(loop[0][0]) + ' m\n');
+        for (const c of loop) content.push(c.slice(1).map(point).join(' ') + ' c\n');
+        content.push('h\n');
+      }
+      continue;
+    }
     for (const loop of [s.outer, ...s.holes]) {
-      loop.forEach(([x, y], i) => content.push(`${fmt((l.x + x * l.scale) * pt)} ${fmt(ph - (l.y + y * l.scale) * pt)} ${i ? 'l' : 'm'}\n`));
+      loop.forEach((p, i) => content.push(`${point(p)} ${i ? 'l' : 'm'}\n`));
       content.push('h\n');
     }
   }
