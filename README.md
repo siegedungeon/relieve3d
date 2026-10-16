@@ -47,6 +47,8 @@ Al abrir aparece una **pantalla de inicio** para elegir qué crear (botón **Ini
 
 Los módulos de texto usan las fuentes más populares y las instaladas en el equipo, con contorno/bordeado opcional.
 
+**Matemasie** está incluida en «Fuente → Gruesas (recomendadas para 3D)», también en los selectores de grabado y diseño 2D. Es la versión Regular (400) de Adam Yeo, obtenida de [Google Fonts](https://github.com/google/fonts/tree/main/ofl/matemasie); funciona sin conexión ni instalación en Windows. Se distribuye con su licencia SIL OFL 1.1 en `src\fonts\Matemasie-OFL.txt`.
+
 **Diseño 2D**:
 - **Preparar logo**: vectoriza, quita fondo, reduce a 3–4 colores, engrosa colores finos, reorganiza elementos (mover/escalar/rotar/ocultar), añade borde y silueta de separación. **Engrosar por elemento** (slogans/letras finas): mantiene estilo y posición, separa letras y renglones para que no se peguen, conserva huecos (o, a, e), botón *Ajustar al trazo deseado* (p.ej. 1.2 mm) y *Reacomodar al engrosar* empuja los demás elementos. Tip: si el logo tiene base blanca, pon ese color en *Quitar* y baja *Agrupar partes* (~0.3 mm) para separar el slogan. Exporta SVG/PNG, guarda el proyecto `.r3s` para revisión del cliente o **Pasa a 3D** (llavero, micrófono, imán…).
 - **Cake topper láser**: letras engrosadas y soldadas en **una sola pieza** (sin letras sueltas ni huecos pequeños), puentes automáticos, palitos según tamaño de torta, doble capa opcional. Exporta **SVG de corte** para CorelDRAW.

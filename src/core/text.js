@@ -4,6 +4,7 @@ export const BUNDLED_FONTS = [
   { family: 'Titan One', file: 'TitanOne-Regular.ttf', cat: 'Gruesas (recomendadas para 3D)' },
   { family: 'Luckiest Guy', file: 'LuckiestGuy-Regular.ttf', cat: 'Gruesas (recomendadas para 3D)' },
   { family: 'Fredoka', file: 'Fredoka.ttf', cat: 'Gruesas (recomendadas para 3D)', variable: true },
+  { family: 'Matemasie', file: 'Matemasie-Regular.ttf', cat: 'Gruesas (recomendadas para 3D)' },
   { family: 'Baloo 2', file: 'Baloo2.ttf', cat: 'Gruesas (recomendadas para 3D)', variable: true },
   { family: 'Poppins Black', file: 'Poppins-Black.ttf', cat: 'Gruesas (recomendadas para 3D)' },
   { family: 'Rubik Bubbles', file: 'RubikBubbles-Regular.ttf', cat: 'Gruesas (recomendadas para 3D)' },

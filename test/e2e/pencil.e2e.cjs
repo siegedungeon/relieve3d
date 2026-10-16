@@ -25,6 +25,14 @@ module.exports = async ({ win, run, shot, wait }) => {
   };
   const capture = async name => { win.show(); win.focus(); await wait(500); await shot(path.join(D, name + '.png')); };
   win.setSize(1600, 1000);
+  ok(await run(`(async()=>{
+    const {BUNDLED_FONTS}=await import('./core/text.js');
+    return BUNDLED_FONTS.some(f=>f.family==='Matemasie' && f.file==='Matemasie-Regular.ttf');
+  })()`), 'Matemasie is bundled, not dependent on a system installation');
+  ok(await run(`['#txtFont','#backFont','#studio [data-t="font"]'].every(selector=>{
+    const select=document.querySelector(selector);
+    return select && [...select.options].some(o=>o.value==='Matemasie');
+  })`), 'Matemasie is selectable in text, engraving and 2D editors');
   const { ipcMain } = require('electron');
   let confirmation = 0;
   ipcMain.removeHandler('confirm');
@@ -99,7 +107,9 @@ module.exports = async ({ win, run, shot, wait }) => {
   await set('#txtDecorationSize', 14);
 
   await text('Linda');
-  await set('#txtFont', 'Fredoka');
+  await set('#txtFont', 'Matemasie');
+  await set('#txtWeight', 400);
+  ok(await run(`[...document.fonts].some(f=>f.family==='Matemasie' && f.status==='loaded') && window.__r3d.S.text.font==='Matemasie'`), 'the actual bundled Matemasie face loads without fallback');
   await set('#txtFill', '#dc397b');
   await set('#txtDecorationColor', '#f28bb4');
   await set('#txtBaseColor', '#ffffff');
@@ -131,12 +141,12 @@ module.exports = async ({ win, run, shot, wait }) => {
   await text('Linda');
   for (const kind of ['3mf', 'stl-one', 'svg']) await run(`window.__r3d.doExport('${kind}')`);
   await run(`window.__r3d.saveProject()`);
-  await checkPencilExports(exp, 'Linda', await read('window.__r3d.getFeat().pencilChannel'));
+  const finalDimensions = await checkPencilExports(exp, 'Linda', await read('window.__r3d.getFeat().pencilChannel'));
   await run(`(()=>{
     const v=window.__r3d.viewer;v.frame();const t=v.controls.target,d=v.camera.position.distanceTo(t);
     v.camera.position.set(t.x-d*0.5,t.y+d*0.6,t.z+d*0.65);v.controls.update();v.requestRender();
   })()`); await capture('pencil_03_final');
-  fs.writeFileSync(path.join(D, 'result.json'), JSON.stringify({ ...dimensions, channel, project: 'Linda.r3d' }, null, 2));
+  fs.writeFileSync(path.join(D, 'result.json'), JSON.stringify({ ...finalDimensions, channel: await read('window.__r3d.getFeat().pencilChannel'), font: 'Matemasie', project: 'Linda.r3d' }, null, 2));
   ok(!errs.length, 'console errors: ' + (errs.join(' | ') || 'none'));
   log('done');
 };
