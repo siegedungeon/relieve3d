@@ -33,6 +33,57 @@ module.exports = async ({ win, run, shot, wait }) => {
     const select=document.querySelector(selector);
     return select && [...select.options].some(o=>o.value==='Matemasie');
   })`), 'Matemasie is selectable in text, engraving and 2D editors');
+  const stretch = JSON.parse(await run(`(async()=>{
+    const {DEFAULT_TEXT,ensureFont,renderTextImage,decorationWidthMM}=await import('./core/text.js');
+    await ensureFont('Matemasie',400);
+    const c=document.createElement('canvas'),ctx=c.getContext('2d');
+    ctx.font='400 220px "Matemasie"';ctx.letterSpacing='0px';
+    const h=ctx.measureText('H'),m=ctx.measureText('YANNETHZI');
+    const naturalWidth=(m.actualBoundingBoxLeft+m.actualBoundingBoxRight)*12/(h.actualBoundingBoxAscent+h.actualBoundingBoxDescent);
+    const opts={...DEFAULT_TEXT(),text:'YANNETHZI',font:'Matemasie',weight:400,fill:'#ffffff',outline:false,
+      decoration:'ribbon',decorationSize:14,decorationGap:2,decorationColor:'#f28bb4'};
+    const width=70.95,scaleX=(width-decorationWidthMM(opts)-opts.decorationGap)/naturalWidth*100;
+    const r=renderTextImage({...opts,scaleX},width),im=new Image();im.src=r.dataURL;await im.decode();
+    c.width=im.width;c.height=im.height;ctx.drawImage(im,0,0);
+    const d=ctx.getImageData(0,0,c.width,c.height).data;
+    let minX=Infinity,maxX=-Infinity,minY=Infinity,maxY=-Infinity;
+    for(let y=0;y<c.height;y++)for(let x=0;x<c.width;x++){
+      const i=(y*c.width+x)*4;if(!d[i+3])continue;
+      minX=Math.min(minX,x);maxX=Math.max(maxX,x);
+      if(d[i]===255&&d[i+1]===255&&d[i+2]===255){minY=Math.min(minY,y);maxY=Math.max(maxY,y);}
+    }
+    return JSON.stringify({scaleX,height:(maxY-minY+1)*width/(maxX-minX+1),
+      legacyUnchanged:renderTextImage({...opts,scaleX:undefined},width).dataURL===renderTextImage({...opts,scaleX:100},width).dataURL});
+  })()`));
+  ok(Math.abs(stretch.height - 12) < 0.12, 'long names retain 12 mm capitals when only their width is compressed');
+  ok(stretch.legacyUnchanged, '100% horizontal proportion preserves legacy rendering');
+  ok(await run(`(async()=>{
+    const {DEFAULT_TEXT,renderTextImage}=await import('./core/text.js');
+    const opts={...DEFAULT_TEXT(),text:'H',font:'Matemasie',weight:400,fill:'#ffffff',
+      outline:true,outlineColor:'#f28bb4',outlineMM:0.8,thicken:0.4};
+    const measure=async options=>{
+      const r=renderTextImage(options,20),im=new Image();im.src=r.dataURL;await im.decode();
+      const c=document.createElement('canvas');c.width=im.width;c.height=im.height;
+      const ctx=c.getContext('2d');ctx.drawImage(im,0,0);
+      const d=ctx.getImageData(0,0,c.width,c.height).data;
+      const outer=[Infinity,Infinity,-Infinity,-Infinity],inner=[...outer];
+      const add=(b,x,y)=>{b[0]=Math.min(b[0],x);b[1]=Math.min(b[1],y);b[2]=Math.max(b[2],x);b[3]=Math.max(b[3],y);};
+      for(let y=0;y<c.height;y++)for(let x=0;x<c.width;x++){
+        const i=(y*c.width+x)*4;if(!d[i+3])continue;add(outer,x,y);
+        if(d[i]===255&&d[i+1]===255&&d[i+2]===255)add(inner,x,y);
+      }
+      const mm=20/(outer[2]-outer[0]+1);
+      return [0,1].every(axis=>Math.abs(((outer[axis+2]-outer[axis])-(inner[axis+2]-inner[axis]))*mm/2-0.8)<0.12);
+    };
+    for(const scaleX of [50,150])for(const align of ['left','center','right']){
+      if(!await measure({...opts,scaleX,align,text:'H\\nHH'}))return false;
+    }
+    for(const scaleX of [0,24,201,NaN]){
+      let rejected=false;try{renderTextImage({...opts,scaleX},20);}catch(e){rejected=/horizontal/.test(e.message);}
+      if(!rejected)return false;
+    }
+    return true;
+  })()`), 'compressed/expanded multiline text keeps isotropic mm borders and rejects invalid proportions');
   const { ipcMain } = require('electron');
   let confirmation = 0;
   ipcMain.removeHandler('confirm');
@@ -147,6 +198,33 @@ module.exports = async ({ win, run, shot, wait }) => {
     v.camera.position.set(t.x-d*0.5,t.y+d*0.6,t.z+d*0.65);v.controls.update();v.requestRender();
   })()`); await capture('pencil_03_final');
   fs.writeFileSync(path.join(D, 'result.json'), JSON.stringify({ ...finalDimensions, channel: await read('window.__r3d.getFeat().pencilChannel'), font: 'Matemasie', project: 'Linda.r3d' }, null, 2));
+  await text('YANNETHZI');
+  await set('#txtScaleX', stretch.scaleX);
+  await set('[data-set="widthMM"]', 70.95);
+  await set('[data-set="base.thickness"]', 11.6);
+  await set('[data-set="pencil.value"]', 7.9);
+  await set('#txtFill', '#ffffff');
+  await set('#txtDecorationColor', '#ffffff');
+  await set('#txtBaseColor', '#f28bb4');
+  const stretchedImage = await run('window.__r3d.S.image.dataURL');
+  await set('#txtScaleX', 100);
+  await run('window.__r3d.undo()');
+  ok(await run(`window.__r3d.S.image.dataURL===${JSON.stringify(stretchedImage)}`), 'undo restores horizontal letter proportion and artwork');
+  await run('window.__r3d.redo()');
+  ok(await run('window.__r3d.S.text.scaleX===100'), 'redo restores the original letter proportion');
+  await run('window.__r3d.undo()');
+  await run('window.__r3d.saveProject()');
+  const stretchedProject = fs.readFileSync(path.join(exp, 'YANNETHZI.r3d'), 'utf8');
+  await text('Otro nombre');
+  await run(`window.__r3d.openProjectFile(new File([${JSON.stringify(stretchedProject)}],'YANNETHZI.r3d'))`);
+  ok(await run(`Math.abs(window.__r3d.S.text.scaleX-${stretch.scaleX})<1e-8 && window.__r3d.S.image.dataURL===${JSON.stringify(stretchedImage)}`), 'horizontal proportion survives saving and reopening');
+  await text('YANNETHZI');
+  ok(Math.abs(await decorationHeight() - 14) < 0.12, 'horizontal letter compression does not deform the ribbon');
+  for (const kind of ['3mf', 'stl-one']) await run(`window.__r3d.doExport('${kind}')`);
+  await checkPencilExports(exp, 'YANNETHZI', await read('window.__r3d.getFeat().pencilChannel'),
+    { calibre: 7.9, height: 13, colors: 2, maxDimensions: [75, 19, 13], minContourVariation: 0.4 });
+  await run('window.__r3d.viewer.frame(true)');
+  await capture('pencil_04_compressed_name');
   ok(!errs.length, 'console errors: ' + (errs.join(' | ') || 'none'));
   log('done');
 };

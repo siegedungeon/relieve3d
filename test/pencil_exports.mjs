@@ -4,7 +4,8 @@ import path from 'node:path';
 import Module from 'manifold-3d';
 import { read3MF } from '../src/core/threemf_read.js';
 
-export async function checkPencilExports(directory, name, channel, { calibre = 7.8, height = 13.4, colors = 3 } = {}) {
+export async function checkPencilExports(directory, name, channel,
+  { calibre = 7.8, height = 13.4, colors = 3, maxDimensions = null, minContourVariation = 0 } = {}) {
   const w = await Module(); w.setup();
   const model = read3MF(new Uint8Array(fs.readFileSync(path.join(directory, name + '.3mf'))));
   assert.equal(model.palette.length, colors, 'export keeps the selected colours');
@@ -26,6 +27,9 @@ export async function checkPencilExports(directory, name, channel, { calibre = 7
       assert(Math.abs(hits[0].distance * ray * 2 - calibre) < 0.015, 'exported bore has the requested final calibre');
     }
     assert(Math.abs(b.max[2] - height) < 0.002, 'base and relief heights survive export');
+    if (maxDimensions) for (let i = 0; i < 3; i++) {
+      assert(b.max[i] - b.min[i] <= maxDimensions[i], 'export respects the maximum dimensions');
+    }
   };
   try {
     const parts = model.parts.map(p => from(p.V, p.T));
@@ -34,6 +38,16 @@ export async function checkPencilExports(directory, name, channel, { calibre = 7
     const base = parts[baseIndex];
     assert.equal(base.genus(), 1);
     assert.equal(base.decompose().map(own).length, 1);
+    if (minContourVariation > 0) {
+      const b = base.boundingBox(), edge = [], reach = b.max[1] - b.min[1] + 2;
+      for (let i = 0; i <= 100; i++) {
+        const x = b.min[0] + 6 + (b.max[0] - b.min[0] - 22) * i / 100;
+        const hits = base.rayCast([x, b.min[1] - 1, b.max[2] - 0.2], [x, b.max[1] + 1, b.max[2] - 0.2]);
+        assert(hits.length >= 2, 'name contour remains connected');
+        edge.push(hits[0].distance * reach);
+      }
+      assert(Math.max(...edge) - Math.min(...edge) >= minContourVariation, 'base follows the letters rather than a straight rectangular strip');
+    }
     for (let i = 0; i < parts.length; i++) for (let j = i + 1; j < parts.length; j++) {
       assert(own(parts[i].intersect(parts[j])).volume() < 1e-4, 'colour volumes do not overlap');
     }

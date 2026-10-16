@@ -1,4 +1,6 @@
 // Renders text to a flat-colour image that feeds the normal vectorization pipeline (3D modules with names/text).
+import { dilate } from './raster.js';
+
 export const BUNDLED_FONTS = [
   { family: 'Lilita One', file: 'LilitaOne-Regular.ttf', cat: 'Gruesas (recomendadas para 3D)' },
   { family: 'Titan One', file: 'TitanOne-Regular.ttf', cat: 'Gruesas (recomendadas para 3D)' },
@@ -31,6 +33,7 @@ export const DEFAULT_TEXT = () => ({
   weight: 700,
   italic: false,
   spacing: 0,          // letter spacing, % of font size
+  scaleX: 100,
   lineHeight: 1.05,
   align: 'center',
   fill: '#e11d48',
@@ -84,7 +87,11 @@ export function renderTextImage(t, widthMM) {
   const asc = Math.max(...ms.map((m) => m.actualBoundingBoxAscent), FONT_PX * 0.5);
   const desc = Math.max(...ms.map((m) => m.actualBoundingBoxDescent), 0);
   const lw = ms.map((m) => m.actualBoundingBoxLeft + m.actualBoundingBoxRight);
-  const textW = Math.max(...lw, 10);
+  const scaleX = (t.scaleX ?? 100) / 100;
+  if (!Number.isFinite(scaleX) || scaleX < 0.25 || scaleX > 2) {
+    throw new Error('La proporción horizontal de las letras debe estar entre 25% y 200%.');
+  }
+  const textW = Math.max(...lw, 10) * scaleX;
   const lineStep = FONT_PX * (t.lineHeight || 1.05);
   // mm → px: total width (text + borders) maps to widthMM
   const thMM = Math.max(0, t.thicken || 0), olMM = t.outline ? Math.max(0, t.outlineMM || 0) : 0;
@@ -105,14 +112,39 @@ export function renderTextImage(t, widthMM) {
   setup();
   const xFor = (i) => {
     const m = ms[i];
-    if (t.align === 'left') return pad + m.actualBoundingBoxLeft;
-    if (t.align === 'right') return pad + textW - m.actualBoundingBoxRight;
-    return pad + (textW - lw[i]) / 2 + m.actualBoundingBoxLeft;
+    if (t.align === 'left') return pad + m.actualBoundingBoxLeft * scaleX;
+    if (t.align === 'right') return pad + textW - m.actualBoundingBoxRight * scaleX;
+    return pad + (textW - lw[i] * scaleX) / 2 + m.actualBoundingBoxLeft * scaleX;
   };
+  const yFor = i => pad + (artworkH - textH) / 2 + asc + i * lineStep;
+  let glyphMask;
+  if (scaleX !== 1) {
+    lines.forEach((l, i) => {
+      ctx.save();
+      ctx.translate(xFor(i), yFor(i));
+      ctx.scale(scaleX, 1);
+      ctx.fillText(l, 0, 0);
+      ctx.restore();
+    });
+    const pixels = ctx.getImageData(0, 0, c.width, c.height).data;
+    glyphMask = new Uint8Array(c.width * c.height);
+    for (let i = 0; i < glyphMask.length; i++) glyphMask[i] = pixels[i * 4 + 3] >= 110 ? 1 : 0;
+    ctx.clearRect(0, 0, c.width, c.height);
+  }
   const pass = (color, grow) => {
+    if (glyphMask) {
+      // Grow after transforming the glyphs so mm borders remain isotropic.
+      const mask = grow > 0 ? dilate(glyphMask, c.width, c.height, grow) : glyphMask;
+      const img = ctx.getImageData(0, 0, c.width, c.height), rgb = hexRGB(color);
+      for (let i = 0; i < mask.length; i++) if (mask[i]) {
+        img.data.set(rgb, i * 4); img.data[i * 4 + 3] = 255;
+      }
+      ctx.putImageData(img, 0, 0);
+      return;
+    }
     ctx.fillStyle = color; ctx.strokeStyle = color;
     lines.forEach((l, i) => {
-      const x = xFor(i), y = pad + (artworkH - textH) / 2 + asc + i * lineStep;
+      const x = xFor(i), y = yFor(i);
       if (grow > 0) { ctx.lineWidth = grow * 2; ctx.strokeText(l, x, y); }
       ctx.fillText(l, x, y);
     });

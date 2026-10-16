@@ -1257,7 +1257,7 @@ window.addEventListener('keydown', (e) => {
 
 // ---------------------------------------------------------------- text source
 const textFields = {
-  txtText: 'text', txtFont: 'font', txtWeight: 'weight', txtItalic: 'italic', txtSpacing: 'spacing', txtLine: 'lineHeight',
+  txtText: 'text', txtFont: 'font', txtWeight: 'weight', txtItalic: 'italic', txtSpacing: 'spacing', txtScaleX: 'scaleX', txtLine: 'lineHeight',
   txtAlign: 'align', txtFill: 'fill', txtThicken: 'thicken', txtOutline: 'outline', txtOutlineColor: 'outlineColor',
   txtOutlineMM: 'outlineMM', txtBaseColor: 'baseColor', txtDecoration: 'decoration',
   txtDecorationColor: 'decorationColor', txtDecorationSize: 'decorationSize', txtDecorationGap: 'decorationGap',
@@ -1324,7 +1324,7 @@ for (const [id, k] of Object.entries(textFields)) {
   const el = $(id);
   const read = () => {
     let v = el.type === 'checkbox' ? el.checked : el.value;
-    if (['weight', 'spacing', 'lineHeight', 'thicken', 'outlineMM', 'decorationSize', 'decorationGap'].includes(k)) {
+    if (['weight', 'spacing', 'scaleX', 'lineHeight', 'thicken', 'outlineMM', 'decorationSize', 'decorationGap'].includes(k)) {
       v = parseNum(v);
       if (!Number.isFinite(v)) return false;
       if (k !== 'spacing') v = Math.max(0, v);
