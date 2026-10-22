@@ -2,6 +2,12 @@ const { app, BrowserWindow, ipcMain, dialog, Menu, shell } = require('electron')
 const path = require('path');
 const fs = require('fs/promises');
 const { autoUpdater } = require('electron-updater');
+const { createQuoteStore } = require('./src/main/quote_store.cjs');
+const { exportCommercial } = require('./src/main/quote_export.cjs');
+const { writeNewExportFolder } = require('./src/main/export_folder.cjs');
+const { getBambuPencilProfile, normalizePencilPlates } = require('./src/main/bambu_profile.cjs');
+
+if (process.platform === 'win32') app.setAppUserModelId('com.relieve3d.app');
 
 let win;
 let updateReadyToInstall = false;
@@ -185,18 +191,22 @@ ipcMain.handle('save-file', async (e, { defaultPath, filters, data, extraFiles }
   return r.filePath;
 });
 
-ipcMain.handle('save-files-to-folder', async (e, { files }) => {
+ipcMain.handle('save-files-to-folder', async (e, { files, folderName, bambuPlates }) => {
+  if (bambuPlates && !folderName) throw new Error('Las placas necesitan una carpeta nueva de lote.');
   const r = process.env.R3D_AUTOSAVE_DIR ? { filePaths: [process.env.R3D_AUTOSAVE_DIR] } : await dialog.showOpenDialog(BrowserWindow.fromWebContents(e.sender), {
     title: 'Elige la carpeta de destino',
     properties: ['openDirectory', 'createDirectory'],
   });
   if (r.canceled || !r.filePaths.length) return null;
   const dir = r.filePaths[0];
+  if (folderName !== undefined) return writeNewExportFolder(dir, folderName, files,
+    bambuPlates ? folder => normalizePencilPlates(folder, bambuPlates) : null);
   for (const f of files) await fs.writeFile(path.join(dir, f.name), Buffer.from(f.data));
   return dir;
 });
 
 ipcMain.handle('app-version', () => app.getVersion());
+ipcMain.handle('pencil-batch-profile', () => getBambuPencilProfile());
 
 ipcMain.handle('confirm', async (e, { message, buttons, cancelId }) => {
   const r = await dialog.showMessageBox(BrowserWindow.fromWebContents(e.sender), {
@@ -206,6 +216,27 @@ ipcMain.handle('confirm', async (e, { message, buttons, cancelId }) => {
 });
 
 app.whenReady().then(() => {
+  const quoteDirectory = process.env.R3D_TEST_FILE && process.env.R3D_QUOTE_TEST_DIR
+    ? process.env.R3D_QUOTE_TEST_DIR : path.join(app.getPath('userData'), 'quotations');
+  const quotes = createQuoteStore(quoteDirectory);
+  const quoteHandle = (channel, action) => ipcMain.handle(channel, (event, ...args) => {
+    if (!win || event.sender !== win.webContents) throw new Error('Origen de cotización no autorizado.');
+    return action(...args);
+  });
+  quoteHandle('quote-load', () => quotes.load());
+  quoteHandle('quote-window', active => {
+    if (typeof active !== 'boolean') throw new Error('Modo de ventana inválido.');
+    win.setMinimumSize(active ? 360 : 1100, active ? 600 : 680);
+    if (!active) {
+      const [width, height] = win.getSize();
+      if (width < 1100 || height < 680) win.setSize(Math.max(width, 1100), Math.max(height, 680));
+    }
+  });
+  quoteHandle('quote-config', (value, version) => quotes.saveConfig(value, version));
+  quoteHandle('quote-save', payload => quotes.save(payload));
+  quoteHandle('quote-status', payload => quotes.status(payload));
+  quoteHandle('quote-actuals', payload => quotes.actuals(payload));
+  quoteHandle('quote-export', async ({ id, version, format }) => exportCommercial(BrowserWindow, await quotes.commercial(id, version), format));
   createWindow();
   setupAutoUpdates();
 });

@@ -4,6 +4,8 @@ import { parse as parseFont } from 'opentype.js';
 import { HABLADOR_FONTS, DEFAULT_HABLADOR, buildHablador, exportAll, summary, traceLogo, MATERIALS } from './core/hablador.js';
 import { imageReady } from './core/imageload.js';
 import { analyzeMockup } from './core/hablador_mockup.js';
+import { ensureFont } from './core/text.js';
+import { FontPicker } from './font_picker.js';
 
 const esc = (s) => String(s).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
 const parseNum = (s) => parseFloat(String(s).trim().replace(',', '.'));
@@ -189,6 +191,14 @@ export class HabladorStudio {
     <input type="file" data-r="fileLogo" accept="image/*" hidden />
     <input type="file" data-r="fileCfg" accept=".r3h,.json" hidden />`;
     this.$ = (n) => this.root.querySelector(`[data-r="${n}"]`);
+    this.fontPickers = [
+      ['title.font', () => this.cfg.title.text, 'Fuente del título'],
+      ['subtitle.font', () => this.cfg.subtitle.text, 'Fuente del subtítulo'],
+      ['qr.labelFont', () => this.cfg.qr.items.map(item => item.label || item.sub).filter(Boolean).join(' / '), 'Fuente de los textos QR'],
+    ].map(([key, text, label]) => new FontPicker(this.root.querySelector(`[data-k="${key}"]`), {
+      sample: () => ({ text: text(), weight: 400 }), label, onError: this.cb.toast,
+      loadFont: family => ensureFont(family, 400, { file: HABLADOR_FONTS[family] }),
+    }));
     this.bind();
   }
 
@@ -215,6 +225,7 @@ export class HabladorStudio {
         const it = this.cfg.qr.items[+qi], f = el.dataset.qf;
         if (f === 'grad') { it.color2 = el.checked ? (it._c2 || '#e8127c') : ''; if (!el.checked) it._c2 = undefined; this.renderQrItems(); }
         else { it[f] = el.value; if (f === 'color2') it._c2 = el.value; }
+        this.fontPickers.forEach(picker => picker.sync());
         this.schedule(); return;
       }
       if (!k) return;
@@ -224,6 +235,7 @@ export class HabladorStudio {
       else if (el.getAttribute('inputmode') === 'decimal') { v = parseNum(el.value); if (!Number.isFinite(v)) return; }
       else v = el.value;
       setK(this.cfg, k, v);
+      this.fontPickers.forEach(picker => picker.sync());
       if (k.startsWith('logoOpt.')) { this.retraceLogo(); return; }
       this.updateVisibility();
       this.schedule();
@@ -273,6 +285,7 @@ export class HabladorStudio {
       else if (el.dataset.r === 'nfcPlate') continue;
       else el.value = v ?? '';
     }
+    this.fontPickers.forEach(picker => picker.sync());
     this.$('qrCount').value = String(Math.max(1, c.qr.items.length));
     this.renderQrItems();
     this.updateVisibility();

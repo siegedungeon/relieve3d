@@ -5,9 +5,12 @@
   <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-inline' 'wasm-unsafe-eval'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; worker-src 'self' blob:" />
   <title>Relieve3D</title>
   <link rel="stylesheet" href="styles.css" />
+  <link rel="stylesheet" href="quote.css" />
+  <link rel="stylesheet" href="laser.css" />
   <script type="importmap">
     {
       "imports": {
+        "decimal.js": "../node_modules/decimal.js/decimal.mjs",
         "three": "../node_modules/three/build/three.module.js",
         "three/addons/": "./vendor/three-addons/",
         "fflate": "../node_modules/fflate/esm/browser.js",
@@ -54,6 +57,17 @@
   <main class="layout">
     <!-- LEFT PANEL -->
     <aside class="panel left">
+      <section class="card" id="pencilBatchCard" hidden>
+        <h3>Listado de nombres</h3>
+        <p class="muted small">Matemasie blanca · base morada · sin figuras. Canal de 7.9 mm. Máximo 75 × 19 × 13 mm por nombre.</p>
+        <label for="pencilBatchNames">Pega los nombres, uno por renglón</label>
+        <textarea id="pencilBatchNames" rows="6" placeholder="Nombre&#10;Otro nombre"></textarea>
+        <button class="btn primary wide" id="pencilBatchGenerate">Generar listado completo</button>
+        <button class="btn wide" id="pencilBatchCancel" hidden>Cancelar generación</button>
+        <p class="muted small">Crea proyectos editables, 3MF a dos colores, STL unidos y placas de 256 × 256 mm para Bambu A1 (requiere Bambu Studio instalado). Los nombres largos se ajustan horizontalmente; el canal no se escala.</p>
+        <p class="small" id="pencilBatchStatus" role="status" aria-live="polite"></p>
+        <div class="quick" id="pencilBatchResults"></div>
+      </section>
       <section class="card" id="textCard" hidden>
         <div class="seg src-seg" id="sourceSeg">
           <button class="seg-btn active" data-src="text">✍️ Texto</button>
@@ -511,6 +525,8 @@
       <div class="home-grid" id="homeGrid3d"></div>
       <h2 class="home-group">Diseño 2D <small>preparación de logos · corte láser · SVG para Corel</small></h2>
       <div class="home-grid" id="homeGrid2d"></div>
+      <h2 class="home-group">Producción y negocio <small>costos · cotizaciones · rentabilidad</small></h2>
+      <div class="home-grid" id="homeGridBusiness"></div>
       <div class="home-foot muted small" id="homeVersion"></div>
     </div>
   </div>
@@ -520,11 +536,13 @@
   <div id="hablador" class="studio" hidden></div>
   <div id="colorsplit" class="studio" hidden></div>
   <div id="coloring" class="studio" hidden></div>
+  <div id="quote" class="quote" hidden></div>
+  <div id="laser" class="studio" hidden></div>
 
   <div id="busy" class="busy" hidden><div class="spinner"></div><span id="busyText">Procesando…</span></div>
   <div id="toast" class="toast" hidden></div>
   <input type="file" id="fileImage" accept="image/*" hidden />
-  <input type="file" id="fileProject" accept=".r3d,.r3s,.r3h,.r3c,.json" hidden />
+  <input type="file" id="fileProject" accept=".r3d,.r3s,.r3h,.r3c,.r3l,.json" hidden />
 
   <script type="module" src="app.js"></script>
 </body>

@@ -25,6 +25,7 @@ module.exports = async ({ win, run, shot, wait }) => {
   };
   const capture = async name => { win.show(); win.focus(); await wait(500); await shot(path.join(D, name + '.png')); };
   win.setSize(1600, 1000);
+  win.webContents.setBackgroundThrottling(false);
   ok(await run(`(async()=>{
     const {BUNDLED_FONTS}=await import('./core/text.js');
     return BUNDLED_FONTS.some(f=>f.family==='Matemasie' && f.file==='Matemasie-Regular.ttf');
@@ -47,14 +48,16 @@ module.exports = async ({ win, run, shot, wait }) => {
     c.width=im.width;c.height=im.height;ctx.drawImage(im,0,0);
     const d=ctx.getImageData(0,0,c.width,c.height).data;
     let minX=Infinity,maxX=-Infinity,minY=Infinity,maxY=-Infinity;
+    // Physical dimensions use the 50% coverage boundary, not faint antialias fringes.
     for(let y=0;y<c.height;y++)for(let x=0;x<c.width;x++){
-      const i=(y*c.width+x)*4;if(!d[i+3])continue;
+      const i=(y*c.width+x)*4;if(d[i+3]<128)continue;
       minX=Math.min(minX,x);maxX=Math.max(maxX,x);
       if(d[i]===255&&d[i+1]===255&&d[i+2]===255){minY=Math.min(minY,y);maxY=Math.max(maxY,y);}
     }
     return JSON.stringify({scaleX,height:(maxY-minY+1)*width/(maxX-minX+1),
       legacyUnchanged:renderTextImage({...opts,scaleX:undefined},width).dataURL===renderTextImage({...opts,scaleX:100},width).dataURL});
   })()`));
+  log('capital height after horizontal compression (mm)', stretch.height);
   ok(Math.abs(stretch.height - 12) < 0.12, 'long names retain 12 mm capitals when only their width is compressed');
   ok(stretch.legacyUnchanged, '100% horizontal proportion preserves legacy rendering');
   ok(await run(`(async()=>{
@@ -69,7 +72,7 @@ module.exports = async ({ win, run, shot, wait }) => {
       const outer=[Infinity,Infinity,-Infinity,-Infinity],inner=[...outer];
       const add=(b,x,y)=>{b[0]=Math.min(b[0],x);b[1]=Math.min(b[1],y);b[2]=Math.max(b[2],x);b[3]=Math.max(b[3],y);};
       for(let y=0;y<c.height;y++)for(let x=0;x<c.width;x++){
-        const i=(y*c.width+x)*4;if(!d[i+3])continue;add(outer,x,y);
+        const i=(y*c.width+x)*4;if(d[i+3]<128)continue;add(outer,x,y);
         if(d[i]===255&&d[i+1]===255&&d[i+2]===255)add(inner,x,y);
       }
       const mm=20/(outer[2]-outer[0]+1);
@@ -97,6 +100,16 @@ module.exports = async ({ win, run, shot, wait }) => {
   await run(`window.__r3d.enterModule('logo')`);
   await run(`window.__r3d.enterModule('pencil')`);
   await wait(1000);
+  ok(await run(`window.__r3d.S.text.font==='Matemasie' && window.__r3d.S.text.decoration==='none'
+    && window.__r3d.S.text.fill==='#ffffff' && window.__r3d.S.text.baseColor==='#5e43b7'
+    && window.__r3d.S.settings.pencil.value===7.9 && window.__r3d.S.settings.base.thickness===11.6`),
+    'fresh module uses white Matemasie on purple without figures and a 7.9 mm bore');
+  // Keep exercising the optional ribbon/customisation flow independently of the new defaults.
+  await run(`(async()=>{const a=window.__r3d;
+    Object.assign(a.S.text,{font:'Fredoka',weight:700,scaleX:100,fill:'#dc397b',baseColor:'#ffffff',decoration:'ribbon'});
+    a.S.settings.widthMM=63;a.S.settings.base.thickness=12;a.S.settings.pencil.value=7.8;
+    await a.applyText();
+  })()`);
   ok(await run(`window.__r3d.S.text.text === 'Linda' && !!window.__r3d.getFeat()?.pencilChannel`), 'Linda generated with integrated channel');
   ok(await run(`window.__r3d.getFeat().layers.length === 0 && window.__r3d.getFeat().solids.length === 1`), 'no overlapping undrilled base or external sleeve');
   await run(`window.__r3d.setViewMode('3d')`); await wait(700);

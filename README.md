@@ -27,14 +27,14 @@ a mano salvo para probar localmente.
 
 ## Módulos
 
-Al abrir aparece una **pantalla de inicio** para elegir qué crear (botón **Inicio** para volver). Todas las medidas están en **milímetros**.
+Al abrir aparece una **pantalla de inicio** para elegir qué crear (botón **Inicio** para volver). Las medidas de los modelos están en **milímetros**.
 
 **Modelos 3D** (exportan 3MF multicolor para Bambu Lab, STL único/por color, OBJ y SVG):
 
 | Módulo | Qué hace |
 |---|---|
 | Llavero | Módulo completo para marcas y merchandising (ver abajo) |
-| Marcador de lápiz | Nombre en relieve con **canal horizontal dentro de la base**, calibre redondo/hexagonal/triangular y adorno al final (cinta, corazón o estrella). Conserva los montajes antiguos con funda exterior |
+| Nombres para lápices / lapiceros | Genera un listado completo: **Matemasie blanca sobre base morada, sin figuras**, canal horizontal de **7.9 mm** y máximo **75 × 19 × 13 mm** por nombre. Guarda proyectos editables, 3MF a dos colores, STL unidos y placas Bambu A1. Conserva la edición individual, los adornos opcionales y los montajes anteriores |
 | Logo para micrófono | **Cuerpo completo** del mic flag (cuadrado, estrella, corazón, círculo, hexágono) con bordes redondeados, hueco inferior para el micrófono + ranura del clip (DJI, Hollyland, chinos verticales), aros laterales opcionales y el logo encima. El logo/cuerpo se mueve con el asa ✥ morada, se rota y el botón **Centrar hueco** ajusta el hueco para paredes uniformes. También puedes **cargar tu propio cuerpo STL** (queda guardado en la biblioteca) |
 | Logo / figura en relieve | Cualquier imagen a modelo multicolor por capas |
 | Imán de nevera | Figura con bolsillo oculto para imán |
@@ -47,9 +47,18 @@ Al abrir aparece una **pantalla de inicio** para elegir qué crear (botón **Ini
 
 Los módulos de texto usan las fuentes más populares y las instaladas en el equipo, con contorno/bordeado opcional.
 
+En **Nombres para lápices / lapiceros**, pega un nombre por renglón y pulsa **Generar listado completo**. También acepta comas y punto y coma. Conserva mayúsculas, espacios y copias repetidas; recuerda el listado al reiniciar. Cada ejecución crea una carpeta nueva sin sobrescribir lotes anteriores. Ajusta los nombres largos solo horizontalmente, sin modificar el calibre del canal. Si no caben todos en una placa, crea más placas con separación de 3 mm y espacio reservado para la torre de purga. Los colores indican los filamentos que debes cargar; los STL son monocromos. Revisa los puentes del canal y el ajuste físico del lapicero antes de imprimir.
+
+Las placas usan los perfiles A1 de **Bambu Studio instalado** en `Program Files\Bambu Studio` o `AppData\Local\Programs\Bambu Studio`. Se resuelven sus herencias y plantillas locales para conservar los comandos reales de la impresora y el cambio de filamento, sin depender de un proyecto de ejemplo ni distribuir perfiles ajenos. Si falta el perfil, se muestra el error antes de crear archivos. Regresión completa: `npm run test:pencil-batch`.
+
+Los selectores de **Fuente** muestran el nombre de cada tipografía y una **vista previa con tu propio texto**, antes de aplicarla. Incluyen búsqueda por nombre, categorías y navegación con flechas; **Enter** elige y **Esc** cancela sin cambiar el diseño. Están disponibles en el texto 3D (incluidos llaveros y marcadores), el grabado trasero, los textos y elementos del estudio 2D/cake topper láser, y el título, subtítulo y textos QR del hablador. Las fuentes se cargan localmente al mostrarlas; las vistas previas respetan el grosor y la cursiva del texto cuando corresponda.
+
+El texto 3D y el texto fuente del estudio 2D se generan directamente a la resolución de trabajo, conservando el antialias para obtener contornos más precisos. El bordeado crece desde las letras rellenas, con grosor uniforme en milímetros incluso al comprimirlas, evitando las perforaciones que podían producir los trazos superpuestos de fuentes cursivas. Se conservan las aberturas propias de las letras y el agujero de la argolla. `node test\e2e\run.mjs text-quality` comprueba precisión de contornos, mallas cerradas, guardado y exportaciones.
+
 **Matemasie** está incluida en «Fuente → Gruesas (recomendadas para 3D)», también en los selectores de grabado y diseño 2D. Es la versión Regular (400) de Adam Yeo, obtenida de [Google Fonts](https://github.com/google/fonts/tree/main/ofl/matemasie); funciona sin conexión ni instalación en Windows. Se distribuye con su licencia SIL OFL 1.1 en `src\fonts\Matemasie-OFL.txt`.
 
 **Diseño 2D**:
+- **Distribución para corte láser**: importa figuras SVG a escala real, conserva grupos, vincula complementos (por ejemplo, un anillo de dos círculos por figura) y acomoda juegos completos en una lámina. Guarda proyectos `.r3l` y exporta SVG 1:1; también recibe el diseño completo del estudio 2D mediante **Distribuir en lámina**.
 - **Preparar logo**: vectoriza, quita fondo, reduce a 3–4 colores, engrosa colores finos, reorganiza elementos (mover/escalar/rotar/ocultar), añade borde y silueta de separación. **Engrosar por elemento** (slogans/letras finas): mantiene estilo y posición, separa letras y renglones para que no se peguen, conserva huecos (o, a, e), botón *Ajustar al trazo deseado* (p.ej. 1.2 mm) y *Reacomodar al engrosar* empuja los demás elementos. Tip: si el logo tiene base blanca, pon ese color en *Quitar* y baja *Agrupar partes* (~0.3 mm) para separar el slogan. Exporta SVG/PNG, guarda el proyecto `.r3s` para revisión del cliente o **Pasa a 3D** (llavero, micrófono, imán…).
 - **Láminas para colorear**: imagen a contornos negros sólidos sobre blanco, limpieza ajustable, goma, borrado por zona y lápiz negro; exportación PNG, SVG y PDF y proyectos `.r3c` (ver abajo).
 - **Cake topper láser**: letras engrosadas y soldadas en **una sola pieza** (sin letras sueltas ni huecos pequeños), puentes automáticos, palitos según tamaño de torta, doble capa opcional. Exporta **SVG de corte** para CorelDRAW.
@@ -63,6 +72,146 @@ Los módulos de texto usan las fuentes más populares y las instaladas en el equ
   - **Láminas de corte**: tamaño de la lámina de cada material (p. ej. negro 450 × 300, blanco 120 × 300), separación entre piezas (2 mm) y margen del borde. Las piezas se acomodan por su **forma real** (las letras pequeñas entran en los huecos de las grandes, rotaciones de 90°) dejando el sobrante en un solo retazo; la barra de estado muestra el % aprovechado.
 
   Todo sale en curvas Bézier suaves (sin escalones, picos ni trazos finos, con control automático), acomodado en láminas y exportado como **SVG para CorelDRAW** (línea roja de 0,01 mm, página del tamaño de la lámina). Los proyectos se guardan como `.r3h` (incluyen el mockup).
+
+### Distribución para corte láser
+
+En **Inicio → Diseño 2D → Distribución para corte láser**, importa uno o varios SVG.
+Se conservan curvas, colores, detalles y escala. La lista permite elegir las piezas,
+editar nombres y cantidades, y agrupar elementos del mismo archivo conservando su
+posición relativa. Para un anillo, agrupa sus dos círculos y marca el grupo como
+**Complemento**; después asígnalo a las figuras con la proporción correspondiente.
+El anillo se cuenta una vez aunque tenga dos contornos. También puedes importar todo
+el archivo como una sola pieza. El envío desde el estudio 2D incluye el diseño completo,
+no modifica el original y no cambia su escala.
+
+Configura la lámina (inicialmente **480 × 400 mm**), margen, separación y paso angular.
+**Cantidades exactas** informa lo que no cabe, sin crear otras láminas; **Llenar una
+lámina** busca la mayor cantidad de juegos completos, con equilibrio entre diseños
+activado inicialmente. La búsqueda es local y funciona en un Web Worker: compara
+órdenes y giros, recoloca parte de las soluciones y conserva la mejor distribución
+válida. Puedes cancelar y aplicar el mejor resultado disponible. El tiempo configura
+la búsqueda; la preparación y comprobación geométrica pueden añadir unos segundos.
+No se promete un máximo matemático. El límite es 250 figuras / 1000 piezas y
+100 plantillas, con láminas de hasta 3000 mm por lado.
+
+**Aplicar mejor resultado** sustituye la distribución con deshacer/rehacer. Puedes
+arrastrar piezas o editar X, Y y giro; cualquier conflicto se resalta y bloquea la
+exportación. **Revisar todas las piezas** comprueba todas las parejas, los márgenes
+y las proporciones. El motor busca con máscaras, pero decide si el resultado es
+exportable mediante distancias vectoriales, con una reserva geométrica de 0,02 mm
+y una cota conservadora del grosor de los trazos, incluidos sus ingletes. Los trazos
+finos se realzan únicamente en pantalla; el SVG conserva sus grosores originales.
+Los complementos se pueden alojar entre figuras, pero no dentro de sus huecos.
+**No aplica compensación de kerf**: configúrala una sola vez en tu software de corte.
+
+Guarda y reabre `.r3l` para mantener fuentes vectoriales, asociaciones, configuración
+y posiciones. Exporta SVG con dimensiones físicas y grupos, sin etiquetas ni guías
+de interfaz en las trayectorias de corte. Los archivos sin unidades requieren elegir
+explícitamente mm, cm o píxeles a 96 ppp. No se admiten CDR/DXF, imágenes incrustadas,
+texto vivo, filtros, recortes, transparencias de grupo, referencias externas ni
+trayectorias sin una silueta cerrada que las contenga: convierte esos elementos a
+curvas o exporta un SVG compatible desde tu editor. Los errores no se reparan ni
+descartan silenciosamente.
+
+`npm run test:laser` ejecuta regresiones y el flujo completo en Electron:
+importar, agrupar, asociar, optimizar, revisar, corregir con deshacer/rehacer,
+guardar/reabrir y exportar/reimportar; también comprueba cancelación, unidades,
+la lámina de seis diseños y el envío desde el estudio 2D. El caso anterior de Corel
+(38 figuras y 38 anillos) es una referencia de esas geometrías, no un conteo fijo
+ni una garantía para otros diseños.
+
+### Cotizador 3D · Pabonitas
+
+En **Inicio → Producción y negocio → Cotizador 3D · Pabonitas**, cotiza a partir de los datos reales del laminador. Es un módulo local independiente: entrar y salir no sustituye el diseño 3D abierto. No calcula el tiempo de impresión a partir de la malla ni envía datos a servicios externos.
+
+**La entrada principal es Rápida:** escribe **horas/minutos y gramos**, dejando cantidad 1 o indicando más piezas. Aparecen inmediatamente costo, precio sugerido y utilidad estimada; **no pide cliente, contacto, fechas ni condiciones comerciales**, y no obliga a guardar. Selecciona si son datos por unidad o de una placa completa: en este último caso el consumo se cobra una sola vez y se reparte entre las piezas.
+
+La rápida comienza sin mediciones inventadas y **sin acabado, anillo ni empaque añadidos**. Usa material, tarifa de máquina, purgas, reglas de precio e impuestos de tu configuración vigente. Los desplegables opcionales permiten añadir esos extras, cambiar tarifas o probar otro precio. Por ejemplo, 43 min y 10 g, con los valores iniciales y sin extras, dan costo $2.262,17 y precio sugerido $4.000. **Guardar cálculo** conserva un borrador sin cliente. **Continuar con cotización completa** traslada el mismo cálculo sin cambiar sus costos; solo entonces completas cliente y documentos comerciales. Varias máquinas, materiales o tandas parciales se editan en la completa, sin simplificar ni descartar su información al volver a Rápida.
+
+| Sección | Contenido |
+|---|---|
+| Rápida | Tiempo, gramos y cantidad; costo y precio instantáneos, extras opcionales y guardado sin cliente |
+| Cotización completa | Cliente, producto, cantidad, tiempo y gramos; impresoras, actividades de trabajo, accesorios, empaque, extras y riesgos. Resumen inmediato con costo unitario/total, utilidad estimada y margen |
+| Precios por volumen | Tabla para 1, 20, 50, 100, 130, 200 y la cantidad actual, con costos recalculados, venta, utilidad y margen; selección de cantidad |
+| Escenarios | Económico, competitivo, recomendado y premium, con estrategias y porcentajes visibles y editables |
+| Comparar | Original frente a optimizado: material, horas, costos, utilidad, capacidad potencial y fecha. Por defecto mantiene el mismo precio de venta; la recomendación requiere confirmar calidad |
+| Producción | Tandas completas/parciales, asignación por impresora, horas acumuladas/calendario, material por color y bobinas faltantes |
+| Historial | Borradores, versiones emitidas, estados, búsqueda/filtros, duplicación, referencia de pedido local y registro de costos reales |
+| Análisis | Cotizado, aceptado, conversión, utilidad estimada, productos, clientes, máquinas y estimado contra real |
+| Configuración | Marca/logo, materiales/proveedores, impresoras, impuestos, comisiones, valores iniciales, reglas comerciales y vigencia versionada |
+
+**Valores iniciales editables:** COP; PLA $90.000/kg ($90/g); máquina $1.750/h; purgas/reserva 12%; preparación/acabado **$5.000 por unidad**; empaque $500 por unidad; anillos $900 o $2.000; markup 55%; margen mínimo 20%; redondeo hacia arriba a $500; IVA y comisión 0%. Acabado, anillo y empaque son opcionales en Rápida; la plantilla de una nueva cotización completa mantiene esos cargos iniciales. No son tarifas comerciales garantizadas. Los precios mayoristas parten de descuentos propuestos de 0/3/5/8/10/12% en los tramos 1–9/10–29/30–49/50–99/100–199/200+, todos editables. El redondeo puede hacer que dos tramos terminen al mismo precio.
+
+**Flujo:** elige **UNA UNIDAD** o **UNA TANDA / PLACA COMPLETA** antes de ingresar minutos y gramos. Puedes convertir días, horas y minutos con el control desplegable. Añade cada material/color, marca si ya incluye purgas/soportes y define capacidad/unidades por tanda. En una tanda parcial introduce la medición real o conserva la aproximación proporcional, siempre identificada como tal. En mano de obra elige importe fijo o minutos por tarifa/h y aplicación por unidad, pedido o tanda. **No cambies $5.000 a “Por pedido” solo para mejorar el margen si el acabado realmente se hace en cada pieza.**
+
+Los anillos son accesorios eliminables; puedes añadir imanes, cadenas, tornillos u otros componentes con cantidad, costo y merma propios. Empaque y costos adicionales admiten alcances independientes. Materiales y máquinas permiten una tarifa específica del pedido; un campo vacío usa el catálogo. Guardar otra configuración no modifica una cotización abierta: **Actualizar a costos vigentes** es una acción explícita y conserva los importes específicos ya ingresados para mano de obra, accesorios y empaque.
+
+#### Cálculos y supuestos
+
+El dominio usa `decimal.js` con precisión de 40 dígitos; recibe decimales sin separadores de miles, trabaja en minutos/gramos/COP y conserva precisión antes de presentar dinero con dos decimales.
+
+```text
+material base = gramos del pedido × precio/kg / 1000
+material normal = base + purgas no incluidas + soportes no incluidos + merma independiente
+reserva de fallos = costo repetible × [1 / (1 - porcentaje de fallo) - 1]
+máquina = horas de impresión asignadas × tarifa de la impresora
+mano de obra = importe × alcance, o minutos × alcance / 60 × tarifa laboral
+accesorio = cantidad × alcance × costo × (1 + merma)
+costo productivo = material + máquina + trabajo + accesorios + empaque + extras + reservas
+```
+
+La tarifa de máquina es **integrada o por componentes**, nunca ambas: electricidad (`kW × COP/kWh`), depreciación y mantenimiento. La reserva de fallos repite material e impresión, no vuelve a cobrar automáticamente todos los accesorios ni las actividades; añade reprocesamiento laboral explícito cuando corresponda. El porcentaje histórico es ingresado por el operador, no inferido de estadísticas inexistentes. Contingencia es un concepto adicional, no otro nombre para las purgas.
+
+Sin comisiones, **markup** significa `costo × (1 + recargo)` y **margen** significa `costo / (1 - margen)`. Con `C` como costo productivo, `F` comisión fija y `f` comisión efectiva sobre venta sin IVA, el motor usa:
+
+```text
+venta neta por markup m = (C + F) × (1 + m) / [1 - f × (1 + m)]
+venta neta por margen g = (C + F) / (1 - g - f)
+comisión efectiva f = comisión % × (1 + IVA), si también se cobra sobre el IVA
+utilidad estimada = venta sin IVA - costo productivo - comisiones
+margen = utilidad / venta sin IVA
+markup efectivo = utilidad / (costo productivo + comisiones)
+```
+
+Los descuentos automáticos respetan el margen/precio mínimo antes del redondeo comercial. Un precio manual es el precio negociado final: **no recibe otra vez el descuento mayorista**; sí admite descuento adicional explícito. Se permite simular pérdidas, pero no emitir por debajo del mínimo. Cantidad × precio unitario mostrado reconcilia con la venta; el IVA queda fuera de la utilidad. El anticipo es un porcentaje del total del cliente. Los cargos fijos y variables se identifican en **Ver todos los cargos**.
+
+La utilidad es **estimada del pedido, no ganancia neta del negocio**. “Equilibrio” indica cuántas unidades de ese lote debes vender para recuperar su costo, no el punto de equilibrio de toda la empresa. El capital a financiar excluye comisiones de cobro y extras marcados sin desembolso; una tarifa integrada puede contener depreciación. Si ingresas trabajo a precio fijo sin duración, no se inventan horas laborales para calcular rentabilidad/hora.
+
+La planificación reparte tandas entre hasta 100 máquinas según disponibilidad inicial y factor de tiempo explícito. Acumula horas de máquina, pero las horas calendario consideran el paralelismo. Usa operación continua, capacidad de placa común compatible con todas las seleccionadas y preparación/retiro por tanda; no incorpora festivos, turnos, transporte ni competencia con otros pedidos. Horas de trabajo y reserva de reimpresión se muestran aparte, **no están incluidas en la fecha de impresión**. La entrega comercial se ingresa expresamente o queda “Por confirmar con producción”.
+
+Inventario es referencial por material: suma colores para no reutilizar el mismo saldo dos veces, muestra kg y bobinas a comprar, pero no descuenta ni reserva existencias. La optimización compara dos configuraciones; los gramos originales editables corresponden al primer color, dejando los demás iguales.
+
+#### Documentos, versiones y almacenamiento
+
+**Guardar borrador** conserva el trabajo editable. **Emitir / marcar enviada** crea una versión inmutable con entrada, resultados y configuración completa; no envía mensajes. Desde esa versión puedes previsualizar, exportar **PDF A4**, **PNG vertical**, **PNG compacto**, **HTML imprimible** o copiar texto. Una lista explícita de campos comerciales excluye costos, utilidad, fórmulas y notas internas. Los cambios pendientes bloquean exportar una versión distinta de la que estás editando.
+
+Abre `v1`, `v2`, etc. para consultar el resultado guardado sin recalcularlo. Aceptar bloquea la edición; duplica para otro pedido, con fechas renovadas y configuración vigente. “Convertida” crea una referencia local vinculada a la versión aceptada, **no un sistema completo de pedidos**. Análisis cuenta cada cotización una vez y considera aceptada/convertida como venta comprometida, no como dinero recaudado. Los costos reales se registran manualmente y no alteran la versión emitida.
+
+Los datos están en `quotations\quotations-v1.json` dentro de `app.getPath('userData')` de Electron (normalmente bajo `%APPDATA%`). El esquema nuevo es **versión 1**, sin migraciones destructivas ni cambios en proyectos 3D. Se crea al primer guardado; usa reemplazo atómico, bloqueo de escritura entre instancias y revisiones contra cambios concurrentes. Un historial corrupto genera error y no se reemplaza silenciosamente. El actor registrado es el usuario local del sistema operativo.
+
+Para respaldar, cierra la aplicación y copia `quotations-v1.json` a una ubicación segura. Si un cierre inesperado dejó `quotations-write.lock`, cierra **todas** las instancias antes de eliminar únicamente ese bloqueo; nunca borres el JSON para resolverlo. No se eliminan bloqueos automáticamente porque podría haber otra instancia escribiendo.
+
+**Alcance actual:** aplicación local de un operador, con interfaz adaptable a ventanas estrechas. No incluye despliegue web/móvil, autenticación y permisos por rol, sincronización, facturación fiscal, envío automático, integración transaccional de clientes/productos/pedidos/inventario ni planificación por turnos. Esos servicios no existen en la arquitectura actual y no se simulan como si estuvieran integrados.
+
+#### Arquitectura y regresiones
+
+| Archivos | Responsabilidad |
+|---|---|
+| `src\core\quotation.js` | Motor decimal, validación, producción, precios, escenarios, comparación y análisis |
+| `src\core\quote_document.js` | Modelo comercial público y documentos HTML/texto |
+| `src\main\quote_store.cjs`, `quote_export.cjs` | Persistencia versionada y exportación nativa Electron |
+| `main.js`, `preload.js` | Servicios IPC restringidos a la ventana principal |
+| `src\quote_ui.js`, `src\quote.css` | Interfaz independiente; navegación en `app.js`, `modules.js` e `index.html` |
+| `test\quotation.test.mjs`, `test\quote_store.test.mjs` | Casos históricos, límites, decimales, impuestos, privacidad, versiones y concurrencia |
+| `test\e2e\quote.e2e.cjs` | Flujo completo en Electron, archivos reales, reinicio y vista estrecha, con almacenamiento de prueba aislado |
+
+```powershell
+npm run test:quote
+node test\e2e\run.mjs quote
+node test\e2e\run.mjs pencil
+```
+
+`npm test` incluye las regresiones financieras sin reemplazar las geométricas; `npm run test:e2e` incluye el cotizador en el recorrido de todos los módulos. Capturas y documentos de prueba se guardan en `test\out\e2e\quote`, sin usar el historial real.
 
 ### Láminas para colorear
 

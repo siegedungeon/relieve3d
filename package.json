@@ -1,16 +1,20 @@
 {
   "name": "relieve3d",
-  "version": "1.14.2",
+  "version": "1.15.1",
   "description": "Convierte imágenes en modelos 3D por capas de color (llaveros, letreros, relieves) con vista previa 3D.",
   "main": "main.js",
   "scripts": {
+    "test:laser": "node --test test/laser.test.mjs && node test/e2e/run.mjs laser",
+    "test:pencil-batch": "node --test test/pencil_batch.test.mjs && node test/e2e/run.mjs pencil-batch",
     "postinstall": "node scripts/vendor.mjs",
     "prestart": "node scripts/vendor.mjs",
     "start": "electron .",
-    "test": "node test/pipeline.test.mjs && node test/watertight.test.mjs && node test/features.test.mjs && node test/pencil.test.mjs && node test/micbody.test.mjs && node test/elements.test.mjs && node test/accuracy.test.mjs && node test/thicken.test.mjs && node test/counters.test.mjs && node test/coloring.test.mjs && node test/coloring-illustration.test.mjs && node test/coloring-curves.test.mjs && node test/coloring-decorations.test.mjs && node test/hablador.test.mjs && node test/hablador_mockup.test.mjs && node test/solidparts.test.mjs && node test/splitjob.test.mjs && node test/colorsplit.test.mjs && node test/colorcarve.test.mjs && node test/colorseams.test.mjs && node test/colorsculpt.test.mjs && node test/colorsculpt_fit.test.mjs",
+    "test": "npm run test:laser:unit && npm run test:quote && node test/pipeline.test.mjs && node test/watertight.test.mjs && node test/features.test.mjs && node test/pencil.test.mjs && node test/micbody.test.mjs && node test/elements.test.mjs && node test/accuracy.test.mjs && node test/thicken.test.mjs && node test/counters.test.mjs && node test/coloring.test.mjs && node test/coloring-illustration.test.mjs && node test/coloring-curves.test.mjs && node test/coloring-decorations.test.mjs && node test/hablador.test.mjs && node test/hablador_mockup.test.mjs && node test/solidparts.test.mjs && node test/splitjob.test.mjs && node test/colorsplit.test.mjs && node test/colorcarve.test.mjs && node test/colorseams.test.mjs && node test/colorsculpt.test.mjs && node test/colorsculpt_fit.test.mjs",
     "test:e2e": "node test/e2e/run.mjs all",
+    "test:quote": "node --test test/quotation.test.mjs test/quote_store.test.mjs",
     "predist": "node scripts/vendor.mjs",
-    "dist": "electron-builder --win nsis"
+    "dist": "electron-builder --win nsis",
+    "test:laser:unit": "node --test test/laser.test.mjs"
   },
   "author": "pabon",
   "license": "UNLICENSED",
@@ -20,6 +24,7 @@
     "url": "https://github.com/siegedungeon/relieve3d.git"
   },
   "dependencies": {
+    "decimal.js": "^10.6.0",
     "electron-updater": "^6.8.9",
     "fflate": "^0.8.3",
     "manifold-3d": "^3.5.4",
@@ -39,6 +44,7 @@
     "files": [
       "main.js",
       "preload.js",
+      "build/icon.png",
       "src/**/*",
       "!test/**"
     ],

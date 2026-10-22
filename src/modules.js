@@ -1,5 +1,10 @@
 // Module catalogue: each module is a preset of settings + which option cards are shown.
+import { PENCIL_PRESET } from './core/pencil_batch.js';
 export const MODULES = [
+  {
+    id: 'quote', group: 'business', icon: '▤', title: 'Cotizador 3D · Pabonitas',
+    desc: 'Cotiza rápido con tiempo y gramos, sin cliente. Añade anillos u otros extras y continúa al proceso completo solo cuando lo necesites.',
+  },
   {
     id: 'keychain', group: '3d', icon: '🔑', title: 'Llavero', source: 'image',
     desc: 'Logo o nombre en 3 versiones (Sencillo, Medio, Premium), partes del logo a elección, argolla donde quieras, NFC, QR y lotes para empresas.',
@@ -7,11 +12,11 @@ export const MODULES = [
     patch: { widthMM: 50, base: { enabled: true, margin: 3, thickness: 2.6 }, ring: { enabled: true, pos: 'left', outer: 9, inner: 4.5, thickness: 2.6 } },
   },
   {
-    id: 'pencil', group: '3d', icon: '✏️', title: 'Marcador de lápiz', source: 'text',
-    desc: 'Nombre en relieve con canal dentro de la base y adornos personalizables.',
+    id: 'pencil', group: '3d', icon: '✏️', title: 'Nombres para lápices / lapiceros', source: 'text',
+    desc: 'Pega tu listado: nombres Matemasie blancos sobre base morada, sin figuras, con canal de 7.9 mm.',
     cards: ['text', 'base', 'pencil'],
-    patch: { widthMM: 63, base: { enabled: true, margin: 2, thickness: 12 }, pencil: { enabled: true, mount: 'integrated', type: 'round', value: 7.8, tolerance: 0, ends: 'open' } },
-    text: { text: 'Linda', font: 'Fredoka', weight: 700, outline: false, fill: '#dc397b', baseColor: '#ffffff', decoration: 'ribbon' },
+    patch: PENCIL_PRESET.patch,
+    text: PENCIL_PRESET.text,
   },
   {
     id: 'mic', group: '3d', icon: '🎤', title: 'Logo para micrófono', source: 'image',
@@ -78,6 +83,10 @@ export const MODULES = [
   {
     id: 'hablador', group: '2d', icon: '🪧', title: 'Hablador acrílico',
     desc: 'Despiece para corte láser (acrílico blanco y negro) desde un mockup: placas QR, NFC, porta tarjetas, logo, base con ranuras y plantilla de pegado.',
+  },
+  {
+    id: 'laser', group: '2d', icon: '✂️', title: 'Distribución para corte láser',
+    desc: 'Acomoda figuras SVG y sus anillos por silueta real. Giros libres, cantidades equilibradas, separación comprobada y exportación a escala real.',
   },
   {
     id: 'colorsplit', group: '3d', icon: '🎨', title: 'Separar colores 3D',

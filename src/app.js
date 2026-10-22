@@ -4,7 +4,10 @@ import { shapesToGeometry, toWorld } from './core/geometry.js';
 import { stlBinary, threeMF, objWithMtl, svg, mergeToIndexed } from './core/exporters.js';
 import { buildFeatures, DEFAULT_SETTINGS, pencilAcross } from './core/features.js';
 import { renderTextImage, ensureFont, BUNDLED_FONTS, DEFAULT_TEXT, decorationWidthMM } from './core/text.js';
+import { FontPicker } from './font_picker.js';
 import { preparePencil, joinedPencilGeometry } from './core/pencil.js';
+import { planPencilName } from './core/pencil_batch.js';
+import { PencilBatchUI } from './pencil_batch_ui.js';
 import { MODULES, MIC_PRESETS, CAKE_PRESETS, mergeDeep } from './modules.js';
 import { detectElements, presetSelection, composeLayout, qrCanvas } from './core/elements.js';
 import { nearestBambu, luminance, labDist } from './core/bambu.js';
@@ -15,6 +18,8 @@ import { Studio } from './studio.js';
 import { HabladorStudio } from './hablador_ui.js';
 import { ColorSplitStudio } from './colorsplit_ui.js';
 import { ColoringStudio } from './coloring_ui.js';
+import { QuoteStudio } from './quote_ui.js';
+import { LaserStudio } from './laser_ui.js';
 
 const $ = (id) => document.getElementById(id);
 const fmt = (v) => String(Math.round(v * 100) / 100);
@@ -262,7 +267,7 @@ async function runProcessing(state = null, { keepSettings = false, textVersion =
   try {
     if (textVersion !== textSeq) return;
     const t0 = performance.now();
-    const res = processImage(getImageData(S.image.el, S.proc.maxRes), { ...S.proc, widthMM: S.settings?.widthMM });
+    const res = processImage(getImageData(S.image.el, S.proc.maxRes), { ...S.proc, widthMM: state?.settings?.widthMM ?? S.settings?.widthMM });
     const prevSettings = S.settings;
     S.result = res;
     S.selection.clear();
@@ -1070,6 +1075,10 @@ async function openProjectFile(file) {
       return;
     }
     const j = JSON.parse(await file.text());
+    if (j.app === 'Relieve3D-Laser') {
+      laser.openProject(j); quote.close(); coloring.close(); hideHome();
+      $('studio').hidden = true; $('hablador').hidden = true; $('colorsplit').hidden = true; return;
+    }
     if (j.app === 'Relieve3D-Coloring') {
       if (await coloring.openProject(j)) {
         hideHome(); $('studio').hidden = true; $('hablador').hidden = true; $('colorsplit').hidden = true;
@@ -1233,15 +1242,17 @@ $('selSameLevel').onclick = () => {
 
 // drag & drop
 const dz = $('dropZone');
-document.addEventListener('dragover', (e) => { e.preventDefault(); dz.classList.remove('hidden'); dz.classList.add('drag'); });
+document.addEventListener('dragover', (e) => { e.preventDefault(); if (!$('quote').hidden || !$('laser').hidden) return; dz.classList.remove('hidden'); dz.classList.add('drag'); });
 document.addEventListener('dragleave', (e) => { if (e.relatedTarget === null) { dz.classList.remove('drag'); if (S.image || S.source === 'text' || !$('home').hidden || !$('studio').hidden) dz.classList.add('hidden'); } });
 document.addEventListener('drop', (e) => {
   e.preventDefault();
+  if (!$('laser').hidden) { for (const file of e.dataTransfer.files) laser.guard(() => laser.loadFile(file)); return; }
+  if (!$('quote').hidden) { toast('El logo comercial se carga desde Configuración del cotizador.'); return; }
   dz.classList.remove('drag');
   if (S.image || S.source === 'text') dz.classList.add('hidden');
   const f = e.dataTransfer.files[0];
   if (!f) return;
-  if (/\.r3c$/i.test(f.name)) { openProjectFile(f); return; }
+  if (/\.(r3c|r3l)$/i.test(f.name)) { openProjectFile(f); return; }
   if (!$('coloring').hidden) {
     if (/\.(r3d|r3s|r3h)$/i.test(f.name)) openProjectFile(f); else coloring.loadFile(f);
     return;
@@ -1257,7 +1268,7 @@ document.addEventListener('drop', (e) => {
 
 // keyboard
 window.addEventListener('keydown', (e) => {
-  if (isTyping(e) || !$('home').hidden || !$('studio').hidden || !$('hablador').hidden || !$('colorsplit').hidden || !$('coloring').hidden) return;
+  if (isTyping(e) || !$('home').hidden || !$('studio').hidden || !$('hablador').hidden || !$('colorsplit').hidden || !$('coloring').hidden || !$('quote').hidden || !$('laser').hidden) return;
   const k = e.key.toLowerCase(), ctrl = e.ctrlKey || e.metaKey;
   if (ctrl && k === 'z' && !e.shiftKey) { e.preventDefault(); undo(); }
   else if (ctrl && (k === 'y' || (k === 'z' && e.shiftKey))) { e.preventDefault(); redo(); }
@@ -1290,6 +1301,12 @@ function fontOptions(systemFonts = []) {
 let systemFonts = [];
 $('txtFont').innerHTML = fontOptions();
 $('backFont').innerHTML = fontOptions();
+const textFontPicker = new FontPicker($('txtFont'), {
+  sample: () => S.text, label: 'Fuente del texto', onError: toast,
+});
+const backFontPicker = new FontPicker($('backFont'), {
+  sample: () => ({ text: $('backText').value, weight: 700 }), label: 'Fuente del grabado trasero', onError: toast,
+});
 window.api?.listFonts?.().then((list) => {
   systemFonts = list.filter((f) => !BUNDLED_FONTS.some((b) => b.family === f));
   const v = $('txtFont').value;
@@ -1314,7 +1331,9 @@ function syncTextInputs() {
   $('decorationFields').hidden = S.text.decoration === 'none';
   $('fontPreview').style.fontFamily = `"${S.text.font}"`;
   $('fontPreview').style.fontWeight = S.text.weight;
+  $('fontPreview').style.fontStyle = S.text.italic ? 'italic' : 'normal';
   $('fontPreview').textContent = (S.text.text || 'Aa').split('\n')[0];
+  textFontPicker.sync();
   document.querySelectorAll('#sourceSeg .seg-btn').forEach((b) => b.classList.toggle('active', b.dataset.src === S.source));
   $('textFields').hidden = S.source !== 'text';
   $('procCard').hidden = S.source === 'text';
@@ -1329,7 +1348,7 @@ async function applyText() {
     if (seq !== textSeq) return;
     if (!String(S.text.text).trim()) throw new Error('Escribe un texto.');
     const r = renderTextImage(S.text, S.settings.widthMM);
-    S.proc = { ...DEFAULT_PROC, colors: r.colors, removeBg: 'no', maxRes: 1600, detail: 0.6, minArea: 0 };
+    S.proc = { ...DEFAULT_PROC, colors: r.colors, removeBg: 'no', maxRes: 1600, detail: 0.6, minArea: 0, upscale: false };
     await loadImage(r.dataURL, 'texto.png', null, { keep: !!S.result, source: 'text', textVersion: seq });
     if (seq === textSeq) { textError = ''; renderWarnings(); }
   } catch (err) {
@@ -1817,6 +1836,7 @@ function syncBackFont() {
   const el = $('backFont'), v = S.settings.back?.font || 'Poppins Black';
   if (![...el.options].some((o) => o.value === v)) el.insertAdjacentHTML('beforeend', `<option value="${escHtml(v)}">${escHtml(v)}</option>`);
   el.value = v;
+  backFontPicker.sync();
 }
 
 // ---------------------------------------------------------------- modules & home
@@ -1826,17 +1846,26 @@ const studio = new Studio($('studio'), {
   hideBusy,
   onBack: () => showHome(),
   onSendTo3D: (payload) => sendStudioTo3D(payload),
+  onSendToLaser: async (svg, name) => {
+    await laser.importSVG(svg, { name, join: true });
+    await enterModule('laser');
+  },
 });
 const hablador = new HabladorStudio($('hablador'), { toast, showBusy, hideBusy, onBack: () => showHome() });
 const colorsplit = new ColorSplitStudio($('colorsplit'), { toast, showBusy, hideBusy, onBack: () => showHome() });
 const coloring = new ColoringStudio($('coloring'), { toast, showBusy, hideBusy, onBack: () => showHome() });
+const quote = new QuoteStudio($('quote'), { toast, onBack: () => showHome() });
+const laser = new LaserStudio($('laser'), { toast, onBack: () => showHome() });
 
 function renderHome() {
   const card = (m) => `<button class="home-card" data-mod="${m.id}"><span class="hc-icon">${m.icon}</span><span class="hc-title">${escHtml(m.title)}</span><span class="hc-desc">${escHtml(m.desc)}</span></button>`;
   $('homeGrid3d').innerHTML = MODULES.filter((m) => m.group === '3d').map(card).join('');
   $('homeGrid2d').innerHTML = MODULES.filter((m) => m.group === '2d').map(card).join('');
+  $('homeGridBusiness').innerHTML = MODULES.filter((m) => m.group === 'business').map(card).join('');
 }
 function showHome() {
+  laser.close();
+  quote.close();
   coloring.close();
   $('studio').hidden = true;
   $('hablador').hidden = true;
@@ -1853,6 +1882,7 @@ function applyModuleUI() {
   const all = $('showAllCards').checked;
   document.querySelectorAll('[data-card]').forEach((el) => { el.hidden = !(all || m.cards.includes(el.dataset.card)); });
   $('textCard').hidden = !m.cards.includes('text');
+  $('pencilBatchCard').hidden = S.module !== 'pencil';
   if (!S.result) $('dropZone').classList.toggle('hidden', S.source === 'text');
   syncTextInputs();
   renderElements();
@@ -1887,6 +1917,18 @@ function clearDesign() {
 
 async function enterModule(id) {
   const m = moduleDef(id);
+  if (id === 'laser') {
+    quote.close(); coloring.close(); hideHome();
+    $('studio').hidden = true; $('hablador').hidden = true; $('colorsplit').hidden = true;
+    laser.open(); return;
+  }
+  laser.close();
+  if (id === 'quote') {
+    coloring.close();
+    hideHome(); $('studio').hidden = true; $('hablador').hidden = true; $('colorsplit').hidden = true;
+    await quote.open(); return;
+  }
+  quote.close();
   if (id === 'coloring') {
     hideHome(); $('studio').hidden = true; $('hablador').hidden = true; $('colorsplit').hidden = true;
     await coloring.open(); return;
@@ -1917,6 +1959,10 @@ async function enterModule(id) {
   applyModuleUI();
   if (m.source === 'text') {
     S.text = { ...DEFAULT_TEXT(), ...(m.text || {}) };
+    if (id === 'pencil') {
+      const plan = await planPencilName(S.text.text);
+      S.text = plan.text; S.settings.widthMM = plan.widthMM;
+    }
     syncTextInputs();
     await applyText();
   }
@@ -1942,8 +1988,10 @@ async function sendStudioTo3D({ dataURL, colors, widthMM, name, module, outlined
   commit();
 }
 
+const pencilBatch = new PencilBatchUI({ toast, openProject: openProjectFile });
 $('homeGrid3d').addEventListener('click', (e) => { const b = e.target.closest('[data-mod]'); if (b) enterModule(b.dataset.mod); });
 $('homeGrid2d').addEventListener('click', (e) => { const b = e.target.closest('[data-mod]'); if (b) enterModule(b.dataset.mod); });
+$('homeGridBusiness').addEventListener('click', (e) => { const b = e.target.closest('[data-mod]'); if (b) enterModule(b.dataset.mod); });
 $('homeContinue').onclick = () => { if (S.result) hideHome(); };
 $('homeOpenProject').onclick = () => $('fileProject').click();
 $('btnHome').onclick = showHome;
@@ -1964,7 +2012,7 @@ if (stUpdate) {
     else if (d.state === 'up-to-date' || d.state === 'error') stUpdate.hidden = true;
   });
 }
-window.__r3d = { S, setSelection, doExport, exportParts, saveProject, openProjectFile, undo, redo, commit, hist, setViewMode, enterModule, applyText, showHome, studio, hablador, colorsplit, coloring, getFeat: () => feat, onSettingChanged, placeRing, loadImageFile, view2d,
+window.__r3d = { S, setSelection, doExport, exportParts, saveProject, openProjectFile, undo, redo, commit, hist, setViewMode, enterModule, applyText, showHome, studio, hablador, colorsplit, coloring, quote, laser, getFeat: () => feat, onSettingChanged, placeRing, loadImageFile, view2d,
   applyTier, applyComposition, getOrig: () => orig, ringSnap, gramsEstimate, viewer, renderElements };
 
 syncProcInputs();

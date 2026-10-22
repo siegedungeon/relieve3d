@@ -2,7 +2,7 @@
 import fs from 'fs';
 import path from 'path';
 const root = path.resolve(path.dirname(new URL(import.meta.url).pathname.replace(/^\/(\w:)/, '$1')), '..');
-const files = ['controls/OrbitControls.js', 'environments/RoomEnvironment.js', 'utils/BufferGeometryUtils.js'];
+const files = ['controls/OrbitControls.js', 'environments/RoomEnvironment.js', 'utils/BufferGeometryUtils.js', 'loaders/SVGLoader.js'];
 for (const f of files) {
   const src = path.join(root, 'node_modules/three/examples/jsm', f);
   const dst = path.join(root, 'src/vendor/three-addons', f);

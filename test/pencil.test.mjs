@@ -20,7 +20,7 @@ const b = result.fgBBox, center = [(b[0] + b[2]) / 2, (b[1] + b[3]) / 2];
 const preset = MODULES.find(m => m.id === 'pencil');
 assert.equal(DEFAULT_SETTINGS().pencil.mount, 'side', 'old projects retain the external sleeve');
 assert.equal(preset.patch.pencil.mount, 'integrated', 'new pencil models use the reference construction');
-assert.equal(preset.text.decoration, 'ribbon');
+assert.equal(preset.text.decoration, 'none');
 const settings = patch => mergeDeep(mergeDeep(DEFAULT_SETTINGS(), structuredClone(preset.patch)), patch);
 
 for (const type of ['round', 'hex', 'triangle']) for (const width of [35, 63, 90]) {

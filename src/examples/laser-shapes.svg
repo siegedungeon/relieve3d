@@ -1,0 +1,9 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="480mm" height="400mm" viewBox="0 0 480 400">
+  <g id="Arbol"><path d="M40 5 L65 35 H55 L75 60 H48 V75 H32 V60 H5 L25 35 H15 Z" fill="none" stroke="#e00000" stroke-width=".05"/></g>
+  <g id="Campana" transform="translate(90 0)"><path d="M10 60 Q23 50 22 30 Q22 10 40 10 Q58 10 58 30 Q57 50 70 60 Z M33 65 Q40 78 47 65 Z" fill="none" stroke="#e00000" stroke-width=".05"/></g>
+  <g id="Estrella" transform="translate(180 0)"><path d="M40 5 L49 28 L75 29 L55 46 L61 72 L40 57 L19 72 L25 46 L5 29 L31 28 Z" fill="none" stroke="#e00000" stroke-width=".05"/></g>
+  <g id="Corazon" transform="translate(0 100)"><path d="M40 70 C-20 30 10 -8 40 20 C70 -8 100 30 40 70 Z" fill="none" stroke="#e00000" stroke-width=".05"/></g>
+  <g id="Gota" transform="translate(90 100)"><path d="M40 5 C30 25 10 40 10 53 C10 82 70 82 70 53 C70 40 50 25 40 5 Z" fill="none" stroke="#e00000" stroke-width=".05"/></g>
+  <g id="Hoja" transform="translate(180 100)"><path d="M5 65 C5 10 50 5 75 5 C75 65 30 75 5 65 Z" fill="none" stroke="#e00000" stroke-width=".05"/><path d="M15 58 L60 20" fill="none" stroke="#111111" stroke-width=".1"/></g>
+  <g id="Anillo" transform="translate(300 100)" fill="none" stroke="#e00000" stroke-width=".05"><circle cx="15" cy="15" r="11"/><circle cx="15" cy="15" r="8"/></g>
+</svg>

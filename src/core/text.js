@@ -1,5 +1,5 @@
-// Renders text to a flat-colour image that feeds the normal vectorization pipeline (3D modules with names/text).
-import { dilate } from './raster.js';
+// Renders text at the vectorizer's resolution, retaining antialiasing for sub-pixel contours.
+import { edt } from './raster.js';
 
 export const BUNDLED_FONTS = [
   { family: 'Lilita One', file: 'LilitaOne-Regular.ttf', cat: 'Gruesas (recomendadas para 3D)' },
@@ -56,21 +56,24 @@ export const DECORATIONS = {
 export const decorationWidthMM = t => DECORATIONS[t.decoration] ? t.decorationSize * DECORATIONS[t.decoration].width / DECORATIONS[t.decoration].height : 0;
 
 const loaded = new Map();
-export async function ensureFont(family, weight = 400) {
-  const b = BUNDLED_FONTS.find((f) => f.family === family);
+export async function ensureFont(family, weight = 400, source = null) {
+  const b = source || BUNDLED_FONTS.find((f) => f.family === family);
   if (b && !loaded.has(family)) {
     const ff = new FontFace(family, `url(fonts/${b.file})`, b.variable ? { weight: '100 900' } : {});
-    loaded.set(family, ff.load().then((f) => { document.fonts.add(f); }).catch((e) => console.warn('font', family, e)));
+    loaded.set(family, ff.load().then((f) => { document.fonts.add(f); }).catch((error) => {
+      loaded.delete(family);
+      throw error;
+    }));
   }
   if (loaded.has(family)) await loaded.get(family);
-  try { await document.fonts.load(`${weight} 80px "${family}"`); } catch { /* system font */ }
+  await document.fonts.load(`${weight} 80px ${JSON.stringify(family)}`);
 }
 
 const FONT_PX = 220;
 const hexRGB = (h) => { const n = parseInt(h.slice(1), 16); return [(n >> 16) & 255, (n >> 8) & 255, n & 255]; };
 
 // widthMM: final design width; used to convert mm borders into pixels. Returns { dataURL, colors, width, height }.
-export function renderTextImage(t, widthMM) {
+export function renderTextImage(t, widthMM, maxRes = 1600) {
   const lines = String(t.text || ' ').split(/\r?\n/);
   const c = document.createElement('canvas');
   const ctx = c.getContext('2d', { willReadFrequently: true });
@@ -107,9 +110,12 @@ export function renderTextImage(t, widthMM) {
   const pad = Math.ceil(th + ol + 16);
   const textH = asc + desc + lineStep * (lines.length - 1), decoH = deco ? t.decorationSize * pxPerMM : 0;
   const artworkH = Math.max(textH, decoH);
-  c.width = Math.ceil(textW + (decoWMM + gapMM) * pxPerMM + pad * 2);
-  c.height = Math.ceil(artworkH + pad * 2);
+  const width = textW + (decoWMM + gapMM) * pxPerMM + pad * 2, height = artworkH + pad * 2;
+  const resolution = maxRes / Math.max(width, height);
+  c.width = Math.ceil(width * resolution);
+  c.height = Math.ceil(height * resolution);
   setup();
+  ctx.scale(resolution, resolution);
   const xFor = (i) => {
     const m = ms[i];
     if (t.align === 'left') return pad + m.actualBoundingBoxLeft * scaleX;
@@ -117,42 +123,35 @@ export function renderTextImage(t, widthMM) {
     return pad + (textW - lw[i] * scaleX) / 2 + m.actualBoundingBoxLeft * scaleX;
   };
   const yFor = i => pad + (artworkH - textH) / 2 + asc + i * lineStep;
-  let glyphMask;
-  if (scaleX !== 1) {
-    lines.forEach((l, i) => {
-      ctx.save();
-      ctx.translate(xFor(i), yFor(i));
-      ctx.scale(scaleX, 1);
-      ctx.fillText(l, 0, 0);
-      ctx.restore();
-    });
-    const pixels = ctx.getImageData(0, 0, c.width, c.height).data;
-    glyphMask = new Uint8Array(c.width * c.height);
-    for (let i = 0; i < glyphMask.length; i++) glyphMask[i] = pixels[i * 4 + 3] >= 110 ? 1 : 0;
-    ctx.clearRect(0, 0, c.width, c.height);
-  }
+  lines.forEach((l, i) => {
+    ctx.save();
+    ctx.translate(xFor(i), yFor(i));
+    ctx.scale(scaleX, 1);
+    ctx.fillText(l, 0, 0);
+    ctx.restore();
+  });
+  const pixels = ctx.getImageData(0, 0, c.width, c.height).data;
+  const glyphMask = Uint8Array.from({ length: c.width * c.height }, (_, i) => pixels[i * 4 + 3] >= 128 ? 1 : 0);
+  // Offset the filled glyphs, not strokeText's overlapping paths: those can leave pinholes in script fonts.
+  // Growing after the horizontal transform also keeps borders isotropic in millimetres.
+  const distance = th + ol > 0 ? edt(glyphMask, c.width, c.height) : null;
+  const img = ctx.createImageData(c.width, c.height), d = img.data;
   const pass = (color, grow) => {
-    if (glyphMask) {
-      // Grow after transforming the glyphs so mm borders remain isotropic.
-      const mask = grow > 0 ? dilate(glyphMask, c.width, c.height, grow) : glyphMask;
-      const img = ctx.getImageData(0, 0, c.width, c.height), rgb = hexRGB(color);
-      for (let i = 0; i < mask.length; i++) if (mask[i]) {
-        img.data.set(rgb, i * 4); img.data[i * 4 + 3] = 255;
-      }
-      ctx.putImageData(img, 0, 0);
-      return;
+    const rgb = hexRGB(color), radius = grow * resolution;
+    for (let i = 0; i < glyphMask.length; i++) {
+      const p = i * 4;
+      const a = radius > 0 ? Math.max(pixels[p + 3] / 255, Math.min(1, Math.max(0, radius + 0.5 - distance[i]))) : pixels[p + 3] / 255;
+      if (!a) continue;
+      const under = d[p + 3] / 255 * (1 - a), alpha = a + under;
+      for (let k = 0; k < 3; k++) d[p + k] = (rgb[k] * a + d[p + k] * under) / alpha;
+      d[p + 3] = alpha * 255;
     }
-    ctx.fillStyle = color; ctx.strokeStyle = color;
-    lines.forEach((l, i) => {
-      const x = xFor(i), y = yFor(i);
-      if (grow > 0) { ctx.lineWidth = grow * 2; ctx.strokeText(l, x, y); }
-      ctx.fillText(l, x, y);
-    });
   };
   const colors = [];
   if (ol > 0) { pass(t.outlineColor, th + ol); colors.push(t.outlineColor); }
   pass(t.fill, th);
   colors.push(t.fill);
+  ctx.putImageData(img, 0, 0);
   if (deco) {
     ctx.save();
     ctx.translate(pad + textW + th + ol + gapMM * pxPerMM, pad + (artworkH - decoH) / 2);
@@ -162,19 +161,5 @@ export function renderTextImage(t, widthMM) {
     ctx.restore();
     colors.push(t.decorationColor);
   }
-  // snap to flat colours with hard alpha so the vectorizer gets exact regions
-  const img = ctx.getImageData(0, 0, c.width, c.height), d = img.data;
-  const pal = [...new Set(colors)].map(hexRGB);
-  for (let i = 0; i < d.length; i += 4) {
-    if (d[i + 3] < 110) { d[i + 3] = 0; continue; }
-    let best = 0, bd = Infinity;
-    for (let k = 0; k < pal.length; k++) {
-      const dr = d[i] - pal[k][0], dg = d[i + 1] - pal[k][1], db = d[i + 2] - pal[k][2];
-      const dd = dr * dr + dg * dg + db * db;
-      if (dd < bd) { bd = dd; best = k; }
-    }
-    d[i] = pal[best][0]; d[i + 1] = pal[best][1]; d[i + 2] = pal[best][2]; d[i + 3] = 255;
-  }
-  ctx.putImageData(img, 0, 0);
-  return { dataURL: c.toDataURL('image/png'), colors: pal.length, width: c.width, height: c.height };
+  return { dataURL: c.toDataURL('image/png'), colors: new Set(colors).size, width: c.width, height: c.height };
 }

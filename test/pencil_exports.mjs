@@ -5,7 +5,7 @@ import Module from 'manifold-3d';
 import { read3MF } from '../src/core/threemf_read.js';
 
 export async function checkPencilExports(directory, name, channel,
-  { calibre = 7.8, height = 13.4, colors = 3, maxDimensions = null, minContourVariation = 0 } = {}) {
+  { calibre = 7.8, height = 13.4, colors = 3, maxDimensions = null, minContourVariation = 0, minWall = 0 } = {}) {
   const w = await Module(); w.setup();
   const model = read3MF(new Uint8Array(fs.readFileSync(path.join(directory, name + '.3mf'))));
   assert.equal(model.palette.length, colors, 'export keeps the selected colours');
@@ -21,10 +21,12 @@ export async function checkPencilExports(directory, name, channel,
   const measure = m => {
     const b = m.boundingBox(), [_, y, z] = channel.center;
     assert.equal(m.rayCast([b.min[0] - 1, y, z], [b.max[0] + 1, y, z]).length, 0, 'export retains a through-bore');
-    for (const x of [-20, 0, 20]) for (const [u, v] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) {
-      const ray = 10, hits = m.rayCast([x, y, z], [x, y + ray * u, z + ray * v]);
+    for (const x of [b.min[0] + 6, (b.min[0] + b.max[0]) / 2, b.max[0] - 6]) for (const [u, v] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) {
+      const ray = Math.max(b.max[1] - b.min[1], b.max[2] - b.min[2]) + 2;
+      const hits = m.rayCast([x, y, z], [x, y + ray * u, z + ray * v]);
       assert(hits.length > 0, 'no unintended side opening in channel');
       assert(Math.abs(hits[0].distance * ray * 2 - calibre) < 0.015, 'exported bore has the requested final calibre');
+      if (minWall) assert(hits.length >= 2 && (hits[1].distance - hits[0].distance) * ray >= minWall - 0.02, 'channel retains its minimum solid wall');
     }
     assert(Math.abs(b.max[2] - height) < 0.002, 'base and relief heights survive export');
     if (maxDimensions) for (let i = 0; i < 3; i++) {

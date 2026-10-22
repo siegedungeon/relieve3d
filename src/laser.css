@@ -1,0 +1,31 @@
+.laser-layout { display: grid; grid-template-columns: 290px minmax(0, 1fr); height: calc(100vh - 100px); min-height: 0; }
+.laser-settings { overflow: auto; padding: 10px; border-right: 1px solid #d9dde5; }
+.laser-work { display: flex; flex-direction: column; min-width: 0; min-height: 0; padding: 10px; gap: 8px; overflow: auto; }
+.laser-library { flex-shrink: 0; max-height: 280px; overflow: auto; }
+.laser-actions { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; flex-shrink: 0; }
+.laser-actions h3 { margin-right: auto; }
+.laser-piece { display: grid; grid-template-columns: 18px 58px minmax(125px, 1fr) minmax(120px, 1fr) minmax(130px, 1fr); gap: 8px; align-items: center; padding: 8px 0; border-top: 1px solid #e5e7eb; }
+.laser-piece-fields { display: flex; flex-direction: column; gap: 4px; min-width: 0; }
+.laser-piece-fields label { display: flex; align-items: center; justify-content: space-between; gap: 6px; font-size: 12px; }
+.laser-piece-fields input:not([type=checkbox]), .laser-piece-fields select { min-width: 0; max-width: 100%; }
+.laser-piece-fields input[type=number] { width: 65px; }
+.laser-piece-fields small { font-size: 11px; color: #596477; }
+.laser-thumb { width: 58px; height: 58px; background: white; border: 1px solid #d9dde5; border-radius: 5px; }
+.laser-thumb [stroke]:not([stroke="none"]), .laser-board [data-instance] [stroke]:not([stroke="none"]) { vector-effect: non-scaling-stroke; stroke-width: 1px; }
+.laser-board { flex: 1; min-height: 280px; overflow: auto; background: #d9dfe8; padding: 12px; border-radius: 8px; }
+.laser-board > svg { display: block; min-height: 260px; margin: auto; touch-action: none; }
+.laser-report { flex-shrink: 0; margin: 0; }
+.laser-report p { margin: 5px 0; }
+.laser-counts { display: flex; gap: 6px 20px; flex-wrap: wrap; font-size: 12px; }
+.laser-status { min-height: 34px; padding: 8px 14px; background: white; border-top: 1px solid #d9dde5; font-size: 12px; }
+.laser-ok { color: #17643d; }
+#laser .error { color: #b42318; }
+#laser .topbar { flex-wrap: wrap; height: auto; min-height: 60px; }
+#laser .row input, #laser .row select { max-width: 145px; }
+@media (max-width: 1200px) {
+  .laser-layout { grid-template-columns: 260px minmax(0, 1fr); }
+  #laser .topbar .brand { font-size: 12px; }
+  .laser-piece { grid-template-columns: 18px 44px minmax(100px, 1fr) minmax(105px, 1fr); }
+  .laser-piece > .laser-piece-fields:last-child { grid-column: 3 / -1; }
+  .laser-thumb { width: 44px; height: 44px; }
+}

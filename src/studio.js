@@ -3,6 +3,7 @@
 import { processImage, DEFAULT_PROC } from './core/processing.js';
 import { edt, dilate, close, fillHoles, fillSmallHoles, components, connectIslands, fillPolygon, traceMask, maskBBox, countOn, widenHoles, liftCounters } from './core/raster.js';
 import { renderTextImage, ensureFont, BUNDLED_FONTS } from './core/text.js';
+import { FontPicker } from './font_picker.js';
 import { CAKE_PRESETS } from './modules.js';
 import { imageReady } from './core/imageload.js';
 import { thickenLabels, strokeWidth } from './core/thicken.js';
@@ -72,6 +73,7 @@ export class Studio {
         <button class="btn icon" data-a="redo" title="Rehacer (Ctrl+Y)">↷</button>
       </div>
       <div class="spacer"></div>
+      <button class="btn" data-a="toLaser" title="Enviar el diseño completo, conservando su escala, a una lámina de corte">Distribuir en lámina</button>
       <div class="dropdown">
         <button class="btn" data-a="expMenu">⬇ Exportar ▾</button>
         <div class="menu" data-r="expMenu">
@@ -224,6 +226,13 @@ export class Studio {
     this.canvas = this.$('canvas');
     this.ctx = this.canvas.getContext('2d');
     this.fillFonts();
+    this.fontPickers = [
+      new FontPicker(q('[data-t="font"]'), { sample: () => this.st.text, label: 'Fuente del texto 2D', onError: this.cb.toast }),
+      new FontPicker(q('[data-e="font"]'), {
+        sample: () => ({ text: this.selEl()?.text || 'Texto', weight: this.selEl()?.weight || 700 }),
+        label: 'Fuente del elemento', onError: this.cb.toast,
+      }),
+    ];
     this.$('cakePreset').innerHTML = '<option value="">— elegir —</option>' + Object.entries(CAKE_PRESETS).map(([k, p]) => `<option value="${k}">${esc(p.name)}</option>`).join('');
     this.bind();
     new ResizeObserver(() => this.resize()).observe(this.$('viewWrap'));
@@ -251,6 +260,7 @@ export class Studio {
       else if (a === 'open') this.$('file').click();
       else if (a === 'openProject') this.$('fileProject').click();
       else if (a === 'save') this.saveProject();
+      else if (a === 'toLaser') this.sendToLaser();
       else if (a === 'undo') this.undo();
       else if (a === 'redo') this.redo();
       else if (a === 'fit') this.fit();
@@ -303,6 +313,7 @@ export class Studio {
     let tt;
     r.querySelectorAll('[data-t]').forEach((el) => el.addEventListener(el.tagName === 'TEXTAREA' ? 'input' : 'change', () => {
       this.st.text[el.dataset.t] = el.tagName === 'TEXTAREA' || el.dataset.t === 'font' ? el.value : +el.value;
+      this.fontPickers[0].sync();
       clearTimeout(tt); tt = setTimeout(() => this.loadText(), 400);
     }));
     let et;
@@ -313,6 +324,7 @@ export class Studio {
       let v = el.type === 'checkbox' ? el.checked : el.value;
       if (k === 'scale' || k === 'rot' || k === 'thicken') { v = parseNum(v); if (!Number.isFinite(v)) return; if (k === 'scale') v = Math.max(5, v) / 100; if (k === 'thicken') v = Math.max(0, Math.min(10, v)); }
       e[k] = v;
+      this.fontPickers[1].sync();
       clearTimeout(et); et = setTimeout(() => this.changed(), el.tagName === 'TEXTAREA' ? 350 : 0);
     }));
     r.querySelectorAll('input[type="text"]').forEach((el) => el.addEventListener('keydown', (e) => { if (e.key === 'Enter') el.blur(); }));
@@ -370,7 +382,7 @@ export class Studio {
     const t = this.st.text;
     if (!String(t.text).trim()) return;
     await ensureFont(t.font, t.weight);
-    const r = renderTextImage({ text: t.text, font: t.font, weight: t.weight, align: 'center', lineHeight: 1.0, fill: '#111111', outline: false, thicken: 0 }, this.st.widthMM);
+    const r = renderTextImage({ text: t.text, font: t.font, weight: t.weight, align: 'center', lineHeight: 1.0, fill: '#111111', outline: false, thicken: 0 }, this.st.widthMM, 1400);
     this.st.source = { kind: 'text', dataURL: r.dataURL, name: 'texto' };
     this.st.quant.colors = 2;
     this.st.elements = [];
@@ -400,6 +412,7 @@ export class Studio {
       const res = processImage(cx.getImageData(0, 0, w, h), {
         ...DEFAULT_PROC, colors: isText || src.kind === 'text' ? 0 : +q.colors, removeBg: src.kind === 'text' ? 'no' : q.removeBg,
         tolerance: q.tolerance, minArea: q.minArea, minWidth: +(q.minWidth ?? 0), maxRes,
+        upscale: src.kind === 'text' && Math.max(w, h) >= maxRes ? false : undefined,
       });
       // text: force a single colour
       if (src.kind === 'text') { res.palette = [res.palette[0]]; for (const p of res.pieces) p.cluster = 0; }
@@ -966,6 +979,7 @@ export class Studio {
       const fs = this.root.querySelector('[data-e="font"]');
       if (![...fs.options].some((o) => o.value === e.font)) fs.insertAdjacentHTML('beforeend', `<option>${esc(e.font)}</option>`);
       fs.value = e.font;
+      this.fontPickers[1].sync();
       this.root.querySelector('[data-e="color"]').innerHTML = st.palette.map((p, i) => `<option value="${i}">Color ${i + 1}</option>`).join('');
       this.root.querySelector('[data-e="color"]').value = String(e.color || 0);
     }
@@ -1037,6 +1051,7 @@ export class Studio {
       if (el.dataset.t === 'font' && ![...el.options].some((o) => o.value === v)) el.insertAdjacentHTML('beforeend', `<option>${esc(v)}</option>`);
       el.value = String(v);
     });
+    this.fontPickers[0].sync();
     const kind = st.source?.kind || (st.mode === 'cakelaser' ? 'text' : 'image');
     r.querySelectorAll('[data-src]').forEach((b) => b.classList.toggle('active', b.dataset.src === kind));
     this.$('srcImage').hidden = kind !== 'image';
@@ -1111,6 +1126,13 @@ export class Studio {
   }
 
   // ------------------------------------------------------------------ exports
+  async sendToLaser() {
+    try {
+      if (!this.comp?.bbox) throw new Error('No hay diseño para distribuir.');
+      const groups = this.layers().map(l => ({ name: l.name, color: l.color, shapes: this.traced(l.mask) }));
+      await this.cb.onSendToLaser(this.svgDoc(groups, this.comp.bbox, this.st.mode === 'cakelaser'), this.st.name || 'Diseño 2D');
+    } catch (error) { this.cb.toast('No se pudo enviar a corte láser: ' + error.message, true); }
+  }
   // Stacked layers (bottom → top) as masks with colours; avoids seams between colours.
   layers() {
     const c = this.comp, st = this.st, N = c.W * c.H, L = c.L;
