@@ -46,14 +46,19 @@ const shuffle = (array, random) => {
   for (let i = array.length - 1; i > 0; i--) { const j = Math.floor(random() * (i + 1)); [array[i], array[j]] = [array[j], array[i]]; }
   return array;
 };
-const pause = () => new Promise(resolve => setTimeout(resolve, 0));
+const pause = () => new Promise(resolve => {
+  const channel = new MessageChannel();
+  channel.port1.onmessage = () => { channel.port1.close(); channel.port2.close(); resolve(); };
+  channel.port2.postMessage(null);
+});
 
 export async function optimizeLaser(templates, input, { onProgress = () => {}, cancelled = () => false, seed = 431, maxTrials = Infinity } = {}) {
   const config = validateConfig(input); validateTemplates(templates);
   const active = templates.filter(t => t.enabled), figures = active.filter(t => t.role === 'figure');
   const cell = Math.max(0.6, Math.max(config.width, config.height) / 650);
   const w = Math.floor(config.width / cell), h = Math.floor(config.height / cell), stride = w + 1;
-  const margin = Math.ceil(config.margin / cell), startTime = Date.now(), deadline = startTime + config.seconds * 1000;
+  const margin = Math.ceil(config.margin / cell), startTime = Date.now();
+  let deadline = Infinity;
   const cache = new Map(), byId = new Map(active.map(t => [t.id, t]));
   const expired = () => cancelled() || Date.now() >= deadline;
   for (const t of active) {
@@ -68,6 +73,7 @@ export async function optimizeLaser(templates, input, { onProgress = () => {}, c
     cache.set(t.id, ors);
     onProgress({ phase: 'preparing', name: t.name, elapsed: (Date.now() - startTime) / 1000 });
   }
+  deadline = Date.now() + config.seconds * 1000;
   const sheet = () => {
     const occ = new Uint8Array(w * h), pre = new Int32Array(stride * h);
     for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) if (x < margin || y < margin || x >= w - margin || y >= h - margin) occ[y * w + x] = 1;

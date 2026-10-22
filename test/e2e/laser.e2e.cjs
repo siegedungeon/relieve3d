@@ -89,10 +89,12 @@ module.exports = async ({ win, run, shot, wait }) => {
   console.log('[e2e] ok   unitless SVG without viewBox uses the explicitly chosen units too');
   await set('#laser [data-config="mode"]', 'fill');
   await set('#laser [data-config="seconds"]', 30);
+  win.minimize();
   await click('#laser [data-action="optimize"]');
   await until('!!window.__r3d.laser.best', 'fill search produced no valid intermediate result', 45000);
   await click('#laser [data-action="cancel"]');
-  ok(await run('!window.__r3d.laser.worker && !!window.__r3d.laser.best?.placements.length'), 'cancelling keeps the best complete paired solution and releases the worker');
+  win.restore(); win.show(); win.focus();
+  ok(await run('!window.__r3d.laser.worker && !!window.__r3d.laser.best?.placements.length'), 'search works while minimized; cancelling keeps the best paired solution and releases the worker');
   await click('#laser [data-action="apply"]');
   await set('#laser [data-config="width"]', 20);
   await set('#laser [data-config="height"]', 20);

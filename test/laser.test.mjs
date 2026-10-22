@@ -58,3 +58,11 @@ test('a figure that fits without its oversized complement is never a completed g
   const result = await optimizeLaser(templates, { ...LASER_DEFAULTS, width: 30, height: 30, angleStep: 90, seconds: 2 }, { maxTrials: 1 });
   assert.equal(result.figures, 0); assert.equal(result.placements.length, 0);
 });
+test('preparing silhouettes does not consume the requested search budget', async () => {
+  const templates = [template('a', 10, 10), template('b', 10, 10), template('c', 10, 10)];
+  const result = await optimizeLaser(templates, { ...LASER_DEFAULTS, width: 100, height: 80, mode: 'exact', seconds: 1, angleStep: 90 }, {
+    maxTrials: 1,
+    onProgress: p => { if (p.phase === 'preparing') Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 350); },
+  });
+  assert.equal(result.figures, 6);
+});
