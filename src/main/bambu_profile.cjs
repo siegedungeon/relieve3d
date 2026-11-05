@@ -35,7 +35,7 @@ async function loadBambuPencilProfile(root) {
   return {
     ...result, from: 'project', version: '02.08.04.57',
     printer_settings_id: machine, print_settings_id: process, filament_settings_id: [filament, filament],
-    filament_ids: ['GFA00', 'GFA00'], filament_is_support: ['0', '0'],
+    filament_ids: ['GFA00', 'GFA00'], filament_is_support: ['0', '0'], filament_self_index: ['1', '2'],
     inherits_group: ['', '', '', ''], different_settings_to_system: [''],
     filament_map: ['1'], filament_map_2: ['1'], filament_map_mode: 'Auto For Flush',
     curr_bed_type: 'Textured PEI Plate', enable_support: '0', brim_type: 'no_brim', skirt_loops: '0',

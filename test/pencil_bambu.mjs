@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
 import { spawnSync } from 'node:child_process';
+import { fileURLToPath } from 'node:url';
 import Module from 'manifold-3d';
 import { unzipSync, strFromU8 } from 'fflate';
 import { read3MF } from '../src/core/threemf_read.js';
@@ -25,7 +26,7 @@ export async function checkBambuBatch(folder, output) {
   assert.equal(model.parts.length, report.models.length * 2);
   const archive = unzipSync(bytes), profile = JSON.parse(strFromU8(archive['Metadata/project_settings.config']));
   const savedProfile = JSON.parse(strFromU8(unzipSync(fs.readFileSync(source))['Metadata/project_settings.config']));
-  for (const key of ['best_object_pos', 'filament_colour', 'nozzle_temperature', 'different_settings_to_system']) {
+  for (const key of ['best_object_pos', 'filament_colour', 'filament_self_index', 'nozzle_temperature', 'different_settings_to_system']) {
     assert.deepEqual(savedProfile[key], profile[key], 'saved plate already uses the native project schema: ' + key);
   }
   assert.deepEqual(profile.filament_colour.map(c => c.toLowerCase()), ['#5e43b7', '#ffffff']);
@@ -79,5 +80,10 @@ export async function checkBambuBatch(folder, output) {
   assert.equal(plate.filament_change_times, 1);
   assert(plate.filaments.every(f => f.total_used_g > 0));
   assert(!plate.warning_message || /floating cantilever/.test(plate.warning_message), plate.warning_message);
+  const gui = spawnSync('powershell.exe', ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-File',
+    fileURLToPath(new URL('./e2e/bambu-open.ps1', import.meta.url)), '-Project', source], { encoding: 'utf8', timeout: 100000 });
+  assert.ifError(gui.error);
+  assert.equal(gui.status, 0, gui.stderr || 'Bambu GUI opens the actual saved plate');
+  assert(/GUI_VALID/.test(gui.stdout), 'Bambu GUI finishes opening the actual saved plate without a configuration error');
   return { objects: plate.objects.length, changes: plate.filament_change_times, warning: plate.warning_message, seconds: plate.total_predication };
 }

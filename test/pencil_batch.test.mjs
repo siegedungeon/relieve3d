@@ -74,6 +74,7 @@ test('installed printer inheritance and templates survive two-material export', 
     assert.equal(p.change_filament_gcode, 'A1 change');
     assert.deepEqual(p.nozzle_temperature, ['220', '220']);
     assert.deepEqual(p.filament_is_support, ['0', '0']);
+    assert.equal(new Set(p.filament_self_index).size, p.filament_settings_id.length, 'each colour retains its own Bambu material index');
     assert.equal(p.enable_support, '0');
     await put('machine', 'common', { inherits: 'Bambu Lab A1 0.4 nozzle' });
     await assert.rejects(loadBambuPencilProfile(root), /Referencia/);
