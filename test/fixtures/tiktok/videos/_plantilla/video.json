@@ -1,0 +1,29 @@
+{
+  "id": "{{ID}}",
+  "titulo": "{{TITULO}}",
+  "fps": 30,
+  "ajuste": "rellenar",
+  "voz": {
+    "texto": "Frase del hook mirando a cámara. | Lo que se ve en el b-roll. | Cierre y CTA que conecta con el inicio.",
+    "archivo": "clips/cara.mp4",
+    "voz": "es-CO-GonzaloNeural",
+    "velocidad": "+8%",
+    "tono": "+0Hz",
+    "volumen": 1.0
+  },
+  "subtitulos": { "activar": true, "palabras_por_linea": 3, "mayusculas": false },
+  "textos": [
+    { "texto": "TEXTO DEL HOOK", "escena": 1, "posicion": "arriba" }
+  ],
+  "musica": { "archivo": "", "volumen": 0.12, "atenuar_con_voz": true },
+  "ambiente_volumen": 0.6,
+  "efectos": [
+    { "archivo": "audio/sfx/pop.wav", "escena": 1, "en": 0.0, "volumen": 0.7 },
+    { "archivo": "audio/sfx/whoosh.wav", "escena": 2, "en": 0.0, "volumen": 0.5 }
+  ],
+  "escenas": [
+    { "archivo": "clips/cara.mp4", "sincronizar": true, "color": "#14181F", "texto": "CARA: hook a cámara con el producto en la mano" },
+    { "archivo": "clips/broll1.mp4", "audio_original": true, "color": "#1F2633", "texto": "B-ROLL 1: impresora / producto" },
+    { "archivo": "clips/cara.mp4", "sincronizar": true, "color": "#14181F", "texto": "CARA: cierre + CTA" }
+  ]
+}

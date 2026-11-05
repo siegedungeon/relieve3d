@@ -73,6 +73,8 @@ El texto 3D y el texto fuente del estudio 2D se generan directamente a la resolu
 
   Todo sale en curvas Bézier suaves (sin escalones, picos ni trazos finos, con control automático), acomodado en láminas y exportado como **SVG para CorelDRAW** (línea roja de 0,01 mm, página del tamaño de la lámina). Los proyectos se guardan como `.r3h` (incluyen el mockup).
 
+**Contenido y redes**: **Estudio TikTok · Pabonitas** prepara cada video de TikTok, desde el guion hasta la medición (ver abajo).
+
 ### Distribución para corte láser
 
 En **Inicio → Diseño 2D → Distribución para corte láser**, importa uno o varios SVG.
@@ -282,6 +284,34 @@ Convierte un modelo pintado por colores (3MF de Bambu Studio/MakerWorld, objetos
 - **Si el motor 3D falla** con un modelo en un modo (sin memoria o `Aborted()`), se avisa y el motor se reinicia solo: se puede probar otro modo sin cerrar la app (antes, tras un fallo, todos los modos fallaban hasta reiniciarla).
 - Límites: las franjas que envuelven esferas no pueden salir en una sola pieza (quedarían trabadas); si una pieza de color tiene la base delante en todas las direcciones o la rodea, se avisa; si solo la roza en un borde (menos del 5 % de su silueta) o encaja ajustada, se avisa que puede necesitar presión; en pliegues ocultos muy cerrados puede perderse ~2 % del color, que se retoca con pintura.
 
+### Estudio TikTok · Pabonitas
+
+Se abre en **Inicio → Contenido y redes**. Trabaja sobre la carpeta del plan TikTok (por defecto `Documentos\TikTok-Impresion3D`): lee el perfil, los precios, la voz de marca, los hashtags, la campaña y los registros CSV. No inventa precios: un producto sin precio en `estrategia/perfil-cuenta.md` sale como «cotiza gratis», con un aviso.
+
+Relieve3D escribe los guiones, prompts y captions, crea el kit de cada video y monta el video con tu voz. **Grabar, publicar y responder lo haces tú**: cada paso indica **dónde** hacerlo (Relieve3D, Bambu Studio, CapCut, la app de TikTok, TikTok Studio, Creative Center o ChatGPT/Copilot/Gemini) y trae un botón **Copiar** con el texto exacto para pegar.
+
+| Pestaña | Contenido |
+|---|---|
+| Hoy | Fase de la campaña, indicadores (publicados, vistas, consultas, ventas), videos de hoy y siguientes, siguiente hueco libre del calendario y pendientes de medir |
+| Kit del video | Los pasos del video en 7 fases: preparar, grabar, pasar al PC, montar, publicar, responder y medir. El estado de cada paso sale de los archivos reales de la carpeta (clips, voz, animatic, registro). Incluye **Guardar kit.md** y el selector de estado |
+| Crear guion | Producto, ocasión, objetivo, fórmula de hook, formato y fecha. Genera escenas grabables, teleprompter, texto en pantalla, caption con el precio real, hashtags y comentario fijado, y avisa si hay frases prohibidas o precios fuera del catálogo. **Crear video** genera `videos/VNNN-…` con `guion.md`, `video.json` y `kit.md`, y lo agenda en `registro/videos.csv` |
+| Prompts IA | 10 prompts con el contexto de la marca: mejorar guion, hooks, caption/SEO, respuestas con video, adaptar tendencia o sonido, ideas para la semana, diagnóstico, fondo de portada, DM/WhatsApp y tareas largas con Copilot CLI. Cada uno dice dónde pegarlo. La respuesta de la IA al guion (N bloques separados por `\|` o numerados) se aplica al borrador |
+| Responder y medir | Métricas a las 24 h, 72 h y 7 días (`registro/metricas.csv`) con diagnóstico frente a tu mediana, y pedidos atribuidos a cada video (`registro/pedidos-tiktok.csv`) |
+| Configuración | Carpeta del espacio, Python y documentos encontrados |
+
+**Montar** usa `herramientas\tiktok3d.py` del espacio y muestra su salida en vivo (botón **Ocultar/Mostrar**):
+
+- `voz` genera la voz guía (edge-tts) o transcribe tu voz grabada.
+- `video` crea el animatic con tarjetas para los clips que faltan, o el video final cuando ya están grabados.
+- `revisar` saca fotogramas de control.
+- `estado` y `panel` actualizan el registro y el panel HTML del plan.
+
+Solo se ejecutan esos comandos, con rutas dentro de `videos/`.
+
+Los CSV no guardan datos de clientes: se rechazan teléfonos y @usuarios. Las celdas que empiezan por `=`, `+`, `-` o `@` se escriben como texto. Se aceptan números con formato colombiano (`1.234`, `6,5`).
+
+Requisitos: el espacio TikTok con `herramientas\tiktok3d.py` y Python 3 (con `edge-tts` para la voz guía). Para el montaje, ffmpeg también debe estar instalado.
+
 ## Flujo de trabajo (modelos 3D)
 
 1. **Abrir imagen** (o arrastrarla a la ventana). Ideal: PNG con fondo transparente y colores planos. Si el fondo es blanco/sólido se quita automáticamente.
@@ -324,6 +354,16 @@ npm run dist       # genera el instalador en dist/
 ```
 
 Cada error corregido queda cubierto por una prueba en `test/` (falla con el código anterior). Las pruebas E2E (`test/e2e/`) abren la app, recorren el módulo entero y exportan; capturas y archivos quedan en `test/out/e2e/`. Para probar un archivo propio: `node test/e2e/run.mjs colorsplit "C:\ruta\modelo.3mf"` (o `logo imagen.png`, `hablador mockup.png`).
+
+Estudio TikTok: `npm run test:tiktok` (unitarias, con datos de `test/fixtures/tiktok/`) y `node test/e2e/run.mjs tiktok`.
+
+El E2E copia el espacio real (`R3D_TIKTOK_E2E_SRC` o `Documentos\TikTok-Impresion3D`) en `test/out/e2e/tiktok/` y recorre el flujo completo sobre la copia: kit, guion, prompts, crear video, voz guía, animatic, revisar, publicar, métricas, pedido y panel. Al final comprueba que el original no cambió. Necesita Python, ffmpeg e internet para edge-tts.
+
+Variables de entorno:
+
+- `R3D_TIKTOK_DIR` fija la carpeta.
+- `R3D_TIKTOK_TODAY` fija la fecha.
+- `R3D_TIKTOK_NO_OPEN` registra los enlaces y carpetas en lugar de abrirlos.
 
 Comparación de modos (separar colores 3D): `node test/tools/bench.mjs --models="C:\ruta\a.3mf|fx:figure" --modes=carve,covers --out=test/out/bench --force` separa cada modelo en cada modo y mide piezas inválidas, agujeros/asas (genus), volumen faltante/sobrante, solapes, superficie de menos de 0.4/0.8 mm, error de color y piezas trabadas (`bench.md`).
 

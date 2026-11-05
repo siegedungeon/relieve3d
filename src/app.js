@@ -19,6 +19,7 @@ import { HabladorStudio } from './hablador_ui.js';
 import { ColorSplitStudio } from './colorsplit_ui.js';
 import { ColoringStudio } from './coloring_ui.js';
 import { QuoteStudio } from './quote_ui.js';
+import { TiktokStudio } from './tiktok_ui.js';
 import { LaserStudio } from './laser_ui.js';
 
 const $ = (id) => document.getElementById(id);
@@ -1242,12 +1243,13 @@ $('selSameLevel').onclick = () => {
 
 // drag & drop
 const dz = $('dropZone');
-document.addEventListener('dragover', (e) => { e.preventDefault(); if (!$('quote').hidden || !$('laser').hidden) return; dz.classList.remove('hidden'); dz.classList.add('drag'); });
+document.addEventListener('dragover', (e) => { e.preventDefault(); if (!$('quote').hidden || !$('laser').hidden || !$('tiktok').hidden) return; dz.classList.remove('hidden'); dz.classList.add('drag'); });
 document.addEventListener('dragleave', (e) => { if (e.relatedTarget === null) { dz.classList.remove('drag'); if (S.image || S.source === 'text' || !$('home').hidden || !$('studio').hidden) dz.classList.add('hidden'); } });
 document.addEventListener('drop', (e) => {
   e.preventDefault();
   if (!$('laser').hidden) { for (const file of e.dataTransfer.files) laser.guard(() => laser.loadFile(file)); return; }
   if (!$('quote').hidden) { toast('El logo comercial se carga desde Configuración del cotizador.'); return; }
+  if (!$('tiktok').hidden) { toast('En el Estudio TikTok los clips se copian a la carpeta del video: usa «Abrir carpeta del video».'); return; }
   dz.classList.remove('drag');
   if (S.image || S.source === 'text') dz.classList.add('hidden');
   const f = e.dataTransfer.files[0];
@@ -1268,7 +1270,7 @@ document.addEventListener('drop', (e) => {
 
 // keyboard
 window.addEventListener('keydown', (e) => {
-  if (isTyping(e) || !$('home').hidden || !$('studio').hidden || !$('hablador').hidden || !$('colorsplit').hidden || !$('coloring').hidden || !$('quote').hidden || !$('laser').hidden) return;
+  if (isTyping(e) || !$('home').hidden || !$('studio').hidden || !$('hablador').hidden || !$('colorsplit').hidden || !$('coloring').hidden || !$('quote').hidden || !$('laser').hidden || !$('tiktok').hidden) return;
   const k = e.key.toLowerCase(), ctrl = e.ctrlKey || e.metaKey;
   if (ctrl && k === 'z' && !e.shiftKey) { e.preventDefault(); undo(); }
   else if (ctrl && (k === 'y' || (k === 'z' && e.shiftKey))) { e.preventDefault(); redo(); }
@@ -1856,17 +1858,20 @@ const colorsplit = new ColorSplitStudio($('colorsplit'), { toast, showBusy, hide
 const coloring = new ColoringStudio($('coloring'), { toast, showBusy, hideBusy, onBack: () => showHome() });
 const quote = new QuoteStudio($('quote'), { toast, onBack: () => showHome() });
 const laser = new LaserStudio($('laser'), { toast, onBack: () => showHome() });
+const tiktok = new TiktokStudio($('tiktok'), { toast, onBack: () => showHome(), openModule: (id) => enterModule(id) });
 
 function renderHome() {
   const card = (m) => `<button class="home-card" data-mod="${m.id}"><span class="hc-icon">${m.icon}</span><span class="hc-title">${escHtml(m.title)}</span><span class="hc-desc">${escHtml(m.desc)}</span></button>`;
   $('homeGrid3d').innerHTML = MODULES.filter((m) => m.group === '3d').map(card).join('');
   $('homeGrid2d').innerHTML = MODULES.filter((m) => m.group === '2d').map(card).join('');
   $('homeGridBusiness').innerHTML = MODULES.filter((m) => m.group === 'business').map(card).join('');
+  $('homeGridSocial').innerHTML = MODULES.filter((m) => m.group === 'social').map(card).join('');
 }
 function showHome() {
   laser.close();
   quote.close();
   coloring.close();
+  tiktok.close();
   $('studio').hidden = true;
   $('hablador').hidden = true;
   $('colorsplit').hidden = true;
@@ -1917,6 +1922,12 @@ function clearDesign() {
 
 async function enterModule(id) {
   const m = moduleDef(id);
+  if (id === 'tiktok') {
+    laser.close(); quote.close(); coloring.close(); hideHome();
+    $('studio').hidden = true; $('hablador').hidden = true; $('colorsplit').hidden = true;
+    await tiktok.open(); return;
+  }
+  tiktok.close();
   if (id === 'laser') {
     quote.close(); coloring.close(); hideHome();
     $('studio').hidden = true; $('hablador').hidden = true; $('colorsplit').hidden = true;
@@ -1992,6 +2003,7 @@ const pencilBatch = new PencilBatchUI({ toast, openProject: openProjectFile });
 $('homeGrid3d').addEventListener('click', (e) => { const b = e.target.closest('[data-mod]'); if (b) enterModule(b.dataset.mod); });
 $('homeGrid2d').addEventListener('click', (e) => { const b = e.target.closest('[data-mod]'); if (b) enterModule(b.dataset.mod); });
 $('homeGridBusiness').addEventListener('click', (e) => { const b = e.target.closest('[data-mod]'); if (b) enterModule(b.dataset.mod); });
+$('homeGridSocial').addEventListener('click', (e) => { const b = e.target.closest('[data-mod]'); if (b) enterModule(b.dataset.mod); });
 $('homeContinue').onclick = () => { if (S.result) hideHome(); };
 $('homeOpenProject').onclick = () => $('fileProject').click();
 $('btnHome').onclick = showHome;
@@ -2012,7 +2024,7 @@ if (stUpdate) {
     else if (d.state === 'up-to-date' || d.state === 'error') stUpdate.hidden = true;
   });
 }
-window.__r3d = { S, setSelection, doExport, exportParts, saveProject, openProjectFile, undo, redo, commit, hist, setViewMode, enterModule, applyText, showHome, studio, hablador, colorsplit, coloring, quote, laser, getFeat: () => feat, onSettingChanged, placeRing, loadImageFile, view2d,
+window.__r3d = { S, setSelection, doExport, exportParts, saveProject, openProjectFile, undo, redo, commit, hist, setViewMode, enterModule, applyText, showHome, studio, hablador, colorsplit, coloring, quote, laser, tiktok, getFeat: () => feat, onSettingChanged, placeRing, loadImageFile, view2d,
   applyTier, applyComposition, getOrig: () => orig, ringSnap, gramsEstimate, viewer, renderElements };
 
 syncProcInputs();

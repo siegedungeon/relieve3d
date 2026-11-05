@@ -92,6 +92,10 @@ export const MODULES = [
     id: 'colorsplit', group: '3d', icon: '🎨', title: 'Separar colores 3D',
     desc: 'Convierte un 3MF multicolor en piezas de un solo color con encajes a presión: se imprimen sin cambios de filamento y se pegan.',
   },
+  {
+    id: 'tiktok', group: 'social', icon: '🎬', title: 'Estudio TikTok · Pabonitas',
+    desc: 'Plan del día, guiones con tus precios reales, prompts para IA y el kit paso a paso de cada video: qué grabar, dónde publicarlo, qué pegar y cómo medirlo.',
+  },
 ];
 
 export const MIC_PRESETS = {

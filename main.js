@@ -6,6 +6,7 @@ const { createQuoteStore } = require('./src/main/quote_store.cjs');
 const { exportCommercial } = require('./src/main/quote_export.cjs');
 const { writeNewExportFolder } = require('./src/main/export_folder.cjs');
 const { getBambuPencilProfile, normalizePencilPlates } = require('./src/main/bambu_profile.cjs');
+const { createTiktokWorkspace } = require('./src/main/tiktok_workspace.cjs');
 
 if (process.platform === 'win32') app.setAppUserModelId('com.relieve3d.app');
 
@@ -237,6 +238,42 @@ app.whenReady().then(() => {
   quoteHandle('quote-status', payload => quotes.status(payload));
   quoteHandle('quote-actuals', payload => quotes.actuals(payload));
   quoteHandle('quote-export', async ({ id, version, format }) => exportCommercial(BrowserWindow, await quotes.commercial(id, version), format));
+
+  const tiktok = createTiktokWorkspace({ configFile: process.env.R3D_TEST_FILE && process.env.R3D_TIKTOK_CONFIG
+    ? process.env.R3D_TIKTOK_CONFIG : path.join(app.getPath('userData'), 'tiktok-studio.json') });
+  const tiktokNoOpen = !!process.env.R3D_TIKTOK_NO_OPEN;
+  const tiktokOpened = global.__r3dTiktokOpened = [];
+  const tiktokLog = (line, tag) => { if (win && !win.isDestroyed()) win.webContents.send('tiktok-log', { line, tag }); };
+  const openInside = async (abs) => {
+    if (tiktokNoOpen) { tiktokOpened.push(abs); return abs; }
+    const error = await shell.openPath(abs);
+    if (error) throw new Error(error);
+    return abs;
+  };
+  quoteHandle('tiktok-load', () => tiktok.load());
+  quoteHandle('tiktok-config', value => tiktok.saveConfig(value));
+  quoteHandle('tiktok-pick-root', async () => {
+    const r = await dialog.showOpenDialog(win, { title: 'Elige la carpeta TikTok-Impresion3D', properties: ['openDirectory'] });
+    return r.canceled || !r.filePaths[0] ? null : tiktok.saveConfig({ root: r.filePaths[0] });
+  });
+  quoteHandle('tiktok-run', args => tiktok.run(args, tiktokLog));
+  quoteHandle('tiktok-create', payload => tiktok.createVideo(payload, tiktokLog));
+  quoteHandle('tiktok-save-kit', ({ carpeta, md } = {}) => tiktok.saveKit(carpeta, md));
+  quoteHandle('tiktok-append', ({ kind, row } = {}) => tiktok.appendCsv(kind, row));
+  quoteHandle('tiktok-open', async rel => openInside(await tiktok.resolveInside(rel)));
+  quoteHandle('tiktok-panel', async () => {
+    const res = await tiktok.run(['panel'], tiktokLog);
+    const file = res.stdout.trim().split(/\r?\n/).pop() || '';
+    if (!res.ok || !/\.html$/i.test(file)) throw new Error((res.stderr || res.stdout || 'No pude generar el panel').trim());
+    return openInside(await tiktok.resolveInside(path.relative((await tiktok.settings()).root, file)));
+  });
+  quoteHandle('tiktok-url', async url => {
+    const u = new URL(String(url));
+    if (u.protocol !== 'https:') throw new Error('Solo se abren enlaces https.');
+    if (!tiktokNoOpen) await shell.openExternal(u.href);
+    else tiktokOpened.push(u.href);
+    return u.href;
+  });
   createWindow();
   setupAutoUpdates();
 });

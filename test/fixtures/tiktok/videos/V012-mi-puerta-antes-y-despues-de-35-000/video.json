@@ -1,0 +1,108 @@
+{
+  "id": "V012",
+  "titulo": "Mi puerta antes y después de $35.000",
+  "fps": 30,
+  "ajuste": "rellenar",
+  "voz": {
+    "texto": "Así quedó mi puerta por 35 mil pesos. | Antes era así. | Le pongo la funda navideña, sublimada en nuestro taller… | Hay de Santa, Mamá Noel, Cascanueces, Reno, Nacimiento y Merry Christmas. | 35 mil pesos, con envío a toda Colombia. ¿Cuál pondrías en la tuya? Comenta.",
+    "archivo": "clips/cara.mp4",
+    "voz": "es-CO-GonzaloNeural",
+    "velocidad": "+8%",
+    "tono": "+0Hz",
+    "volumen": 1.0
+  },
+  "subtitulos": {
+    "activar": true,
+    "palabras_por_linea": 3,
+    "mayusculas": false
+  },
+  "textos": [
+    {
+      "texto": "MI PUERTA POR $35.000",
+      "escena": 1,
+      "posicion": "arriba"
+    },
+    {
+      "texto": "ANTES",
+      "escena": 2,
+      "posicion": "arriba"
+    },
+    {
+      "texto": "6 DISEÑOS",
+      "escena": 4,
+      "posicion": "arriba"
+    },
+    {
+      "texto": "¿CUÁL ELIGES?",
+      "escena": 5,
+      "posicion": "arriba"
+    }
+  ],
+  "musica": {
+    "archivo": "",
+    "volumen": 0.12,
+    "atenuar_con_voz": true
+  },
+  "ambiente_volumen": 0.6,
+  "efectos": [
+    {
+      "archivo": "audio/sfx/pop.wav",
+      "escena": 1,
+      "en": 0.0,
+      "volumen": 0.6
+    },
+    {
+      "archivo": "audio/sfx/whoosh.wav",
+      "escena": 2,
+      "en": 0.0,
+      "volumen": 0.5
+    },
+    {
+      "archivo": "audio/sfx/whoosh.wav",
+      "escena": 3,
+      "en": 0.0,
+      "volumen": 0.5
+    },
+    {
+      "archivo": "audio/sfx/pop.wav",
+      "escena": 4,
+      "en": 0.0,
+      "volumen": 0.6
+    },
+    {
+      "archivo": "audio/sfx/ding.wav",
+      "escena": 5,
+      "en": 0.0,
+      "volumen": 0.7
+    }
+  ],
+  "escenas": [
+    {
+      "archivo": "clips/despues.mp4",
+      "color": "#123B2C",
+      "texto": "B-ROLL: puerta decorada (DESPUÉS)"
+    },
+    {
+      "archivo": "clips/antes.mp4",
+      "color": "#123B2C",
+      "texto": "B-ROLL: misma puerta sin nada (ANTES)"
+    },
+    {
+      "archivo": "clips/poniendo.mp4",
+      "velocidad": "auto",
+      "color": "#123B2C",
+      "texto": "B-ROLL: tú poniendo la funda (acelerado)"
+    },
+    {
+      "archivo": "clips/disenos.mp4",
+      "color": "#123B2C",
+      "texto": "B-ROLL: los 6 diseños"
+    },
+    {
+      "archivo": "clips/cara.mp4",
+      "sincronizar": true,
+      "color": "#4A1C1C",
+      "texto": "CARA: tú frente a la puerta decorada"
+    }
+  ]
+}
