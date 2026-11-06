@@ -1,5 +1,5 @@
 // End-to-end runner: starts the real Electron app and drives a whole module flow.
-//   node test/e2e/run.mjs [colorsplit|logo|hablador|pencil|fonts|text-quality|coloring|coloring-decorations|quote|tiktok|all] [input file]
+//   node test/e2e/run.mjs [colorsplit|logo|hablador|pencil|fonts|text-quality|coloring|coloring-decorations|quote|tiktok|phonestand|all] [input file]
 // Defaults use synthetic inputs (painted sphere 3MF, test/logo.png, generated LOVECUBE mockup).
 // tiktok drives a throwaway copy of the TikTok workspace (R3D_TIKTOK_E2E_SRC, default ~/Documents/TikTok-Impresion3D);
 // it needs Python with edge-tts, ffmpeg and internet for the guide voice. The real workspace is never written.
@@ -38,6 +38,7 @@ const inputs = {
   colorsplit: () => { const f = path.join(outRoot, 'painted_sphere.3mf'); fs.mkdirSync(outRoot, { recursive: true }); fs.writeFileSync(f, paintedSphere3MF()); return f; },
   logo: () => path.join(root, 'test', 'logo.png'),
   pencil: () => path.join(root, 'test', 'logo.png'),
+  phonestand: () => path.join(root, 'test', 'logo.png'),
   coloring: () => path.join(root, 'src', 'examples', 'coloring-scene.svg'),
   'coloring-decorations': () => path.join(root, 'src', 'examples', 'coloring-scene.svg'),
   hablador: () => {
@@ -77,7 +78,7 @@ function runOne(name) {
 }
 
 const names = which === 'all' ? Object.keys(inputs) : [which];
-if (!names.every((n) => inputs[n])) { console.log('usage: node test/e2e/run.mjs [colorsplit|logo|hablador|pencil|fonts|text-quality|coloring|coloring-decorations|quote|tiktok|all] [input]'); process.exit(2); }
+if (!names.every((n) => inputs[n])) { console.log('usage: node test/e2e/run.mjs [colorsplit|logo|hablador|pencil|fonts|text-quality|coloring|coloring-decorations|quote|tiktok|phonestand|all] [input]'); process.exit(2); }
 let allOk = true;
 for (const n of names) allOk = (await runOne(n)) && allOk;
 console.log(allOk ? '\ne2e OK' : '\ne2e FAILED');

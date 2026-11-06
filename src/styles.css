@@ -293,6 +293,29 @@ textarea { width: 100%; font: inherit; font-size: 14px; padding: 6px 8px; border
 .cs-pc:hover { background: #f1f5f9; }
 .cs-pc.sel { background: #dbeafe; }
 
+/* Soporte celular llavero */
+#phonestand .views { grid-template-rows: minmax(0, 1fr); }
+.ps-layout .hb-tabs { align-items: center; }
+.ps-shapes { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 6px; margin-bottom: 4px; }
+.ps-shape { display: flex; flex-direction: column; align-items: center; justify-content: flex-end; gap: 3px; min-height: 92px; padding: 6px 4px 5px; border: 1px solid var(--border); border-radius: var(--radius); background: #fff; font-size: 11px; line-height: 1.15; text-align: center; transition: transform .12s, border-color .12s, box-shadow .12s; }
+.ps-shape:hover { border-color: var(--sel); transform: translateY(-1px); }
+.ps-shape.active { border-color: var(--ps-accent, var(--accent)); box-shadow: 0 0 0 2px color-mix(in srgb, var(--ps-accent, #16a34a) 35%, transparent); background: color-mix(in srgb, var(--ps-accent, #16a34a) 8%, #fff); font-weight: 600; }
+.ps-shape svg { width: 100%; height: 60px; }
+.ps-shape svg path { fill: #c3c8d1; transition: fill .12s; }
+.ps-shape:hover svg path, .ps-shape.active svg path { fill: var(--ps-accent, var(--accent)); }
+.ps-up { display: grid; place-items: center; width: 46px; height: 56px; font-size: 20px; color: var(--muted); border: 2px dashed #c3c8d1; border-radius: 10px; }
+.ps-up.ps-wait { border-style: dotted; }
+.ps-logo { display: flex; align-items: center; gap: 8px; min-height: 30px; }
+.ps-logo img { width: 56px; height: 40px; object-fit: contain; flex: none; border-radius: 6px; border: 1px solid var(--border); background: repeating-conic-gradient(#f1f1f1 0 25%, #fff 0 50%) 0 0 / 10px 10px; }
+.ps-logo img + span { flex: 1; min-width: 0; margin: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ps-logo > span:only-child { margin: 0; line-height: 1.4; }
+.ps-layout details { margin: 6px 0 2px; }
+.ps-layout summary { cursor: pointer; font-size: 12px; color: var(--muted); }
+.ps-tip { margin-top: 10px; line-height: 1.45; }
+/* the result card shows every row: it fills spare height but never shrinks into an inner scroll (the panel scrolls) */
+.ps-layout .card.grow { flex: 1 0 auto; min-height: 0; }
+.ps-layout .card.grow .hb-list { overflow: visible; }
+
 /* Láminas para colorear */
 .studio .coloring-layout { grid-template-columns: 285px minmax(0, 1fr) 240px; }
 .coloring-layout .views { grid-template-rows: minmax(0, 1fr); }

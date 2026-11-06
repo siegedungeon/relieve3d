@@ -17,6 +17,7 @@ import { View2D, isTyping } from './view2d.js';
 import { Studio } from './studio.js';
 import { HabladorStudio } from './hablador_ui.js';
 import { ColorSplitStudio } from './colorsplit_ui.js';
+import { PhoneStandStudio } from './phonestand_ui.js';
 import { ColoringStudio } from './coloring_ui.js';
 import { QuoteStudio } from './quote_ui.js';
 import { TiktokStudio } from './tiktok_ui.js';
@@ -214,7 +215,7 @@ function toast(msg, error = false) {
 // ---------------------------------------------------------------- loading & processing
 async function loadImageFile(file) {
   if (!file) return;
-  if (/\.(r3d|r3s|json)$/i.test(file.name)) return openProjectFile(file);
+  if (/\.(r3d|r3s|r3p|json)$/i.test(file.name)) return openProjectFile(file);
   if (!file.type.startsWith('image/') && !/\.(png|jpe?g|webp|bmp|gif)$/i.test(file.name)) {
     toast('Formato no soportado: ' + file.name, true);
     return;
@@ -1071,24 +1072,30 @@ async function openProjectFile(file) {
   try {
     if (/\.r3c$/i.test(file.name)) {
       if (await coloring.loadFile(file)) {
-        hideHome(); $('studio').hidden = true; $('hablador').hidden = true; $('colorsplit').hidden = true;
+        hideHome(); $('studio').hidden = true; $('hablador').hidden = true; $('colorsplit').hidden = true; $('phonestand').hidden = true;
       }
       return;
     }
     const j = JSON.parse(await file.text());
     if (j.app === 'Relieve3D-Laser') {
       laser.openProject(j); quote.close(); coloring.close(); hideHome();
-      $('studio').hidden = true; $('hablador').hidden = true; $('colorsplit').hidden = true; return;
+      $('studio').hidden = true; $('hablador').hidden = true; $('colorsplit').hidden = true; $('phonestand').hidden = true; return;
     }
     if (j.app === 'Relieve3D-Coloring') {
       if (await coloring.openProject(j)) {
-        hideHome(); $('studio').hidden = true; $('hablador').hidden = true; $('colorsplit').hidden = true;
+        hideHome(); $('studio').hidden = true; $('hablador').hidden = true; $('colorsplit').hidden = true; $('phonestand').hidden = true;
       }
       return;
     }
-    if (['Relieve3D', 'Relieve3D-Studio', 'Relieve3D-Hablador'].includes(j.app)) coloring.close();
-    if (j.app === 'Relieve3D-Studio') { hideHome(); studio.openProject(j); return; }
-    if (j.app === 'Relieve3D-Hablador') { hideHome(); await hablador.openProject(j); return; }
+    if (['Relieve3D', 'Relieve3D-Studio', 'Relieve3D-Hablador', 'Relieve3D-SoporteCelular'].includes(j.app)) coloring.close();
+    if (j.app === 'Relieve3D-Studio') { hideHome(); $('phonestand').hidden = true; studio.openProject(j); return; }
+    if (j.app === 'Relieve3D-Hablador') { hideHome(); $('phonestand').hidden = true; await hablador.openProject(j); return; }
+    if (j.app === 'Relieve3D-SoporteCelular') {
+      // validates before touching the screen, so a broken file leaves the current view as it was
+      await phonestand.openProject(j);
+      hideHome(); $('studio').hidden = true; $('hablador').hidden = true; $('colorsplit').hidden = true;
+      return;
+    }
     if (j.app !== 'Relieve3D') throw new Error('No es un proyecto de Relieve3D');
     clearTimeout(textTimer); ++textSeq; textError = '';
     S.module = j.state.module || 'logo';
@@ -1096,6 +1103,7 @@ async function openProjectFile(file) {
     S.proc = { ...DEFAULT_PROC, ...j.state.proc };
     hideHome();
     $('studio').hidden = true;
+    $('phonestand').hidden = true;
     S.source = j.state.source || 'image';
     applyModuleUI();
     syncProcInputs();
@@ -1256,21 +1264,22 @@ document.addEventListener('drop', (e) => {
   if (!f) return;
   if (/\.(r3c|r3l)$/i.test(f.name)) { openProjectFile(f); return; }
   if (!$('coloring').hidden) {
-    if (/\.(r3d|r3s|r3h)$/i.test(f.name)) openProjectFile(f); else coloring.loadFile(f);
+    if (/\.(r3d|r3s|r3h|r3p)$/i.test(f.name)) openProjectFile(f); else coloring.loadFile(f);
     return;
   }
   if (!$('studio').hidden) { studio.loadFile(f); return; }
   if (!$('hablador').hidden) { if (/\.(r3h|json)$/i.test(f.name)) openProjectFile(f); else hablador.loadLogo(f); return; }
   if (!$('colorsplit').hidden) { colorsplit.loadFile(f); return; }
+  if (!$('phonestand').hidden) { if (/\.(r3p|json)$/i.test(f.name)) openProjectFile(f); else phonestand.loadLogo(f); return; }
   if (!$('home').hidden && /\.3mf$/i.test(f.name)) { hideHome(); colorsplit.open().then(() => colorsplit.loadFile(f)); return; }
-  if (/\.(r3d|r3s|r3h|json)$/i.test(f.name)) { openProjectFile(f); return; }
+  if (/\.(r3d|r3s|r3h|r3p|json)$/i.test(f.name)) { openProjectFile(f); return; }
   if (!$('home').hidden) { S.module = 'logo'; clearDesign(); hideHome(); applyModuleUI(); }
   loadImageFile(f);
 });
 
 // keyboard
 window.addEventListener('keydown', (e) => {
-  if (isTyping(e) || !$('home').hidden || !$('studio').hidden || !$('hablador').hidden || !$('colorsplit').hidden || !$('coloring').hidden || !$('quote').hidden || !$('laser').hidden || !$('tiktok').hidden) return;
+  if (isTyping(e) || !$('home').hidden || !$('studio').hidden || !$('hablador').hidden || !$('colorsplit').hidden || !$('phonestand').hidden || !$('coloring').hidden || !$('quote').hidden || !$('laser').hidden || !$('tiktok').hidden) return;
   const k = e.key.toLowerCase(), ctrl = e.ctrlKey || e.metaKey;
   if (ctrl && k === 'z' && !e.shiftKey) { e.preventDefault(); undo(); }
   else if (ctrl && (k === 'y' || (k === 'z' && e.shiftKey))) { e.preventDefault(); redo(); }
@@ -1855,6 +1864,7 @@ const studio = new Studio($('studio'), {
 });
 const hablador = new HabladorStudio($('hablador'), { toast, showBusy, hideBusy, onBack: () => showHome() });
 const colorsplit = new ColorSplitStudio($('colorsplit'), { toast, showBusy, hideBusy, onBack: () => showHome() });
+const phonestand = new PhoneStandStudio($('phonestand'), { toast, showBusy, hideBusy, onBack: () => showHome() });
 const coloring = new ColoringStudio($('coloring'), { toast, showBusy, hideBusy, onBack: () => showHome() });
 const quote = new QuoteStudio($('quote'), { toast, onBack: () => showHome() });
 const laser = new LaserStudio($('laser'), { toast, onBack: () => showHome() });
@@ -1875,6 +1885,7 @@ function showHome() {
   $('studio').hidden = true;
   $('hablador').hidden = true;
   $('colorsplit').hidden = true;
+  $('phonestand').hidden = true;
   $('home').hidden = false;
   $('homeContinue').hidden = !S.result;
   if (S.result) $('homeContinue').textContent = `↩ Continuar: ${moduleDef(S.module).title}`;
@@ -1924,29 +1935,30 @@ async function enterModule(id) {
   const m = moduleDef(id);
   if (id === 'tiktok') {
     laser.close(); quote.close(); coloring.close(); hideHome();
-    $('studio').hidden = true; $('hablador').hidden = true; $('colorsplit').hidden = true;
+    $('studio').hidden = true; $('hablador').hidden = true; $('colorsplit').hidden = true; $('phonestand').hidden = true;
     await tiktok.open(); return;
   }
   tiktok.close();
   if (id === 'laser') {
     quote.close(); coloring.close(); hideHome();
-    $('studio').hidden = true; $('hablador').hidden = true; $('colorsplit').hidden = true;
+    $('studio').hidden = true; $('hablador').hidden = true; $('colorsplit').hidden = true; $('phonestand').hidden = true;
     laser.open(); return;
   }
   laser.close();
   if (id === 'quote') {
     coloring.close();
-    hideHome(); $('studio').hidden = true; $('hablador').hidden = true; $('colorsplit').hidden = true;
+    hideHome(); $('studio').hidden = true; $('hablador').hidden = true; $('colorsplit').hidden = true; $('phonestand').hidden = true;
     await quote.open(); return;
   }
   quote.close();
   if (id === 'coloring') {
-    hideHome(); $('studio').hidden = true; $('hablador').hidden = true; $('colorsplit').hidden = true;
+    hideHome(); $('studio').hidden = true; $('hablador').hidden = true; $('colorsplit').hidden = true; $('phonestand').hidden = true;
     await coloring.open(); return;
   }
   coloring.close();
   if (id === 'hablador') { hideHome(); await hablador.open(); return; }
   if (id === 'colorsplit') { hideHome(); await colorsplit.open(); return; }
+  if (id === 'phonestand') { hideHome(); await phonestand.open(); return; }
   if (m.group === '2d') { hideHome(); studio.open(id); return; }
   let keep = false;
   if (S.result) {
@@ -2024,7 +2036,7 @@ if (stUpdate) {
     else if (d.state === 'up-to-date' || d.state === 'error') stUpdate.hidden = true;
   });
 }
-window.__r3d = { S, setSelection, doExport, exportParts, saveProject, openProjectFile, undo, redo, commit, hist, setViewMode, enterModule, applyText, showHome, studio, hablador, colorsplit, coloring, quote, laser, tiktok, getFeat: () => feat, onSettingChanged, placeRing, loadImageFile, view2d,
+window.__r3d = { S, setSelection, doExport, exportParts, saveProject, openProjectFile, undo, redo, commit, hist, setViewMode, enterModule, applyText, showHome, studio, hablador, colorsplit, phonestand, coloring, quote, laser, tiktok, getFeat: () => feat, onSettingChanged, placeRing, loadImageFile, view2d,
   applyTier, applyComposition, getOrig: () => orig, ringSnap, gramsEstimate, viewer, renderElements };
 
 syncProcInputs();

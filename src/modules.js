@@ -93,6 +93,10 @@ export const MODULES = [
     desc: 'Convierte un 3MF multicolor en piezas de un solo color con encajes a presión: se imprimen sin cambios de filamento y se pegan.',
   },
   {
+    id: 'phonestand', group: '3d', icon: '📱', title: 'Soporte celular llavero',
+    desc: 'Llavero que se abre en soporte para el celular (bisagra impresa armada): corazón, ratón, flor u otra forma arriba, logo o marca del cliente, chip NFC y abre latas opcionales.',
+  },
+  {
     id: 'tiktok', group: 'social', icon: '🎬', title: 'Estudio TikTok · Pabonitas',
     desc: 'Plan del día, guiones con tus precios reales, prompts para IA y el kit paso a paso de cada video: qué grabar, dónde publicarlo, qué pegar y cómo medirlo.',
   },

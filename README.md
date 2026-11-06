@@ -34,6 +34,7 @@ Al abrir aparece una **pantalla de inicio** para elegir qué crear (botón **Ini
 | Módulo | Qué hace |
 |---|---|
 | Llavero | Módulo completo para marcas y merchandising (ver abajo) |
+| Soporte celular llavero | Llavero que se abre en **soporte para el celular** (bisagra impresa armada, sin soportes) con la forma de arriba a elegir (corazón, ratón estilo Mickey, flor, estrella… o **tu propia silueta**), el logo o marca del cliente, texto y, opcionales, **chip NFC** y **abre latas** (ver abajo) |
 | Nombres para lápices / lapiceros | Genera un listado completo: **Matemasie blanca sobre base morada, sin figuras**, canal horizontal de **7.9 mm** y máximo **75 × 19 × 13 mm** por nombre. Guarda proyectos editables, 3MF a dos colores, STL unidos y placas Bambu A1. Conserva la edición individual, los adornos opcionales y los montajes anteriores |
 | Logo para micrófono | **Cuerpo completo** del mic flag (cuadrado, estrella, corazón, círculo, hexágono) con bordes redondeados, hueco inferior para el micrófono + ranura del clip (DJI, Hollyland, chinos verticales), aros laterales opcionales y el logo encima. El logo/cuerpo se mueve con el asa ✥ morada, se rota y el botón **Centrar hueco** ajusta el hueco para paredes uniformes. También puedes **cargar tu propio cuerpo STL** (queda guardado en la biblioteca) |
 | Logo / figura en relieve | Cualquier imagen a modelo multicolor por capas |
@@ -258,6 +259,40 @@ Regresiones: `node test\pencil.test.mjs` comprueba sólidos, calibre y paredes; 
 - **Acabados**: borde elevado, contorno de acento, canto biselado, **chip NFC oculto** (bolsillo + pausa automática en el 3MF para insertar el chip en Bambu Studio) y **texto grabado atrás** (nombre del empleado, web).
 - **Marca / empresas**: **código QR** en el frente (avisa si queda muy pequeño para escanear), **nombres en lote** (un 3MF por empleado, atrás o al frente), **peso estimado en gramos** para cotizar y **hoja de propuesta PNG** con las 3 versiones lado a lado para enviar al cliente.
 
+### Módulo Soporte celular llavero
+
+Llavero plano con una **tapa en bisagra** que se abre y sostiene el celular, vertical u horizontal. Se imprime acostado y **la bisagra sale armada** (print-in-place): sin soportes ni piezas para pegar. Es un diseño paramétrico propio de Relieve3D.
+
+- **Forma de arriba**: corazón, ratón (estilo Mickey), osito, gatito, flor, estrella, nube, corona, círculo, clásico o **Tu silueta** (sube una imagen con la forma que quieras). Cada botón muestra el contorno real de esa forma. *Tamaño de la forma* va de 70 a 140 %, y la forma nunca sobresale del borde delantero: ahí se recorta recta.
+- **Logo o marca del cliente**: arrástralo a la ventana o usa **🖼️ Logo** (PNG/JPG con fondo liso o transparente). Puede ir en la forma de arriba o en la tapa, con tamaño y posición ajustables. Se acomoda solo dentro de la forma, sin tocar el agujero de la argolla. **Texto o nombre** opcional, en la tapa o junto al logo.
+- **Acabado** del logo y el texto: en relieve, incrustado a ras (2 colores) o grabado. Puedes elegir el color del cuerpo y el del acento, y pintar la tapa con el 2.º color.
+- **Extras** (cada uno se activa o desactiva):
+  - **Chip NFC escondido**: bolsillo para un sticker NTAG213/215 de 25 mm (diámetro y grosor editables). En *Automático* el chip va en la forma de arriba si cabe (p. ej. en un lóbulo del corazón); si no, va en la tapa. El 3MF incluye una **pausa** a la altura justa («Inserta el chip NFC en el bolsillo y continúa»): mete el chip y dale continuar, y las capas siguientes lo tapan.
+  - **Abre latas**: ranura en el borde derecho o izquierdo. Mete la pestaña de la lata y haz palanca.
+  - **Agujero para la argolla**, con diámetro editable.
+- **Medidas**:
+  - ancho (38–60 mm), grosor (6–10 mm), largo de la tapa (22–40 mm), inclinación del celular (50–75°) y holgura de la bisagra;
+  - en *Avanzado*: barra delantera, pasador, topes del celular y pared de la argolla.
+
+  Un valor fuera de rango se ajusta al salir del campo. **Resultado** muestra:
+  - medidas, peso y estabilidad del celular (vertical y horizontal);
+  - bisagra y NFC;
+  - piezas del 3MF y avisos.
+- **Vistas**: *Como se imprime*, *Abierto con celular* (con un celular de referencia) y *Vista de arriba*. El deslizador *Abrir tapa* y **▶ Animar** muestran el giro de la bisagra.
+- **Exportar**:
+  - **3MF** con los colores y la pausa del NFC, para Bambu Studio y OrcaSlicer;
+  - **STL** único: un solo color y sin la pausa, que debes agregar a mano en el laminador;
+  - **📸 Foto**: PNG para enviar al cliente;
+  - **💾 Guardar proyecto** `.r3p`: medidas, logo y silueta. Se reabre con **📂 Abrir** o arrastrándolo a la ventana.
+
+**Impresión**: PLA, capas de 0,2 mm, sin soportes, acostado tal como sale. Al terminar, dobla la tapa con cuidado para soltarla. Imprime primero una pieza de prueba y ajusta la *holgura de la bisagra* a tu impresora (0,3–0,5 mm; 0,4 por defecto).
+
+**Licencia**: el diseño es original y no usa la malla del modelo «Profile - Standard + NFC + Can Opener» de mgm86. Ese modelo tiene en MakerWorld una licencia de archivo digital estándar, solo para uso personal; para vender ese modelo en particular necesitas la licencia comercial de su autor. «Mickey» es una marca de Disney, por eso el módulo ofrece una cabeza de ratón genérica. No uses personajes ni marcas de terceros sin permiso.
+
+Regresiones:
+- `node test\phonestand.test.mjs` cubre formas, bisagra, NFC, abre latas, estabilidad y proyecto.
+- `node test\e2e\run.mjs phonestand` recorre el flujo completo en la app y verifica las exportaciones reales.
+
 ### Módulo Separar colores 3D
 
 Convierte un modelo pintado por colores (3MF de Bambu Studio/MakerWorld, objetos por color o pintura por triángulo) en piezas monocolor que encajan a presión. Evita impresiones de 30+ horas por purgas.
@@ -356,6 +391,8 @@ npm run dist       # genera el instalador en dist/
 Cada error corregido queda cubierto por una prueba en `test/` (falla con el código anterior). Las pruebas E2E (`test/e2e/`) abren la app, recorren el módulo entero y exportan; capturas y archivos quedan en `test/out/e2e/`. Para probar un archivo propio: `node test/e2e/run.mjs colorsplit "C:\ruta\modelo.3mf"` (o `logo imagen.png`, `hablador mockup.png`).
 
 Estudio TikTok: `npm run test:tiktok` (unitarias, con datos de `test/fixtures/tiktok/`) y `node test/e2e/run.mjs tiktok`.
+
+Soporte celular llavero: `node test/phonestand.test.mjs` (incluida en `npm test`) y `node test/e2e/run.mjs phonestand`.
 
 El E2E copia el espacio real (`R3D_TIKTOK_E2E_SRC` o `Documentos\TikTok-Impresion3D`) en `test/out/e2e/tiktok/` y recorre el flujo completo sobre la copia: kit, guion, prompts, crear video, voz guía, animatic, revisar, publicar, métricas, pedido y panel. Al final comprueba que el original no cambió. Necesita Python, ffmpeg e internet para edge-tts.
 
