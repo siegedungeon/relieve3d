@@ -376,7 +376,7 @@ function openCounters(labels, rgb, centers, bg, tol, W, H) {
 
 // Morphological opening per colour: pixels of a colour that sit in a part narrower than ~2r (thin outlines, fringes,
 // slivers along holes) are handed to the nearest colour (or background) that survives the opening.
-function removeThin(labels, W, H, k, rw) {
+export function removeThin(labels, W, H, k, rw) {
   const r = rw + 0.5, N = W * H, m = new Uint8Array(N);
   // pixels on either side of a colour change; distance to another colour ≈ distance to this set + 1
   for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) {
@@ -424,7 +424,7 @@ export function labelComponents(labels, W, H) {
   return { comp, comps };
 }
 
-function mergeSmall(labels, comp, comps, W, H, minArea, keep) {
+export function mergeSmall(labels, comp, comps, W, H, minArea, keep) {
   const small = comps.map((c) => c.area < minArea);
   // letter counters stay, however small
   if (keep) for (let i = 0; i < keep.length; i++) if (keep[i] && comp[i] >= 0) small[comp[i]] = false;

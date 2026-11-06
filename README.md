@@ -270,32 +270,45 @@ Llavero que se abre y sostiene el celular. Tiene una **pata en bisagra** que se 
   - *Estándar*: con una barra detrás de la bisagra; sostiene el celular parado y acostado.
   - *Corto*: la forma va justo detrás de la bisagra; es más pequeño y se usa con el celular acostado.
 - **Forma de arriba**: corazón, ratón (estilo Mickey), osito, gatito, flor, estrella, nube, corona, círculo, clásico o **Tu silueta** (sube una imagen con la forma que quieras). Cada botón muestra el contorno real de esa forma. *Tamaño de la forma* va de 70 a 140 %.
-- **Logo o marca del cliente**: arrástralo a la ventana o usa **🖼️ Logo** (PNG/JPG con fondo liso o transparente). Puede ir en la forma de arriba o en la barra, con tamaño y posición ajustables, y se acomoda solo sin tocar el agujero de la argolla. **Texto o nombre** opcional, en la barra o junto al logo. En el modelo corto, logo y texto van juntos arriba.
-- **Acabado** del logo, el texto y la señal 📶: en relieve, incrustado a ras o grabado. Elige el color del cuerpo y el del logo. La pata también puede ir en el 2.º color.
+- **Logo o marca del cliente**: arrástralo a la ventana o usa **🖼️ Logo** (PNG, JPG o **SVG**, con fondo liso o transparente). Un SVG se dibuja nítido al tamaño máximo, aunque solo traiga `viewBox` o medidas en mm. Puede ir en la forma de arriba o en la barra, con tamaño y posición ajustables, y se acomoda solo sin tocar el agujero de la argolla. En el modelo corto, logo y texto van juntos arriba.
+- **🎨 Colores del logo** (como en los llaveros): el logo se separa en sus colores (*Colores a detectar*: automático o de 1 a 6). Cada color es una pieza con su propio filamento, y en su fila puedes:
+  - cambiar el color del filamento;
+  - poner *Color del cuerpo* (sale del filamento del cuerpo: un color menos);
+  - *Quitar* esa parte del logo;
+  - en relieve, darle su propio alto (vacío = el alto del relieve).
+- **Texto o nombre** opcional, en la barra o junto al logo, con su **color** (↺ vuelve al color de acento) y, en relieve, su **alto**.
+- **Acabado** del logo, el texto y la señal 📶:
+  - *En relieve*: sobresale el alto que elijas (0,4–3 mm).
+  - **Liso multicolor (tipo llavero)**: todos los colores quedan a ras en las últimas capas, como los llaveros impresos. *Profundidad del color* en capas de 0,2 mm; con **0,2 mm todos los colores van en una sola capa**: lo más nítido para logos pequeños o con líneas finas, y nada se engancha. Un color que sea el del cuerpo queda simplemente del cuerpo.
+  - *Grabado*: hundido en el cuerpo, sin filamentos extra (en *Colores del logo* eliges qué colores se graban).
+  - **Trazo mínimo** (*Avanzado*, 0,3–1,2 mm; 0,5 por defecto para boquilla de 0,4): las líneas, puntas y puntos más delgados se engruesan desde su centro para que salgan en la impresión, con el borde liso. Los detalles muy juntos (rayitas junto a un contorno, el punto de una i) quedan separados por una línea fina en vez de fundirse en una mancha. *Resultado* avisa cuánto del dibujo se engrosó. Las motas sueltas se quitan.
+  - Elige el color del cuerpo y el de acento. La pata también puede ir en el color de acento. Si el diseño pasa de 4 filamentos (un AMS), *Resultado* lo avisa: junta capas en un mismo color o quita alguna.
 - **Extras** (cada uno se activa o desactiva):
-  - **📶 Chip NFC escondido**: bolsillo cerrado para un sticker NTAG213/215 redondo (diámetro y grosor editables). En la vista, el chip se ve **en dorado a través del cuerpo**.
+  - **📶 Chip NFC** para un sticker NTAG213/215 redondo (diámetro y grosor editables). En la vista, el chip se ve **en dorado a través del cuerpo**.
     - *Dónde*: en *Automático* va debajo del logo (el cliente toca el logo con el celular); también puede ir lo más arriba posible en la forma o cerca de la bisagra.
-    - Si nada lo tapa, lleva encima la **señal 📶** (sin contacto) para saber dónde tocar. Se hace igual que el logo y en su color.
+    - **Bandeja tipo SIM** (por defecto): el chip va en una bandeja que **se imprime aparte, acostada al lado del soporte**, y entra de lado por una ranura, como la SIM de un celular. Unos topes la dejan firme con un **clic**, el borde queda a ras, y una muesca para la uña permite sacarla y cambiar el chip. No hay pausa de impresión. *Ranura por el lado*: automático (lejos del abre latas), derecho o izquierdo.
+    - **Sellado con pausa**: bolsillo cerrado. El 3MF trae una **pausa** a la altura justa («Inserta el chip NFC en el bolsillo y continúa»): mete el chip, dale continuar y las capas siguientes lo tapan.
+    - Si nada lo tapa, lleva encima la **señal 📶** (sin contacto) para saber dónde tocar. Se hace igual que el logo y en el color de acento.
     - Si el chip no cabe, la forma de arriba **se alarga sola** y *Resultado* dice cuánto.
-    - El 3MF trae una **pausa** a la altura justa («Inserta el chip NFC en el bolsillo y continúa»): mete el chip, dale continuar y las capas siguientes lo tapan.
   - **🥫 Abre latas**: ranura en el borde derecho o izquierdo, girada si el borde es curvo. Mete la pestaña de la lata y haz palanca. Si no hay un borde libre, la forma también se alarga sola.
   - **🔑 Agujero para la argolla**, con diámetro editable.
 - **Medidas**: ancho (30–46 mm) y holgura de la bisagra. En *Avanzado*: clic de cierre (0–0,6 mm; 0 = sin clic), radio del pasador y pared de la argolla. Un valor fuera de rango se ajusta al salir del campo.
 - **Resultado** muestra:
-  - medidas cerrado y al imprimir, peso y filamentos;
+  - medidas cerrado y al imprimir, peso y filamentos (con sus colores);
   - ángulo y grosor máximo del celular, y estabilidad (vertical y horizontal);
-  - bisagra, clic, NFC (dónde tocar y la pausa) y abre latas;
+  - bisagra, clic, NFC (dónde tocar, por qué lado entra la bandeja o a qué altura va la pausa), abre latas y acabado;
   - piezas del 3MF y avisos.
-- **Vistas**: *Como se imprime*, *Abierto con celular* (con un celular de referencia), *Cerrado (llavero)* y *Vista de arriba*. El deslizador *Mover la pata* y **▶ Animar** muestran el giro de la bisagra.
+- **Vistas**: *Como se imprime* (la bandeja NFC al lado), *Abierto con celular* (con un celular de referencia), *Cerrado (llavero)* y *Vista de arriba*; en estas tres, la bandeja se ve metida en su ranura. El deslizador *Mover la pata* y **▶ Animar** muestran el giro de la bisagra.
 - **Exportar**:
-  - **3MF** con los colores y la pausa del NFC, para Bambu Studio y OrcaSlicer;
-  - **STL** único: un solo color y sin la pausa, que debes agregar a mano en el laminador;
+  - **3MF** para Bambu Studio y OrcaSlicer: un filamento por color, el soporte y la bandeja NFC como **objetos separados** en la placa, y la pausa solo en el modo *Sellado con pausa*;
+  - **STL** único: un solo color, con la bandeja al lado; la pausa, si la usas, debes agregarla a mano en el laminador;
   - **📸 Foto**: PNG para enviar al cliente;
-  - **💾 Guardar proyecto** `.r3p`: medidas, logo y silueta. Se reabre con **📂 Abrir** o arrastrándolo a la ventana. Los proyectos de la versión 1.17 se abren con su forma, logo, texto y extras; la bisagra se rehace con los valores por defecto.
+  - **💾 Guardar proyecto** `.r3p`: medidas, colores del logo, logo y silueta. Se reabre con **📂 Abrir** o arrastrándolo a la ventana. Abre proyectos de versiones anteriores: los de la 1.17 conservan su forma, logo, texto y extras, y la bisagra se rehace con los valores por defecto; el acabado «incrustado» de la 1.19 pasa a *Liso multicolor*.
 
-**Impresión**: PLA, capas de 0,2 mm, sin soportes, tal como sale. Al terminar, mueve la pata con cuidado hacia adelante y hacia atrás para soltarla, y dóblala hasta que haga clic. Imprime primero una pieza de prueba y ajusta a tu impresora:
-- *Holgura de la bisagra*: 0,3 mm por defecto. Si la pata sale pegada, súbela a 0,4; si queda floja, bájala a 0,25.
+**Impresión**: PLA, capas de 0,2 mm, sin soportes, tal como sale. Al terminar, mueve la pata con cuidado hacia adelante y hacia atrás para soltarla, y dóblala hasta que haga clic. Para el NFC con bandeja: pon el chip en su hueco y desliza la bandeja por la ranura hasta el clic. Imprime primero una pieza de prueba y ajusta a tu impresora:
+- *Holgura de la bisagra*: 0,3 mm por defecto. Si la pata sale pegada, súbela a 0,4; si queda floja, bájala a 0,25. La misma holgura (entre 0,25 y 0,45) se usa para la bandeja NFC.
 - *Clic de cierre*: 0,3 mm por defecto. Si cuesta cerrarla, bájalo; si se abre sola, súbelo (hasta 0,6).
+- *Logos pequeños*: usa *Liso multicolor* a 0,2 mm y, si tu boquilla es de 0,4 mm, deja el trazo mínimo en 0,5 o más.
 
 **Licencia y créditos**: el mecanismo (pata en bisagra con tope, clic y ranura en V) se inspira en «Small smartphone stand – print in place design» de mgm86 (MakerWorld), y su versión «Profile - Standard + NFC + Can Opener». Esos archivos tienen una licencia estándar de archivo digital, solo para uso personal; la licencia comercial la vende su autor. Relieve3D **no usa ni incluye su malla**: la geometría se genera desde cero con medidas propias. «Mickey» es una marca de Disney, por eso el módulo ofrece una cabeza de ratón genérica. No uses personajes ni marcas de terceros sin permiso.
 
@@ -304,9 +317,10 @@ Regresiones:
   - tamaños, modelos y formas;
   - la bisagra: giro libre, tope, clic y celular apoyado;
   - impresión sin voladizos;
-  - el NFC (lugar, señal 📶, pausa y alargue) y el abre latas;
-  - las piezas del 3MF, la migración desde 1.17 y el proyecto.
-- `node test\e2e\run.mjs phonestand` recorre el flujo completo en la app y verifica las exportaciones reales.
+  - el NFC (bandeja tipo SIM con su ranura, clic y muesca; pausa; lugar, señal 📶 y alargue) y el abre latas;
+  - los colores del logo (capas, color del cuerpo, quitar, altos; ningún color se pierde al sumar el texto), el acabado liso en capas enteras, el grabado y el trazo mínimo (bordes lisos, rayitas que no se funden con el contorno);
+  - las piezas y objetos del 3MF, la migración desde 1.17 y 1.19 y el proyecto.
+- `node test\e2e\run.mjs phonestand` recorre el flujo completo en la app (también un logo SVG) y verifica las exportaciones reales.
 
 ### Módulo Separar colores 3D
 

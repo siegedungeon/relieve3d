@@ -1,7 +1,8 @@
 // Módulo «Soporte celular llavero»: llavero que se abre en soporte para el celular (bisagra impresa en su lugar).
 // Formulario paramétrico → core/phonestand.js (manifold) → vista 3D (como se imprime, abierto con celular, cerrado,
-// de arriba; la pata gira en la bisagra y el chip NFC se ve en dorado a través del cuerpo) → 3MF por colores con la
-// pausa del chip NFC, STL, foto PNG y proyecto .r3p.
+// de arriba; la pata gira en la bisagra, la bandeja NFC entra en su ranura y el chip se ve en dorado a través del
+// cuerpo) → 3MF por colores (una pieza por color del logo, como los llaveros; la bandeja NFC como objeto aparte o la
+// pausa del chip), STL, foto PNG y proyecto .r3p.
 import * as THREE from 'three';
 import { parse as parseFont } from 'opentype.js';
 import { Viewer3D } from './viewer3d.js';
@@ -11,7 +12,7 @@ import { FontPicker } from './font_picker.js';
 import { threeMF, stlBinary } from './core/exporters.js';
 import {
   PHONESTAND_SHAPES, PHONESTAND_FONTS, PHONESTAND_SIZES, PHONESTAND_VARIANTS, DEFAULT_PHONESTAND, normalizePhoneStand,
-  preparePhoneStand, buildPhoneStand, shapeThumbnails, phoneStandProject, readPhoneStandProject,
+  preparePhoneStand, buildPhoneStand, phoneStandExport, shapeThumbnails, phoneStandProject, readPhoneStandProject,
 } from './core/phonestand.js';
 
 const esc = (s) => String(s).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
@@ -44,8 +45,9 @@ function readDataURL(file) {
 // RGBA pixels (ImageData) at most `max` px on the long side; reuse the same object so the core's trace cache hits
 async function imageDataFrom(src, max) {
   const img = new Image();
-  img.src = src;
+  img.src = /^data:image\/svg\+xml/i.test(src) ? svgSized(src, max) : src;
   try { await imageReady(img); } catch { throw new Error('la imagen está dañada o no es compatible'); }
+  if (!(img.naturalWidth > 0 && img.naturalHeight > 0)) throw new Error('la imagen no tiene tamaño');
   const k = Math.min(1, max / Math.max(img.naturalWidth, img.naturalHeight));
   const cv = document.createElement('canvas');
   cv.width = Math.max(1, Math.round(img.naturalWidth * k));
@@ -53,6 +55,29 @@ async function imageDataFrom(src, max) {
   const cx = cv.getContext('2d', { willReadFrequently: true });
   cx.drawImage(img, 0, 0, cv.width, cv.height);
   return cx.getImageData(0, 0, cv.width, cv.height);
+}
+// A vector logo (SVG) is drawn `max` px on its long side whatever its own size, so its curves and thin lines come out
+// sharp. Some SVGs have no size (only a viewBox) or one in mm: they get it here, in px, with a viewBox to scale into.
+const SVG_UNIT = { px: 1, '': 1, mm: 96 / 25.4, cm: 96 / 2.54, in: 96, pt: 4 / 3, pc: 16 };
+function svgSized(src, max) {
+  try {
+    const comma = src.indexOf(','), head = src.slice(0, comma), body = src.slice(comma + 1);
+    const text = /;base64/i.test(head) ? new TextDecoder().decode(Uint8Array.from(atob(body), (c) => c.charCodeAt(0))) : decodeURIComponent(body);
+    const doc = new DOMParser().parseFromString(text, 'image/svg+xml'), svg = doc.documentElement;
+    if (svg.nodeName.toLowerCase() !== 'svg') return src;
+    const len = (a) => { const m = /^\s*([\d.]+(?:e[-+]?\d+)?)\s*(px|mm|cm|in|pt|pc)?\s*$/i.exec(svg.getAttribute(a) || ''); return m ? +m[1] * SVG_UNIT[(m[2] || '').toLowerCase()] : 0; };
+    const vb = (svg.getAttribute('viewBox') || '').trim().split(/[\s,]+/).map(Number);
+    const hasVB = vb.length === 4 && vb.every(Number.isFinite) && vb[2] > 0 && vb[3] > 0;
+    let w = len('width'), h = len('height');
+    if (!(w > 0 && h > 0)) { if (!hasVB) return src; [w, h] = [vb[2], vb[3]]; }
+    if (!hasVB) svg.setAttribute('viewBox', `0 0 ${w} ${h}`);
+    const k = max / Math.max(w, h);
+    svg.setAttribute('width', String(Math.max(1, Math.round(w * k))));
+    svg.setAttribute('height', String(Math.max(1, Math.round(h * k))));
+    return 'data:image/svg+xml;charset=utf-8,' + encodeURIComponent(new XMLSerializer().serializeToString(doc));
+  } catch {
+    return src;
+  }
 }
 const isImageFile = (f) => /^image\//.test(f.type || '') || /\.(png|jpe?g|webp|bmp|gif|svg)$/i.test(f.name || '');
 
@@ -84,23 +109,23 @@ export class PhoneStandStudio {
     const tt = (title) => (title ? ` title="${esc(title)}"` : '');
     const num = (label, k, title = '') => `<label class="row"${tt(title)}>${label} <input ${N} data-k="${k}" /></label>`;
     const chk = (label, k, title = '') => `<label class="row"${tt(title)}>${label} <input type="checkbox" data-k="${k}" /></label>`;
-    const sel = (label, k, opts, title = '') => `<label class="row"${tt(title)}>${label} <select data-k="${k}">${opts.map(([v, l]) => `<option value="${v}">${esc(l)}</option>`).join('')}</select></label>`;
-    const col = (label, k) => `<label class="row">${label} <input type="color" data-k="${k}" /></label>`;
+    const sel = (label, k, opts, title = '', type = '') => `<label class="row"${tt(title)}>${label} <select data-k="${k}"${type === 'num' ? ' data-num' : ''}>${opts.map(([v, l]) => `<option value="${v}">${esc(l)}</option>`).join('')}</select></label>`;
+    const col = (label, k, title = '') => `<label class="row"${tt(title)}>${label} <input type="color" data-k="${k}" /></label>`;
     const fontOpts = Object.keys(PHONESTAND_FONTS).map((f) => `<option>${esc(f)}</option>`).join('');
     this.root.innerHTML = `
     <header class="topbar">
       <button class="btn" data-a="home">⌂ Inicio</button>
       <div class="brand"><span class="logo">◆</span> Relieve3D <span class="module-name">· 📱 Soporte celular llavero</span></div>
       <div class="tb-group">
-        <button class="btn" data-a="logo" title="Logo o marca del cliente: PNG o JPG con fondo liso o transparente">🖼️ Logo</button>
+        <button class="btn" data-a="logo" title="Logo o marca del cliente: PNG, JPG o SVG con fondo liso o transparente">🖼️ Logo</button>
         <button class="btn" data-a="openCfg" title="Abrir un proyecto .r3p">📂 Abrir</button>
         <button class="btn" data-a="saveCfg" title="Guarda las medidas, el logo y la silueta en un archivo .r3p">💾 Guardar proyecto</button>
         <button class="btn" data-a="reset" title="Vuelve a las medidas y opciones por defecto; conserva el logo y la silueta cargados">↺ Por defecto</button>
         <button class="btn" data-a="photo" title="PNG de la vista actual con fondo claro, para mostrarle el diseño al cliente">📸 Foto</button>
       </div>
       <div class="spacer"></div>
-      <button class="btn" data-a="stl" title="Un solo STL con todas las piezas: un color y sin la pausa del NFC">⬇ STL</button>
-      <button class="btn primary" data-a="3mf" title="3MF con los colores y la pausa para meter el chip NFC (Bambu Studio / OrcaSlicer)">⬇ Exportar 3MF</button>
+      <button class="btn" data-a="stl" title="Un solo STL con todas las piezas (la bandeja NFC al lado): un color, sin la pausa del NFC">⬇ STL</button>
+      <button class="btn primary" data-a="3mf" title="3MF con una pieza por color del logo, la bandeja NFC como objeto aparte o la pausa para meter el chip (Bambu Studio / OrcaSlicer)">⬇ Exportar 3MF</button>
     </header>
     <main class="layout studio-layout hb-layout ps-layout">
       <aside class="panel left">
@@ -109,24 +134,28 @@ export class PhoneStandStudio {
           <div class="ps-shapes" data-r="shapes"></div>
           ${num('Tamaño de la forma (%)', 'shapeScale', 'De 70 a 140 %: agrándala para que quepan el logo, el chip NFC o el abre latas')}
           <div data-show="custom">
-            <button class="btn wide" data-a="shapeFile">⬆ Cambiar silueta (PNG/JPG)</button>
+            <button class="btn wide" data-a="shapeFile">⬆ Cambiar silueta (PNG/JPG/SVG)</button>
             <div class="muted small">Silueta oscura sobre fondo claro, o PNG transparente. Se une al cuerpo por abajo y se le abre el agujero de la argolla.</div>
           </div>
         </section>
         <section class="card">
           <h3>🏷️ Logo o marca del cliente</h3>
           <div class="ps-logo" data-r="logoBox"></div>
-          <button class="btn wide" data-a="logo">🖼️ Cargar logo (PNG/JPG)</button>
+          <button class="btn wide" data-a="logo">🖼️ Cargar logo (PNG/JPG/SVG)</button>
           ${chk('Poner el logo', 'logo.enabled')}
           <div data-show="logo">
             <div data-show="barOk">${sel('Dónde', 'logo.where', [['top', 'En la forma de arriba'], ['bar', 'En la barra (detrás de la bisagra)']], 'La barra es la franja lisa entre la bisagra y la forma de arriba. En el modelo corto todo va en la forma de arriba')}</div>
             ${num('Tamaño (%)', 'logo.size', '100 % = lo más grande que cabe. Con más de 100 % se recorta en el borde')}
             ${num('Mover a la derecha (mm)', 'logo.dx', 'Negativo = hacia la izquierda')}
             ${num('Mover hacia arriba (mm)', 'logo.dy', 'Negativo = hacia abajo')}
-            <details class="ps-adv"><summary>Vectorizado del logo</summary>
-              ${num('Trazo mínimo (mm)', 'logo.minFeature', 'Las partes más delgadas se quitan y los huecos más angostos se cierran, para que se imprima bien')}
+            <div data-show="layers">
+              <h4>🎨 Colores del logo</h4>
+              <div class="st-palette ps-palette" data-r="layers"></div>
+              ${sel('Colores a detectar', 'logo.colors', [['0', 'Automático'], ...[1, 2, 3, 4, 5, 6].map((n) => [String(n), String(n)])], 'Cuántos colores separar en el logo. Súbelo si dos colores salen juntos; bájalo para unir colores parecidos', 'num')}
+            </div>
+            <details class="ps-adv"><summary>Trazos finos y vectorizado</summary>
+              ${num('Trazo mínimo (mm)', 'logo.minLine', 'Las líneas, puntas y puntos más delgados que esto se engruesan para que la impresora los haga (0,5 mm con boquilla de 0,4; 0,3 con boquilla de 0,2). De 0,3 a 1,2 mm')}
               ${num('Tolerancia del fondo', 'logo.tolerance', 'De 5 a 120: qué tan distinto del fondo debe ser un color para contar como logo')}
-              ${chk('Usar las partes claras', 'logo.invert', 'Para logos claros sobre fondo oscuro')}
             </details>
           </div>
         </section>
@@ -139,17 +168,22 @@ export class PhoneStandStudio {
             <label class="row">Fuente <select data-k="text.font">${fontOpts}</select></label>
             <div data-show="textSize">${num('Tamaño (%)', 'text.size', '100 % = lo más grande que cabe')}</div>
             <div data-show="textRel">${num('Alto de letra (% del logo)', 'text.rel', 'El texto va debajo del logo, con esta altura de letra')}</div>
+            <label class="row" title="Color del filamento del texto. ↺ = el color de acento">Color del texto <span class="ps-tcol"><button class="btn mini" data-a="textAccent" title="Usar el color de acento">↺</button><input type="color" data-k="text.color" /></span></label>
+            <div data-show="relief">${num('Alto del texto (mm)', 'text.height', '0 = el mismo alto del relieve del logo. De 0,4 a 3 mm')}</div>
           </div>
         </section>
         <section class="card">
           <h3>🎨 Acabado y colores</h3>
-          ${sel('Logo y texto', 'logo.mode', [['relief', 'En relieve (sobresale)'], ['inlay', 'Incrustado a ras (2 colores)'], ['engrave', 'Grabado (hundido)']], 'Incrustado: queda liso, al ras, en el 2.º color. Grabado: hundido en la pieza. La señal 📶 del NFC se hace igual')}
-          <div data-show="relief">${num('Alto del relieve (mm)', 'logo.height')}</div>
-          <div data-show="sunk">${num('Profundidad (mm)', 'logo.depth')}</div>
+          ${sel('Logo y texto', 'logo.mode', [['relief', 'En relieve (sobresale)'], ['flat', 'Liso multicolor (tipo llavero)'], ['engrave', 'Grabado (hundido)']], 'Relieve: cada color sobresale a su altura. Liso: los colores quedan incrustados al ras de la cara, planos como un llavero multicolor (lo más nítido para logos pequeños). Grabado: hundido en la pieza. La señal 📶 del NFC se hace igual')}
+          <div data-show="relief">${num('Alto del relieve (mm)', 'logo.height', 'Alto de las capas del logo, del texto y de la señal 📶 (cada capa del logo puede tener el suyo). De 0,4 a 3 mm')}</div>
+          <div data-show="flat">${num('Profundidad del color (mm)', 'logo.flatDepth', 'En capas de 0,2 mm. 0,2 = todos los colores en una sola capa: lo más nítido para detalles pequeños. 0,4 o más tapa mejor un color claro sobre un cuerpo oscuro')}</div>
+          <div data-show="engrave">${num('Profundidad (mm)', 'logo.depth')}</div>
+          <div class="ps-tip muted small" data-show="relief">💡 ¿Logo pequeño o con líneas finas? Usa <b>Liso multicolor</b> a 0,2 mm: todos los colores quedan en una sola capa, planos y nítidos, como los llaveros.</div>
+          <div class="ps-tip muted small" data-show="flat">💡 A 0,2 mm todos los colores van en la última capa: el llavero queda liso. Las líneas más delgadas que el trazo mínimo se engruesan para que salgan.</div>
           ${col('Color del cuerpo', 'colors.body')}
-          ${col('Color del logo / acento', 'colors.accent')}
-          ${chk('Logo y texto en el 2.º color', 'colors.twoColor', 'También la señal 📶 del NFC. Necesita cambio de filamento (AMS) o una pausa para cambiar el color')}
-          ${chk('Pata en el 2.º color', 'colors.flapAccent', 'La pata de la bisagra (la que sostiene el celular) en el color del logo')}
+          ${col('Color de acento', 'colors.accent', 'Para un logo de un solo color, el texto y la señal 📶 (y la pata si la pones a color)')}
+          ${chk('Logo y texto a color (AMS)', 'colors.twoColor', 'Cada color del logo, el texto y la señal 📶 en su filamento: necesita AMS o cambiar el filamento en una pausa. Apagado: todo sale del color del cuerpo')}
+          ${chk('Pata en el color de acento', 'colors.flapAccent', 'La pata de la bisagra (la que sostiene el celular) en el color de acento')}
         </section>
       </aside>
 
@@ -166,12 +200,14 @@ export class PhoneStandStudio {
       <aside class="panel right">
         <section class="card">
           <h3>✨ Extras</h3>
-          ${chk('📶 Chip NFC escondido', 'nfc.enabled', 'Bolsillo cerrado: la impresora hace una pausa, metes el sticker NFC redondo y la impresión lo tapa. En la vista se ve en dorado a través del cuerpo')}
+          ${chk('📶 Chip NFC', 'nfc.enabled', 'Sticker NFC redondo dentro del llavero. Bandeja tipo SIM: se imprime aparte, pones el chip y la deslizas por la ranura del lado hasta que hace clic. Con pausa: la impresora para, metes el chip y queda sellado. En la vista se ve en dorado a través del cuerpo')}
           <div data-show="nfc">
+            ${sel('Cómo va el chip', 'nfc.mount', [['tray', 'Bandeja tipo SIM (entra de lado)'], ['pause', 'Sellado con pausa de impresión']], 'Bandeja: sin pausa, el chip se puede cambiar; la bandeja sale al lado del soporte en el mismo plato. Pausa: bolsillo cerrado, la impresión para para que metas el chip y lo tapa')}
+            <div data-show="nfcTray">${sel('Ranura por el lado', 'nfc.side', [['auto', 'Automático (lejos del abre latas)'], ['right', 'Derecho'], ['left', 'Izquierdo']], 'Por dónde entra la bandeja. Automático: el lado contrario al abre latas')}</div>
             ${num('Diámetro del chip (mm)', 'nfc.diameter', 'Los stickers NFC redondos (NTAG213/215) miden 25 mm: deja 0,5 mm de juego. Si no cabe, la forma de arriba se alarga sola')}
             ${num('Grosor del chip (mm)', 'nfc.depth', 'Se redondea a capas de 0,2 mm')}
             ${sel('Dónde', 'nfc.where', [['auto', 'Automático (debajo del logo)'], ['top', 'En la forma de arriba'], ['bar', 'Cerca de la bisagra']], 'Automático: debajo del logo, así el cliente sabe dónde tocar con el celular. Arriba: lo más alto que quepa sin tocar el aro del llavero')}
-            ${chk('Señal 📶 encima del chip', 'nfc.mark', 'El símbolo de pago sin contacto sobre el chip, para saber dónde tocar con el celular. Se hace como el logo (relieve, a ras o grabado) y en su color. Si el logo ya está encima del chip no hace falta')}
+            ${chk('Señal 📶 encima del chip', 'nfc.mark', 'El símbolo de pago sin contacto sobre el chip, para saber dónde tocar con el celular. Se hace como el logo (relieve, liso o grabado) y en el color de acento. Si el logo ya está encima del chip no hace falta')}
           </div>
           ${chk('🥫 Abre latas', 'opener.enabled', 'Ranura en un borde: mete la pestaña de la lata y haz palanca. Si no hay borde libre, la forma de arriba se alarga sola')}
           <div data-show="opener">${sel('Lado', 'opener.side', [['right', 'Derecho'], ['left', 'Izquierdo']])}</div>
@@ -195,12 +231,12 @@ export class PhoneStandStudio {
           <h3>✅ Resultado</h3>
           <div class="hb-warn" data-r="warn"></div>
           <div class="hb-list small" data-r="list"></div>
-          <div class="ps-tip muted small">🖨️ PLA · capas de 0,2 mm · <b>sin soportes</b> · imprímelo tal como sale: el cuerpo acostado y la pata parada en su ranura; la bisagra sale armada. Al terminar, mueve la pata con cuidado hacia adelante y hacia atrás para soltarla y dóblala hasta que haga clic.<span data-show="nfc"> 📶 En la pausa mete el chip y dale continuar.</span></div>
+          <div class="ps-tip muted small">🖨️ PLA · capas de 0,2 mm · <b>sin soportes</b> · imprímelo tal como sale: el cuerpo acostado y la pata parada en su ranura; la bisagra sale armada. Al terminar, mueve la pata con cuidado hacia adelante y hacia atrás para soltarla y dóblala hasta que haga clic.<span data-show="nfcTray"> 📶 La bandeja sale al lado: pon el chip en su hueco y deslízala por la ranura del lado hasta que haga clic; para sacarla, hálala con la uña desde la muesca.</span><span data-show="nfcPause"> 📶 En la pausa mete el chip y dale continuar.</span></div>
         </section>
       </aside>
     </main>
-    <input type="file" data-r="fileLogo" accept="image/*" hidden />
-    <input type="file" data-r="fileShape" accept="image/*" hidden />
+    <input type="file" data-r="fileLogo" accept="image/*,.svg" hidden />
+    <input type="file" data-r="fileShape" accept="image/*,.svg" hidden />
     <input type="file" data-r="fileCfg" accept=".r3p,.json" hidden />`;
     this.$ = (n) => this.root.querySelector(`[data-r="${n}"]`);
     this.picker = new FontPicker(this.root.querySelector('[data-k="text.font"]'), {
@@ -222,6 +258,7 @@ export class PhoneStandStudio {
       if (a === 'home') { this.stopAnim(); this.cb.onBack(); }
       else if (a === 'logo') this.$('fileLogo').click();
       else if (a === 'clearLogo') this.clearLogo();
+      else if (a === 'textAccent') this.setTextColor('');
       else if (a === 'shapeFile') this.$('fileShape').click();
       else if (a === 'openCfg') this.$('fileCfg').click();
       else if (a === 'saveCfg') this.saveProject();
@@ -234,12 +271,14 @@ export class PhoneStandStudio {
     const onInput = (e) => {
       const el = e.target;
       if (el.dataset.r === 'amt') { this.stopAnim(); this.setAmt(+el.value); return; }
+      if (el.dataset.lm) { this.onLayer(el, e.type); return; }
       const k = el.dataset.k;
       if (!k) return;
       const decimal = el.getAttribute('inputmode') === 'decimal';
       let v;
       if (el.type === 'checkbox') v = el.checked;
       else if (decimal) { v = parseNum(el.value); if (!Number.isFinite(v)) return; }
+      else if ('num' in el.dataset) v = +el.value;
       else v = el.value;
       const prev = getK(this.cfg, k);
       setK(this.cfg, k, v);
@@ -247,9 +286,11 @@ export class PhoneStandStudio {
       if (decimal && e.type === 'change') { const nv = getK(normalizePhoneStand(this.cfg), k); setK(this.cfg, k, nv); el.value = String(nv); }
       if (getK(this.cfg, k) === prev) return;
       if (k === 'name') return;   // only names the exported files
-      if (k === 'colors.body' || k === 'colors.accent') { this.recolor(); return; }
+      if (k === 'colors.body' || k === 'colors.accent') { this.recolor(k, prev, v); return; }
+      if (k === 'text.color') { this.setTextColor(v); return; }
       if (k === 'text.value') this.picker.sync();
       this.updateVisibility();
+      if (k === 'logo.mode') this.renderLayers();
       this.schedule();
     };
     r.addEventListener('input', onInput);
@@ -289,25 +330,30 @@ export class PhoneStandStudio {
   sync() {
     const c = this.cfg;
     for (const el of this.root.querySelectorAll('[data-k]')) {
-      const v = getK(c, el.dataset.k);
+      const k = el.dataset.k;
+      // the text without its own colour uses the accent colour
+      const v = k === 'text.color' ? c.text.color || c.colors.accent : getK(c, k);
       if (el.type === 'checkbox') el.checked = !!v;
       else el.value = v ?? '';
     }
     this.picker.sync();
     this.root.style.setProperty('--ps-accent', c.colors.accent);
     this.renderLogoBox();
+    this.renderLayers();
     this.markShape();
     this.updateVisibility();
   }
 
   updateVisibility() {
-    const c = this.cfg;
+    const c = this.cfg, m = c.logo.mode;
     // the short variant has no bar: logo and text both go on the shape
     const wh = (w) => (c.variant === 'short' ? 'top' : w);
     const share = c.logo.enabled && !!this.logoImg && c.text.enabled && wh(c.logo.where) === wh(c.text.where);
+    const tray = c.nfc.enabled && c.nfc.mount === 'tray';
     const show = {
       custom: c.shape === 'custom', logo: c.logo.enabled, text: c.text.enabled, textRel: share, textSize: !share, barOk: c.variant !== 'short',
-      relief: c.logo.mode === 'relief', sunk: c.logo.mode !== 'relief', nfc: c.nfc.enabled, opener: c.opener.enabled, ring: c.ring.enabled,
+      relief: m === 'relief', flat: m === 'flat', engrave: m === 'engrave', layers: c.logo.enabled && !!this.logoImg,
+      nfc: c.nfc.enabled, nfcTray: tray, nfcPause: c.nfc.enabled && !tray, opener: c.opener.enabled, ring: c.ring.enabled,
     };
     for (const el of this.root.querySelectorAll('[data-show]')) el.hidden = !show[el.dataset.show];
   }
@@ -315,7 +361,86 @@ export class PhoneStandStudio {
   renderLogoBox() {
     this.$('logoBox').innerHTML = this.logoSrc
       ? `<img src="${esc(this.logoSrc)}" alt="logo" /><span class="muted small" title="${esc(this.logoName)}">${esc(this.logoName || 'Logo')}</span><button class="btn mini" data-a="clearLogo" title="Quitar el logo">✕</button>`
-      : '<span class="muted small">Sin logo: carga el PNG o JPG del cliente (fondo liso o transparente). También puedes arrastrarlo aquí.</span>';
+      : '<span class="muted small">Sin logo: carga el PNG, JPG o SVG del cliente (fondo liso o transparente). También puedes arrastrarlo aquí.</span>';
+  }
+
+  // «Colores del logo»: one row per colour found in the logo, like the keychains' palette: detected colour → filament
+  // colour, print it / in the body's colour / leave it out, and (relief) its own height; engraved: carve it or not.
+  // The rows are rebuilt only when the colours or the finish change; otherwise their values are refreshed in place
+  // (never the field being typed in).
+  renderLayers() {
+    const box = this.$('layers');
+    const L = this.cfg.logo.enabled && this.logoImg ? this.res?.info.logo : null;
+    if (!L?.length) { if (this._layerSig) { box.innerHTML = ''; this._layerSig = ''; } return; }
+    const c = this.cfg, fin = c.logo.mode, carve = fin === 'engrave';
+    const sig = JSON.stringify([L.map((e) => e.key), fin]);
+    if (sig !== this._layerSig) {
+      box.innerHTML = L.map((e) => `<div class="st-pal ps-pal" data-layer="${e.idx}">
+        <span class="num">${e.idx + 1}</span>
+        <span class="sw" style="background:${esc(e.hex)}" title="Color ${e.idx + 1} del logo: ${esc(e.hex)} · ${Math.max(1, Math.round(e.area * 100))} % del dibujo"></span>${carve ? '' : '→'}
+        ${carve ? `<select data-lm="mode" title="Grabar: esta parte del logo se marca hundida en el cuerpo. Quitar: no se graba">
+          <option value="on">Grabar</option><option value="off">Quitar</option></select>`
+        : `<input type="color" data-lm="color" title="Color del filamento para este color del logo" />
+        <select data-lm="mode" title="Imprimir: en el color de la izquierda. Color del cuerpo: sale del mismo filamento del cuerpo. Quitar: esta parte del logo no se hace">
+          <option value="on">Imprimir</option><option value="body">Color del cuerpo</option><option value="off">Quitar</option></select>`}
+        ${fin === 'relief' ? '<span class="h-wrap" title="Alto de este color en mm (vacío = el alto del relieve)"><input type="text" inputmode="decimal" data-lm="height" /><span class="unit">mm</span></span>' : ''}
+      </div>`).join('');
+      this._layerSig = sig;
+    }
+    const rows = box.querySelectorAll('[data-layer]');
+    L.forEach((e, i) => {
+      const row = rows[i], mode = !e.on ? 'off' : !carve && e.color === c.colors.body ? 'body' : 'on';
+      row.classList.toggle('off', !!e.skipped);
+      row.title = e.skipped === 'body' ? 'En el acabado liso este color queda del color del cuerpo: no se imprime aparte'
+        : e.on && !e.used ? 'Esta parte del logo es tan pequeña que no queda en la pieza: agranda el logo' : '';
+      const set = (sel, v) => { const el = row.querySelector(sel); if (el && el !== document.activeElement) el.value = v; };
+      set('[data-lm=color]', e.color);
+      set('[data-lm=mode]', mode);
+      set('[data-lm=height]', e.height ? String(e.height) : '');
+      const h = row.querySelector('[data-lm=height]');
+      if (h) h.placeholder = String(c.logo.height);
+    });
+  }
+
+  // a change in a «Colores del logo» row: stored in cfg.logo.layers under the colour it was detected as
+  onLayer(el, type) {
+    const row = el.closest('[data-layer]'), e = this.res?.info.logo?.[+row?.dataset.layer];
+    if (!e) return;
+    const c = this.cfg, L = c.logo.layers;
+    const cur = { color: e.color, height: e.height, on: e.on, ...L[e.key] };
+    const own = this.res.info.logo.length === 1 ? c.colors.accent : e.hex;   // its colour when it has none chosen
+    const lm = el.dataset.lm, modeEl = row.querySelector('[data-lm=mode]'), colEl = row.querySelector('[data-lm=color]');
+    if (lm === 'color') {
+      cur.color = el.value;
+      cur.on = true;
+      modeEl.value = cur.color === c.colors.body ? 'body' : 'on';
+    } else if (lm === 'mode') {
+      cur.on = el.value !== 'off';
+      if (el.value === 'body') cur.color = c.colors.body;
+      else if (el.value === 'on' && colEl && cur.color === c.colors.body) cur.color = own;
+      if (colEl) colEl.value = cur.color;
+    } else if (lm === 'height') {
+      const v = parseNum(el.value);
+      cur.height = el.value.trim() === '' || !(v > 0) ? 0 : v;
+      if (type === 'change') {
+        cur.height = cur.height ? Math.min(3, Math.max(0.2, cur.height)) : 0;
+        el.value = cur.height ? String(cur.height) : '';
+      }
+    }
+    const old = L[e.key];
+    if (old && old.color === cur.color && old.height === cur.height && old.on === cur.on) return;
+    L[e.key] = { color: cur.color, height: cur.height, on: cur.on };
+    if (lm !== 'height') this.paint((p) => p.layer === e.key, cur.color);
+    this.schedule();
+  }
+
+  setTextColor(v) {
+    const c = this.cfg;
+    c.text.color = v === c.colors.accent ? '' : v || '';
+    const el = this.root.querySelector('[data-k="text.color"]');
+    if (el && el !== document.activeElement) el.value = c.text.color || c.colors.accent;
+    this.paint((p) => p.layer === 'text', c.text.color || c.colors.accent);
+    this.schedule();
   }
 
   // shape buttons with a live outline of each shape (window and key-ring hole included)
@@ -418,7 +543,7 @@ export class PhoneStandStudio {
   renderInfo() {
     const res = this.res;
     if (!res) return;
-    const i = res.info, c = this.cfg.colors;
+    const i = res.info;
     this.$('warn').innerHTML = res.warnings.length
       ? res.warnings.map((w) => `<div class="hb-w">⚠ ${esc(w)}</div>`).join('')
       : '<div class="hb-ok">✓ Listo para imprimir: sin soportes y con la bisagra armada.</div>';
@@ -427,7 +552,6 @@ export class PhoneStandStudio {
     const name = (list, id) => list.find((s) => s.id === id)?.name || id;
     const shapeName = name(PHONESTAND_SHAPES, i.shape.id);
     const real = res.parts.filter((p) => !p.preview);
-    const fils = [...new Set(real.map((p) => p.filamentIndex))].sort();
     const dims = (s) => `${f1(s.w)} × ${f1(s.l)} × ${f1(s.h)} mm`;
     const ok = (v) => (v >= 0 ? '✓' : '⚠ puede voltearse');
     const grown = i.shape.grow ? ` · alargada ${f1(i.shape.grow)} mm para que quepa${i.shape.growFor.length > 1 ? 'n' : ''} ${i.shape.growFor.map((k) => (k === 'nfc' ? 'el chip NFC' : 'el abre latas')).join(' y ')}` : '';
@@ -436,42 +560,63 @@ export class PhoneStandStudio {
     h += row('Llavero cerrado', dims(i.closedSize));
     h += row('Al imprimir', `${f1(i.size.h)} mm de alto (la pata sale parada)`);
     h += row('Peso aprox.', `${f1(i.grams)} g de PLA`);
-    h += row('Filamentos', `${fils.length} ${fils.map((f) => sw(f ? c.accent : c.body)).join('')}`);
+    h += row('Filamentos', `${res.filaments.length} ${res.filaments.map(sw).join('')}`);
     h += row('Celular', `inclinado ${f1(i.phone.angle)}° · hasta ${f1(i.phone.tMax)} mm de grueso con forro`);
     h += row('Estabilidad', `vertical ${ok(i.stability.portrait)} · horizontal ${ok(i.stability.landscape)}${i.phone.landscape ? ' · úsalo horizontal' : ''}`);
     h += row('Bisagra', `conos Ø${f1(i.hinge.pinDiameter)} mm · holgura ${f1(i.hinge.clearance)} mm`);
     h += row('Cierre', i.latch ? `clic de ${f1(i.latch.interference)} mm (no se abre en el bolsillo)` : 'sin clic');
     if (i.ring) h += row('Argolla', `agujero Ø${f1(2 * i.ring.r)} mm`);
+    const made = { relief: 'en relieve', flat: 'a ras', engrave: 'grabada' }[i.art.mode];
     if (i.nfc) {
-      const n = i.nfc, made = { relief: 'en relieve', inlay: 'a ras', engrave: 'grabada' }[i.art.mode];
+      const n = i.nfc;
       const where = n.covered ? `debajo del ${n.under}: toca el ${n.under} con el celular` : n.where === 'bar' ? 'cerca de la bisagra' : 'en la forma de arriba';
       h += row('Chip NFC 📶', `Ø${f1(2 * n.r)} mm · ${where}${n.mark ? ` · señal 📶 ${made} encima: toca la señal con el celular` : ''}`);
-      h += row('Pausa NFC', `a Z = ${f1(n.z1)} mm: mete el chip y continúa`);
+      if (n.mount === 'tray') h += row('Bandeja NFC 📶', `entra por el lado ${n.side === 'left' ? 'izquierdo' : 'derecho'} hasta el clic · se imprime aparte, sin pausa`);
+      else h += row('Pausa NFC', `a Z = ${f1(n.z1)} mm: mete el chip y continúa`);
     }
     if (i.opener) h += row('Abre latas', `lado ${i.opener.side === 'left' ? 'izquierdo' : 'derecho'}${i.opener.angle ? ` · girado ${i.opener.angle}°` : ''}`);
     for (const w of ['top', 'bar']) {
       const a = i.art[w];
       if (a) h += row(a.logo && a.text ? 'Logo y texto' : a.logo ? 'Logo' : 'Texto', `${f1(a.w)} × ${f1(a.h)} mm ${w === 'top' ? 'en la forma' : 'en la barra'}`);
     }
+    if (i.art.top || i.art.bar) {
+      const c = res.cfg.logo, depth = i.art.mode === 'flat' ? c.flatDepth : c.depth;
+      const fin = i.art.mode === 'relief' ? `en relieve ${f1(c.height)} mm` : i.art.mode === 'flat'
+        ? `liso a ras · color de ${f1(depth)} mm (${Math.round(depth / 0.2)} capa${depth > 0.21 ? 's' : ''})` : `grabado ${f1(depth)} mm`;
+      h += row('Acabado', `${fin} · trazo mínimo ${f1(i.art.minLine)} mm`);
+    }
     h += '<h4>Piezas del 3MF</h4>';
-    h += real.map((p) => `<div class="hb-pc"><span>${sw(p.color)} ${esc(p.name)}</span><span class="muted">filamento ${p.filamentIndex + 1}</span></div>`).join('');
-    if (real.length < res.parts.length) h += `<div class="hb-pc"><span>${sw('#d9a400')} Chip NFC</span><span class="muted">solo en la vista (va en la pausa)</span></div>`;
+    h += real.map((p) => `<div class="hb-pc"><span>${sw(p.color)} ${esc(p.name)}</span><span class="muted">filamento ${p.filamentIndex + 1}${p.apart ? ' · objeto aparte' : ''}</span></div>`).join('');
+    if (real.length < res.parts.length) h += `<div class="hb-pc"><span>${sw('#d9a400')} Chip NFC</span><span class="muted">solo en la vista (va en ${i.nfc?.mount === 'tray' ? 'la bandeja' : 'la pausa'})</span></div>`;
     this.$('list').innerHTML = h;
     this.$('status').textContent = `${shapeName} · ${dims(i.closedSize)} · ${f1(i.grams)} g${res.warnings.length ? ` · ⚠ ${res.warnings.length} aviso(s)` : ''}`;
+    this.renderLayers();
   }
 
-  // colour pickers only repaint (no rebuild): filament 0 = body colour, 1 = accent
-  recolor() {
-    const c = this.cfg.colors;
-    this.root.style.setProperty('--ps-accent', c.accent);
-    if (!this.res) return;
-    this.res.parts.forEach((p, i) => {
-      if (p.preview) return;
-      p.color = p.filamentIndex ? c.accent : c.body;
+  // body/accent colour: what had the old colour (body, leg, tray, accent-coloured logo/text/📶, logo colours set to it)
+  // is repainted at once and keeps following it; the rebuild after it regroups the filaments
+  recolor(k, prev, v) {
+    const c = this.cfg;
+    this.root.style.setProperty('--ps-accent', c.colors.accent);
+    for (const l of Object.values(c.logo.layers)) if (l.color === prev) l.color = v;
+    if (c.text.color === prev) c.text.color = v;
+    const tc = this.root.querySelector('[data-k="text.color"]');
+    if (tc) tc.value = c.text.color || c.colors.accent;
+    for (const el of this.root.querySelectorAll('[data-lm=color]')) if (el.value === prev) el.value = v;
+    this.paint((p) => p.color === prev, v);
+    this.schedule();
+  }
+
+  // repaints the pieces that match at once (no rebuild); art follows the body when the logo is not in colour
+  paint(match, color) {
+    const res = this.res, c = this.cfg.colors;
+    if (!res) return;
+    res.parts.forEach((p, i) => {
+      if (p.preview || !match(p)) return;
+      p.color = p.art && !c.twoColor ? c.body : color;
       this.viewer?.meshes.get('p' + i)?.material.color.set(p.color);
     });
     this.viewer?.requestRender();
-    this.renderInfo();
   }
 
   // ------------------------------------------------------------------ 3D view
@@ -509,18 +654,34 @@ export class PhoneStandStudio {
     Object.assign(ph.material, { transparent: true, opacity: 0.5, depthWrite: false, roughness: 0.25 });
     ph.material.needsUpdate = true;
     ph.renderOrder = 12;   // the glass last: it tints the chip and the art behind it too
-    // centre the piece as printed on the grid
+    // centre the stand as printed on the grid (the NFC tray printed beside it does not count: it goes into the stand)
     const b = new THREE.Box3();
-    for (const p of res.parts) { if (p.preview) continue; p.geometry.computeBoundingBox(); b.union(p.geometry.boundingBox); }
+    for (const p of res.parts) { if (p.preview || p.apart) continue; p.geometry.computeBoundingBox(); b.union(p.geometry.boundingBox); }
     v.model.position.set(-(b.min.x + b.max.x) / 2, -(b.min.y + b.max.y) / 2, 0);
-    this.applyView(!this.framed);
+    // re-frame when the NFC tray appears beside the stand (or goes away), so it is never cut off at the edge
+    const apart = res.parts.some((p) => p.apart);
+    this.applyView(!this.framed || (apart !== this._apart && this.tab === 'print'));
+    this._apart = apart;
     this.framed = true;
   }
 
   applyView(fit) {
     for (const b of this.root.querySelectorAll('[data-tab]')) b.classList.toggle('active', b.dataset.tab === this.tab);
+    this.placeApart();
     this.setAmt(this.amt);
     if (fit) this.fit();
+  }
+
+  // the NFC tray (and its chip) lie beside the stand in «Como se imprime»; in the other views they are in the slot
+  placeApart() {
+    const v = this.viewer, res = this.res;
+    if (!v || !res) return;
+    res.parts.forEach((p, i) => {
+      if (!p.assembled) return;
+      const m = v.meshes.get('p' + i);
+      if (m) m.position.set(...(this.tab === 'print' ? [0, 0, 0] : p.assembled));
+    });
+    v.requestRender();
   }
 
   setTab(tab) {
@@ -592,17 +753,19 @@ export class PhoneStandStudio {
 
   // ------------------------------------------------------------------ images
   async loadLogo(file) {
-    if (!isImageFile(file)) { this.cb.toast('El logo debe ser una imagen (PNG o JPG).', true); return false; }
+    if (!isImageFile(file)) { this.cb.toast('El logo debe ser una imagen (PNG, JPG o SVG).', true); return false; }
     try {
       const src = await readDataURL(file);
       const img = await imageDataFrom(src, 1000);
       this.logoSrc = src;
       this.logoImg = img;
       this.logoName = file.name || 'Logo';
-      this.cfg.logo.enabled = true;
+      // another logo: its colours are found again (automatic count, default colours)
+      Object.assign(this.cfg.logo, { enabled: true, colors: 0, layers: {} });
       this.sync();
       await this.rebuild();
-      this.cb.toast('✓ Logo cargado');
+      const n = this.res?.info.logo?.length || 0;
+      this.cb.toast(`✓ Logo cargado${n > 1 ? ` · ${n} colores: cámbialos en «Colores del logo»` : ''}`);
       return true;
     } catch (err) {
       console.error(err);
@@ -621,7 +784,7 @@ export class PhoneStandStudio {
   }
 
   async loadShape(file) {
-    if (!isImageFile(file)) { this.cb.toast('La silueta debe ser una imagen (PNG o JPG).', true); return false; }
+    if (!isImageFile(file)) { this.cb.toast('La silueta debe ser una imagen (PNG, JPG o SVG).', true); return false; }
     try {
       const src = await readDataURL(file);
       const img = await imageDataFrom(src, 800);
@@ -653,10 +816,17 @@ export class PhoneStandStudio {
     this.cb.showBusy('Generando 3MF…');
     await nextFrame();
     try {
-      const parts = res.parts.filter((p) => !p.preview).map(({ name: n, color, filamentIndex, geometry }) => ({ name: n, color, filamentIndex, geometry }));
-      const data = threeMF(parts, name, { pauses: res.pauses });
+      // the stand with its colour pieces as one object, the NFC tray (beside it on the plate) as another
+      const ex = phoneStandExport(res);
+      const parts = ex.parts.map(({ name: n, color, filamentIndex, geometry }) => ({ name: n, color, filamentIndex, geometry }));
+      const assemblies = ex.assemblies.map((a, k) => (k ? a : { ...a, name }));
+      const data = threeMF(parts, name, { assemblies, pauses: ex.pauses });
       const p = await window.api.saveFile({ defaultPath: fileBase(name) + '.3mf', filters: [{ name: '3MF', extensions: ['3mf'] }], data });
-      if (p) this.cb.toast(`✓ 3MF guardado${res.pauses.length ? ` · pausa para el chip NFC a Z = ${f1(res.pauses[0].z)} mm` : ''}`);
+      const nf = res.filaments.length;
+      if (p) {
+        this.cb.toast(`✓ 3MF guardado · ${nf} filamento${nf > 1 ? 's' : ''}${assemblies.length > 1 ? ' · la bandeja NFC va como objeto aparte' : ''}`
+          + `${ex.pauses.length ? ` · pausa para el chip NFC a Z = ${f1(ex.pauses[0].z)} mm` : ''}`);
+      }
       return p;
     } catch (err) {
       console.error(err);
@@ -671,7 +841,8 @@ export class PhoneStandStudio {
     try {
       const data = stlBinary(res.parts.filter((p) => !p.preview).map((p) => p.geometry));
       const p = await window.api.saveFile({ defaultPath: fileBase(name) + '.stl', filters: [{ name: 'STL', extensions: ['stl'] }], data });
-      if (p) this.cb.toast(`✓ STL guardado (un solo color${res.pauses.length ? `; agrega a mano la pausa del chip NFC a Z = ${f1(res.pauses[0].z)} mm` : ''})`);
+      const tray = res.parts.some((q) => q.apart);
+      if (p) this.cb.toast(`✓ STL guardado (un solo color${tray ? '; la bandeja NFC va al lado del soporte' : ''}${res.pauses.length ? `; agrega a mano la pausa del chip NFC a Z = ${f1(res.pauses[0].z)} mm` : ''})`);
       return p;
     } catch (err) {
       console.error(err);
