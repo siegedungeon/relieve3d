@@ -329,7 +329,9 @@ Relieve3D escribe los guiones, prompts y captions, crea el kit de cada video y m
 |---|---|
 | Hoy | Fase de la campaña, indicadores (publicados, vistas, consultas, ventas), videos de hoy y siguientes, siguiente hueco libre del calendario y pendientes de medir |
 | Kit del video | Los pasos del video en 7 fases: preparar, grabar, pasar al PC, montar, publicar, responder y medir. El estado de cada paso sale de los archivos reales de la carpeta (clips, voz, animatic, registro). Incluye **Guardar kit.md** y el selector de estado |
-| Crear guion | Producto, ocasión, objetivo, fórmula de hook, formato y fecha. Genera escenas grabables, teleprompter, texto en pantalla, caption con el precio real, hashtags y comentario fijado, y avisa si hay frases prohibidas o precios fuera del catálogo. **Crear video** genera `videos/VNNN-…` con `guion.md`, `video.json` y `kit.md`, y lo agenda en `registro/videos.csv` |
+| Crear guion | Producto, ocasión, objetivo, fórmula de hook, formato y fecha. Genera escenas grabables, teleprompter, texto en pantalla, caption con el precio real, hashtags y comentario fijado, y avisa si hay frases prohibidas o precios fuera del catálogo. Sugiere ganchos de la biblioteca y ganchos con temas en tendencia, guiones base, ideas y cierres (**Usar** los pone en el borrador con los datos reales). **Crear video** genera `videos/VNNN-…` con `guion.md`, `video.json` y `kit.md`, y lo agenda en `registro/videos.csv` |
+| Biblioteca | 7 colecciones que siempre están disponibles: 52 ganchos, 30 guiones base, 15 llamados a la acción, 12 sets de hashtags, 25 ideas de videos, 10 respuestas rápidas y 13 sonidos. Buscar, **Usar en Crear guion**, copiar, ocultar y **Exportar (JSON)**. **Pedir más a la IA** copia un prompt (pedir N nuevos o mejorar los que ves) y abre ChatGPT, Copilot o Gemini. En **Pegar lo que respondió la IA** pegas la respuesta y **Revisar** muestra, antes de guardar, los nuevos, los actualizados por id, los repetidos y los rechazados con su motivo. **Guardar en la biblioteca** la deja en `biblioteca/<colección>.json` |
+| Tendencias | **Actualizar todo** lee las fuentes directamente (sin IA) y guarda cada dato con su enlace y su hora en `tendencias/<fecha>/`. Incluye fechas comerciales de Colombia con cuándo empezar a publicar, el ranking de tus fórmulas según tus métricas y la lectura de hashtags del Creative Center |
 | Prompts IA | 10 prompts con el contexto de la marca: mejorar guion, hooks, caption/SEO, respuestas con video, adaptar tendencia o sonido, ideas para la semana, diagnóstico, fondo de portada, DM/WhatsApp y tareas largas con Copilot CLI. Cada uno dice dónde pegarlo. La respuesta de la IA al guion (N bloques separados por `\|` o numerados) se aplica al borrador |
 | Responder y medir | Métricas a las 24 h, 72 h y 7 días (`registro/metricas.csv`) con diagnóstico frente a tu mediana, y pedidos atribuidos a cada video (`registro/pedidos-tiktok.csv`) |
 | Configuración | Carpeta del espacio, Python y documentos encontrados |
@@ -344,6 +346,18 @@ Relieve3D escribe los guiones, prompts y captions, crea el kit de cada video y m
 Solo se ejecutan esos comandos, con rutas dentro de `videos/`.
 
 Los CSV no guardan datos de clientes: se rechazan teléfonos y @usuarios. Las celdas que empiezan por `=`, `+`, `-` o `@` se escriben como texto. Se aceptan números con formato colombiano (`1.234`, `6,5`).
+
+**Biblioteca**: la base viene dentro de Relieve3D; lo tuyo se guarda en `biblioteca/<colección>.json` del espacio (`{ "items": [...], "ocultos": [...] }`). Si importas un elemento con el id de uno base (`gan-b01`…), lo reemplaza y se marca «Base editada»; **Volver a la base** descarta tu versión, y ocultarlo no la borra. Los ids nuevos son `gan-001`, `gui-001`, `cta-001`, `has-001`, `ide-001`, `res-001` y `son-001`. El archivo guarda el último número usado (`ultimo`), así que un id borrado no se reutiliza y reimportar una exportación vieja no pisa otro elemento. Se aceptan hasta 500 elementos por importación: JSON (también dentro de un bloque de código) o una lista simple. Se rechazan datos de contacto (teléfonos, correos, @usuarios), personajes o marcas registradas, precios fuera del catálogo, descuentos o envíos gratis inventados, frases prohibidas y marcadores desconocidos. Antes de guardar se deja la versión anterior en `biblioteca/.anterior/` (si el archivo estaba dañado o escrito a mano con otra forma, se respalda aparte con fecha, `<colección>.danado-<fecha>.json`, y la app pide confirmar antes de reemplazarlo) y la importación queda anotada en la bitácora del día.
+
+**Fuentes de Tendencias** (verificables, cada dato con enlace):
+
+- Google Trends · Colombia (RSS `trends.google.com/trending/rss?geo=CO`): lo más buscado en las últimas horas, con noticias. **Gancho con esto** solo aparece en temas seguros: descarta política, tragedias, violencia, delitos, economía, salud y religión (también según los titulares).
+- Reddit r/BambuLab y r/3Dprinting (RSS del top de la semana): ideas de piezas virales; **Guardar como idea** las pasa a la biblioteca.
+- TikTok Creative Center · hashtags: **Abrir Creative Center** abre una ventana con su propia sesión. **Capturar lo que se ve**, o pegar el texto de la página y pulsar **Leer hashtags pegados**, extrae los hashtags. Si la región no es Colombia, avisa antes de guardarlos como set.
+- Fechas comerciales de Colombia (Black Friday, Cyber Monday, Velitas, Novena, prima de diciembre, Nochebuena, Año Nuevo, Día de la Madre, Amor y Amistad…), calculadas sin internet.
+- Tus métricas: ranking de fórmulas de hook por compartidos + guardados cada 100 vistas.
+
+Límites: ninguna página pública publica «los ganchos ganadores de hoy». Por eso los ganchos se arman con la biblioteca más el tema en tendencia y se ordenan con tus métricas. Sin iniciar sesión, el Creative Center solo muestra el top 3 de Estados Unidos y no muestra la pestaña de música. Printables y MakerWorld no tienen API pública. Reddit limita las consultas seguidas: si responde 429, espera unos minutos.
 
 Requisitos: el espacio TikTok con `herramientas\tiktok3d.py` y Python 3 (con `edge-tts` para la voz guía). Para el montaje, ffmpeg también debe estar instalado.
 
@@ -394,7 +408,7 @@ Estudio TikTok: `npm run test:tiktok` (unitarias, con datos de `test/fixtures/ti
 
 Soporte celular llavero: `node test/phonestand.test.mjs` (incluida en `npm test`) y `node test/e2e/run.mjs phonestand`.
 
-El E2E copia el espacio real (`R3D_TIKTOK_E2E_SRC` o `Documentos\TikTok-Impresion3D`) en `test/out/e2e/tiktok/` y recorre el flujo completo sobre la copia: kit, guion, prompts, crear video, voz guía, animatic, revisar, publicar, métricas, pedido y panel. Al final comprueba que el original no cambió. Necesita Python, ffmpeg e internet para edge-tts.
+El E2E copia el espacio real (`R3D_TIKTOK_E2E_SRC` o `Documentos\TikTok-Impresion3D`) en `test/out/e2e/tiktok/` y recorre el flujo completo sobre la copia: kit, guion, prompts, crear video, voz guía, animatic, revisar, publicar, métricas, pedido, panel, biblioteca (importar 50 ganchos, exportar, ocultar, volver a la base), tendencias en vivo y un segundo video creado desde un guion base. Al final comprueba que el original no cambió. Necesita Python, ffmpeg e internet para edge-tts y Google Trends.
 
 Variables de entorno:
 

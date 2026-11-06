@@ -1,13 +1,14 @@
 import * as T from './core/tiktok_studio.js';
+import { LibMixin } from './tiktok_lib_ui.js';
 
 const e = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
-const TABS = [['hoy', 'Hoy'], ['kit', 'Kit del video'], ['crear', 'Crear guion'], ['prompts', 'Prompts IA'], ['medir', 'Responder y medir'], ['config', 'Configuración']];
+const TABS = [['hoy', 'Hoy'], ['kit', 'Kit del video'], ['crear', 'Crear guion'], ['biblioteca', 'Biblioteca'], ['tendencias', 'Tendencias'], ['prompts', 'Prompts IA'], ['medir', 'Responder y medir'], ['config', 'Configuración']];
 const ICON = { ok: '✓', pendiente: '○', parcial: '◐', espera: '⏳', info: '•' };
 const ESTADO_TXT = { idea: 'Idea', guion: 'Guion', grabado: 'Grabado', editado: 'Editado', listo: 'Listo', publicado: 'Publicado', medido: 'Medido' };
 const PEDIDO_ESTADOS = ['consulta', 'cotizado', 'vendido', 'entregado', 'perdido'];
 const TIPOS = ['consulta', 'pedido', 'empresa'];
 const CANALES = ['DM TikTok', 'comentario', 'WhatsApp', 'web'];
-const DOCS = [['perfil', 'estrategia/perfil-cuenta.md', 'catálogo y precios, WhatsApp, quién sale en cámara'], ['voz', 'estrategia/voz-y-marca.md', 'cómo hablas, frases prohibidas, colores'], ['hashtags', 'estrategia/hashtags-y-seo.md', 'sets de hashtags'], ['campana', 'estrategia/campana-navidad-2026.md', 'fases, semanas, horarios, respuestas rápidas'], ['videosCsv', 'registro/videos.csv', 'estado de cada video'], ['metricasCsv', 'registro/metricas.csv', 'mediciones'], ['pedidosCsv', 'registro/pedidos-tiktok.csv', 'consultas y ventas']];
+const DOCS = [['perfil', 'estrategia/perfil-cuenta.md', 'catálogo y precios, WhatsApp, quién sale en cámara'], ['voz', 'estrategia/voz-y-marca.md', 'cómo hablas, frases prohibidas, colores'], ['hashtags', 'estrategia/hashtags-y-seo.md', 'sets de hashtags'], ['campana', 'estrategia/campana-navidad-2026.md', 'fases, semanas, horarios, respuestas rápidas'], ['videosCsv', 'registro/videos.csv', 'estado de cada video'], ['metricasCsv', 'registro/metricas.csv', 'mediciones'], ['pedidosCsv', 'registro/pedidos-tiktok.csv', 'consultas y ventas'], ['ideas', 'ideas/banco-de-ideas.md', 'banco de ideas (se ve en Biblioteca → Ideas)']];
 const STRUCT = ['producto', 'ocasion', 'objetivo', 'formula', 'formato', 'hook', 'tendencia'];
 const opt = (v, label, sel) => `<option value="${e(v)}"${String(v) === String(sel) ? ' selected' : ''}>${e(label)}</option>`;
 const pill = (estado) => `<span class="tk-pill tk-st-${e(estado)}">${e(ESTADO_TXT[estado] || estado || '—')}</span>`;
@@ -19,6 +20,7 @@ export class TiktokStudio {
     this.data = null; this.ctx = null; this.videoId = ''; this.input = null; this.draft = null; this.draftError = '';
     this.subject = 'draft'; this.log = []; this.logMin = false; this.copies = []; this.lastError = ''; this.lastCopied = '';
     this.publishUrl = ''; this.respuesta = ''; this.metric = null; this.pedido = null; this.kit = null; this.opened = new Map();
+    this.libInit();
     window.api?.onTiktokLog?.((d) => this.pushLog(d.line, d.tag));
     root.addEventListener('click', (ev) => {
       const t = ev.target.closest('[data-copy],[data-action],[data-tab]');
@@ -57,6 +59,7 @@ export class TiktokStudio {
     if (!data.ok) { this.ctx = null; this.tab = 'config'; return; }
     this.ctx = T.buildContext({ ...data.docs, videos: data.videos, root: data.root, today: data.today || undefined, now: data.now || undefined });
     this.agenda = T.agenda(this.ctx);
+    this.libLoad();
     const ids = this.ctx.videos.map((v) => v.id);
     if (!ids.includes(this.videoId)) {
       const a = this.agenda;
@@ -185,7 +188,9 @@ export class TiktokStudio {
       case 'clear-log': this.log = []; return;
       case 'log-toggle': this.logMin = !this.logMin; return;
       case 'module': this.cb.openModule?.(d.id); return;
-      default: throw new Error(`Acción desconocida: ${action}`);
+      default:
+        if (await this.libAction(action, d)) return;
+        throw new Error(`Acción desconocida: ${action}`);
     }
   }
 
@@ -238,6 +243,7 @@ export class TiktokStudio {
 
   inputEvent(ev) {
     const t = ev.target;
+    if (this.libInput(t)) return;
     if (t.dataset.scene !== undefined) {
       const i = +t.dataset.scene;
       this.input.escenas[i] = { ...(this.input.escenas[i] || {}), [t.dataset.field]: t.value };
@@ -252,6 +258,7 @@ export class TiktokStudio {
   changeEvent(ev) {
     const t = ev.target;
     if (this.busy) return;
+    if (this.libChange(t)) return;
     if (t.dataset.draft && t.dataset.draft !== 'titulo') {
       const k = t.dataset.draft;
       this.input[k] = k === 'hook' ? +t.value : t.value;
@@ -277,7 +284,7 @@ export class TiktokStudio {
     if (!ok) this.tab = 'config';
     const f = ok ? a.fase : null;
     const sub = ok ? [this.ctx.perfil.usuario || '@pabonitaslaser', f ? `Fase ${f.letra} · ${f.nombre}` : '', a.semana, `hoy ${T.fechaHumana(a.hoy)}`].filter(Boolean).join(' · ') : 'Configura la carpeta del espacio TikTok';
-    const page = !ok ? this.configPage() : this.tab === 'kit' ? this.kitPage() : this.tab === 'crear' ? this.crearPage() : this.tab === 'prompts' ? this.promptsPage() : this.tab === 'medir' ? this.medirPage() : this.tab === 'config' ? this.configPage() : this.hoyPage();
+    const page = !ok ? this.configPage() : this.tab === 'kit' ? this.kitPage() : this.tab === 'crear' ? this.crearPage() : this.tab === 'biblioteca' ? this.bibliotecaPage() : this.tab === 'tendencias' ? this.tendenciasPage() : this.tab === 'prompts' ? this.promptsPage() : this.tab === 'medir' ? this.medirPage() : this.tab === 'config' ? this.configPage() : this.hoyPage();
     const avisos = ok ? this.ctx.avisos : [];
     this.root.innerHTML = `<header class="tk-header"><button class="btn" data-action="home">← Inicio</button>
       <div class="tk-brand"><span>PABONITAS · TIKTOK</span><strong>Estudio TikTok</strong><small>${e(sub)}</small></div>
@@ -383,8 +390,8 @@ export class TiktokStudio {
       ${d.escenas.map((s, k) => `<div class="tk-scene"><div class="tk-scene-head"><b>${k + 1}</b><span class="tk-tag tk-tag-${e(s.tipo.toLowerCase())}">${e(s.tipo)}</span><code>${e(s.archivo)}</code>${s.sonido ? `<small>♪ ${e(s.sonido)}</small>` : ''}</div>
         <p class="tk-visual">${e(s.visual)}</p>
         <label class="tk-field"><span>Lo que dices</span><textarea rows="2" data-scene="${k}" data-field="voz">${e(s.voz)}</textarea></label>
-        <label class="tk-field"><span>Texto en pantalla</span><input data-scene="${k}" data-field="texto" value="${e(s.texto)}"></label></div>`).join('')}</section>`;
-    return `<div class="tk-split"><div class="tk-form">${form}${hooks}${escenas}</div><aside data-side>${this.sideHTML()}</aside></div>`;
+        <label class="tk-field"><span>Texto en pantalla</span><input data-scene="${k}" data-field="texto" value="${e(s.texto)}"></label></div>`).join('')}${this.ctaPick()}</section>`;
+    return `<div class="tk-split"><div class="tk-form">${form}${hooks}${this.crearExtras()}${escenas}</div><aside data-side>${this.sideHTML()}</aside></div>`;
   }
 
   sideHTML() {
@@ -467,3 +474,5 @@ export class TiktokStudio {
 function md(s) {
   return e(s).replace(/\*\*(.+?)\*\*/g, '<b>$1</b>').replace(/`([^`]+)`/g, '<code>$1</code>');
 }
+
+Object.assign(TiktokStudio.prototype, LibMixin);

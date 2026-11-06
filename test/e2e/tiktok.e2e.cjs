@@ -1,6 +1,8 @@
 // Estudio TikTok, flujo completo sobre una COPIA del espacio real (run.mjs la prepara en test/out/e2e/tiktok):
 // inicio → Hoy → kit → Crear guion → Prompts IA → crear el video con tiktok3d.py real → voz guía (edge-tts) →
-// animatic → revisar → estado → publicar → métricas 24 h / 7 días → consulta sin datos de clientes → panel → configuración.
+// animatic → revisar → estado → publicar → métricas 24 h / 7 días → consulta sin datos de clientes → panel → configuración →
+// biblioteca (bases, prompt de 50, importar/exportar/ocultar) → tendencias en vivo (Google Trends CO, Reddit, Creative Center)
+// → ganchos de tendencia y de la biblioteca en Crear guion → segundo video desde un guion base.
 const fs = require('node:fs');
 const path = require('node:path');
 const crypto = require('node:crypto');
@@ -47,6 +49,7 @@ module.exports = async ({ win, run, shot, wait }) => {
     const h = crypto.createHash('sha1');
     for (const rel of ['registro/videos.csv', 'registro/metricas.csv', 'registro/pedidos-tiktok.csv']) h.update(fs.readFileSync(path.join(base, rel)));
     h.update(fs.readdirSync(path.join(base, 'videos')).join('|'));
+    for (const d of ['biblioteca', 'tendencias']) h.update(fs.existsSync(path.join(base, d)) ? fs.readdirSync(path.join(base, d), { recursive: true }).sort().join('|') : '-');
     return h.digest('hex');
   };
   const realBefore = snapshot(src);
@@ -231,7 +234,8 @@ module.exports = async ({ win, run, shot, wait }) => {
   const panel = opened[opened.length - 1] || '';
   ok(/\.html$/i.test(panel) && panel.startsWith(ws) && fs.readFileSync(panel, 'utf8').includes(id), `panel del plan generado en la copia y con ${id}`);
   await click('[data-tab="config"]');
-  ok(await run(`(()=>{const t=document.querySelector('#tiktok .tk-page').textContent;return t.includes('✓ Encontré')&&!t.includes('✗')&&t.includes('R3D_TIKTOK_DIR');})()`), 'Configuración: carpeta fija, script y los 7 documentos encontrados');
+  ok(await run(`(()=>{const t=document.querySelector('#tiktok .tk-page').textContent;return t.includes('✓ Encontré')&&!t.includes('✗')&&t.includes('R3D_TIKTOK_DIR')&&t.includes('ideas/banco-de-ideas.md');})()`)
+    && (await run(`[...document.querySelectorAll('#tiktok .tk-page td')].filter(td=>td.textContent==='✓').length`)) === 8, 'Configuración: carpeta fija, script y los 8 documentos encontrados (incluye el banco de ideas)');
   ok(await run(`document.querySelector('#tiktok [data-action="pick-root"]').disabled`), 'no deja cambiar la carpeta fijada por variable');
   await set('[data-cfg="python"]', 'python & del');
   await click('[data-action="save-python"]');
@@ -241,10 +245,147 @@ module.exports = async ({ win, run, shot, wait }) => {
   ok(!(await read(`${TK}.lastError`)) && fs.existsSync(path.join(out, 'tiktok-studio.json')), 'guarda la configuración de Python');
   await clean('Configuración');
   await capture('tiktok_07_config');
-  await click('[data-action="reload"]');
-  ok((await read(`${TK}.ctx.videos.length`)) === registro.length + 1, 'Recargar lee el video nuevo');
 
-  // 12 · Volver al inicio; el espacio real queda intacto
+  // 12 · Biblioteca: bases siempre disponibles, prompt para la IA, importar 50 ganchos, buscar, exportar y ocultar
+  await run('(window.confirm=()=>true,true)');
+  const seedCount = { ganchos: 52, guiones: 30, ctas: 15, hashtags: 12, ideas: 25, respuestas: 10, sonidos: 13 };
+  const libFile = (col) => path.join(ws, 'biblioteca', `${col}.json`);
+  const libStart = {};
+  for (const col of Object.keys(seedCount)) libStart[col] = fs.existsSync(libFile(col)) ? null : seedCount[col];
+  await click('[data-tab="biblioteca"]');
+  ok((await read(`${TK}.tab`)) === 'biblioteca' && (await read(`${TK}.lib.col`)) === 'ganchos', 'la pestaña Biblioteca abre en Ganchos');
+  for (const [col, n0] of Object.entries(seedCount)) {
+    const n = await read(`${TK}.libItems(${JSON.stringify(col)}).length`);
+    const chip = await run(`document.querySelector('#tiktok [data-action="lib-col"][data-col="${col}"] b').textContent`);
+    ok(n >= n0 && (libStart[col] == null || n === n0) && +chip === n, `${col}: ${n} disponibles (${n0} base incluidos) y el contador lo dice`);
+  }
+  ok((await run(`document.querySelectorAll('#tiktok [data-lib-list] .tk-libcard').length`)) === (await read(`${TK}.libItems('ganchos').length`)), 'cada gancho tiene su tarjeta con origen y acciones');
+  await set('[data-lib="n"]', '50');
+  await set('[data-lib="tema"]', 'amigo secreto');
+  await click('[data-action="lib-prompt"][data-modo="nuevos"]');
+  const libPrompt = String(await clipboard.readText()).replace(/\r\n/g, '\n');
+  ok(/\b50\b/.test(libPrompt) && /JSON/.test(libPrompt) && /amigo secreto/i.test(libPrompt) && libPrompt.includes(String(llavero.precio).replace(/\B(?=(\d{3})+(?!\d))/g, '.')), `el prompt para pedir 50 ganchos se copia con el tema, el formato JSON y precios reales (${libPrompt.length} caracteres)`);
+  await click('[data-action="url"][data-url*="chatgpt"]');
+  ok(/^https:\/\/chatgpt\.com/.test(opened[opened.length - 1] || ''), '«Abrir ChatGPT» lleva a la IA');
+  const seeds = await read(`${TK}.libItems('ganchos').filter(g=>g.id.startsWith('gan-b')).map(g=>({id:g.id,texto:g.texto}))`);
+  const lote = Array.from({ length: 46 }, (_, i) => ({ texto: `Prueba E2E ${i + 1}: así sale {producto} de la Bambu`, pantalla: `PRUEBA ${i + 1}`, formula: 'T1', ocasion: 'general' }));
+  lote.push({ id: seeds[0].id, texto: 'Mira lo que sale de mi Bambu en seis horas' });
+  lote.push({ texto: seeds[1].texto });
+  lote.push({ texto: 'Escríbeme al 317 262 9957 y te lo hago' });
+  lote.push({ texto: 'Este llavero cuesta $7.000 nada más' });
+  await set('[data-lib="fuente"]', 'ChatGPT');
+  await set('[data-lib="pegar"]', `Claro, aquí tienes los 50 ganchos:\n\`\`\`json\n${JSON.stringify(lote, null, 2)}\n\`\`\`\n¿Quieres más?`);
+  await click('[data-action="lib-review"]');
+  const rev = await read(`(()=>{const r=${TK}.lib.revision;return r&&{n:r.nuevos.length,a:r.actualizados.length,r:r.repetidos.length,x:r.rechazados.map(z=>z.motivos.join(' '))};})()`);
+  ok(rev && rev.n === 46 && rev.a === 1 && rev.r === 1 && rev.x.length === 2, `revisar 50 ganchos de la IA: 46 nuevos, 1 actualiza una base por id, 1 repetido, 2 rechazados (${JSON.stringify(rev && { ...rev, x: rev.x.length })})`);
+  ok(/contacto/.test(rev.x.join()) && /catálogo/.test(rev.x.join()), 'se rechazan el teléfono y el precio inventado, con el motivo');
+  ok(!fs.existsSync(libFile('ganchos')) || libStart.ganchos == null, 'revisar no guarda nada todavía');
+  await clean('Biblioteca · revisión');
+  await capture('tiktok_08_biblioteca_import');
+  await click('[data-action="lib-import"]');
+  const gFile = JSON.parse(fs.readFileSync(libFile('ganchos'), 'utf8'));
+  ok(gFile.coleccion === 'ganchos' && gFile.items.filter((i) => /^gan-\d{3}$/.test(i.id)).length >= 46 && gFile.items.some((i) => i.id === seeds[0].id && i.texto === lote[46].texto), 'biblioteca/ganchos.json guarda los 46 nuevos y la base editada');
+  ok(gFile.items.filter((i) => i.fuente === 'ChatGPT').length >= 46, 'cada gancho importado recuerda que lo hizo ChatGPT');
+  ok(/biblioteca\/ganchos\.json — ChatGPT: Ganchos: 46 nuevos, 1 actualizados, 1 repetidos, 2 rechazados/.test(fs.readFileSync(path.join(ws, 'bitacora', `${today}.md`), 'utf8')), 'la bitácora del día anota la importación');
+  ok((await read(`${TK}.libItems('ganchos').length`)) === seeds.length + 46 + (gFile.items.length - 47) && !(await read(`${TK}.lib.revision`)), 'la biblioteca se recarga con los nuevos');
+  ok(await run(`document.querySelector('#tiktok [data-lib-id="${seeds[0].id}"] .tk-origen').textContent==='Base editada'`), 'la base actualizada se marca «Base editada»');
+  await set('[data-lib="q"]', 'prueba e2e');
+  ok((await run(`document.querySelectorAll('#tiktok [data-lib-list] .tk-libcard').length`)) === 46, 'buscar filtra al instante (46 de la prueba)');
+  await click('[data-action="lib-export"]');
+  const exported = JSON.parse(await clipboard.readText());
+  ok(exported.length === 46 && exported.every((x) => /^gan-\d{3}$/.test(x.id) && !x.fuente), 'Exportar copia en JSON lo filtrado, con id y sin metadatos');
+  await set('[data-lib="pegar"]', JSON.stringify(exported));
+  await click('[data-action="lib-review"]');
+  ok((await read(`${TK}.lib.revision.repetidos.length`)) === 46 && (await read(`${TK}.lib.revision.nuevos.length`)) === 0 && (await run(`document.querySelector('#tiktok [data-action="lib-import"]').disabled`)), 'volver a importar lo exportado no duplica nada');
+  await click('[data-action="lib-discard"]');
+  await set('[data-lib="q"]', '');
+  await click(`[data-action="lib-hide"][data-id="${seeds[1].id}"]`);
+  ok(JSON.parse(fs.readFileSync(libFile('ganchos'), 'utf8')).ocultos.includes(seeds[1].id) && !(await read(`${TK}.libItems('ganchos').some(g=>g.id===${JSON.stringify(seeds[1].id)})`)), 'Ocultar una base la quita de la lista y se recuerda en el archivo');
+  ok(fs.existsSync(path.join(ws, 'biblioteca', '.anterior', 'ganchos.json')), 'cada guardado deja copia de la versión anterior');
+  const editada = JSON.stringify(seeds[0].id);
+  await click(`[data-action="lib-hide"][data-id="${seeds[0].id}"]`);
+  ok(JSON.parse(fs.readFileSync(libFile('ganchos'), 'utf8')).items.some((i) => i.id === seeds[0].id && i.texto === lote[46].texto), 'ocultar una base editada conserva tu versión en el archivo');
+  await click('[data-action="lib-ocultos"]');
+  await click(`[data-action="lib-unhide"][data-id="${seeds[0].id}"]`);
+  await click('[data-action="lib-ocultos"]');
+  ok((await read(`${TK}.libItem('ganchos', ${editada}).texto`)) === lote[46].texto, 'al restaurarla vuelve con tu texto');
+  await click(`[data-action="lib-revert"][data-id="${seeds[0].id}"]`);
+  ok((await read(`${TK}.libItem('ganchos', ${editada}).texto`)) === seeds[0].texto && !JSON.parse(fs.readFileSync(libFile('ganchos'), 'utf8')).items.some((i) => i.id === seeds[0].id), '«Volver a la base» descarta tu versión');
+  ok(JSON.parse(fs.readFileSync(libFile('ganchos'), 'utf8')).ultimo >= 46, 'el archivo guarda el último id usado (los ids no se reutilizan)');
+  await click('[data-action="lib-col"][data-col="ideas"]');
+  ok(await run(`document.querySelector('#tiktok .tk-page').textContent.includes('Banco de ideas del espacio')&&!!document.querySelector('#tiktok [data-action="lib-use-banco"]')`), 'Ideas muestra también el banco de ideas del espacio');
+  await clean('Biblioteca');
+
+  // 13 · Tendencias en vivo (sin IA): Google Trends Colombia y Reddit, fechas clave, lo que te funciona, Creative Center
+  await click('[data-tab="tendencias"]');
+  const ideasAntes = await read(`${TK}.libItems('ideas').length`), hashAntes = await read(`${TK}.libItems('hashtags').length`);
+  await click('[data-action="trend-refresh"]', 90000);
+  const snaps = await read(`${TK}.snaps.map(s=>({f:s.fuente,n:s.items.length,o:s.obtenido,u:s.url}))`);
+  const terr = await read(`${TK}.trend.errores`);
+  console.log('[e2e] tendencias:', JSON.stringify(snaps.map((s) => `${s.f}:${s.n}`)), JSON.stringify(terr));
+  const goog = snaps.find((s) => s.f === 'google-co');
+  ok(goog && goog.n >= 5 && /^https:\/\/trends\.google\.com\//.test(goog.u) && Date.now() - Date.parse(goog.o) < 600000, `Google Trends Colombia en vivo: ${goog?.n} temas con enlace y hora`);
+  ok(fs.existsSync(path.join(ws, 'tendencias', today, 'google-co.json')), `guardado en tendencias/${today}/google-co.json`);
+  ok(Object.values(terr).every((m) => m.length > 10 && !/invoking remote/.test(m)), `si una fuente falla, dice por qué${Object.keys(terr).length ? ` (${Object.keys(terr).join(', ')})` : ''}`);
+  const reddit = snaps.filter((s) => s.f.startsWith('reddit-') && s.n > 0);
+  if (reddit.length) {
+    await click(`[data-action="trend-idea"][data-fuente="${reddit[0].f}"][data-k="0"]`);
+    ok((await read(`${TK}.libItems('ideas').length`)) === ideasAntes + 1 && fs.existsSync(libFile('ideas')), `«Guardar como idea» desde ${reddit[0].f} la deja en biblioteca/ideas.json`);
+  } else console.log('[e2e] nota: Reddit no respondió (límite de peticiones); se omite «Guardar como idea»');
+  const pageT = await run(`document.querySelector('#tiktok .tk-page').textContent`);
+  ok(/Black Friday/.test(pageT) && /Publica desde/.test(pageT), 'Fechas que vienen: Black Friday con cuándo empezar a publicar');
+  const rank = await read(`${TK}.ranking`);
+  ok(rank.some((r) => r.formula === 'T5' && r.videos.includes(id)) && /Lo que te funciona a ti/.test(pageT), `Lo que te funciona a ti usa tus métricas (${rank.map((r) => `${r.formula}:${r.n}`).join(' ')})`);
+  await click('[data-action="cc-open"]', 60000);
+  ok(!(await read(`${TK}.lastError`)), 'Abrir Creative Center abre su ventana con sesión propia');
+  await click('[data-action="cc-capture"]', 30000);
+  console.log('[e2e] captura del Creative Center:', (await read(`${TK}.lastError`)) || JSON.stringify(await read(`${TK}.snap('creative-center')&&{n:${TK}.snap('creative-center').items.length,region:${TK}.snap('creative-center').region}`)));
+  await set('[data-trend="cc"]', fs.readFileSync(path.join(__dirname, '..', 'fixtures', 'tendencias', 'creative-center.txt'), 'utf8'));
+  await click('[data-action="cc-parse"]');
+  const cc = await read(`${TK}.snap('creative-center')`);
+  ok(cc && cc.items.length === 3 && /Estados Unidos/.test(cc.aviso) && await run(`document.querySelector('#tiktok .tk-page').textContent.includes('no de Colombia')`), 'pegar el texto del Creative Center lee los hashtags y avisa que son de Estados Unidos');
+  await click('[data-action="cc-set"]');
+  ok((await read(`${TK}.libItems('hashtags').length`)) === hashAntes + 1 && fs.existsSync(libFile('hashtags')), '«Guardar como set de hashtags» lo agrega a la biblioteca');
+  await clean('Tendencias');
+  await capture('tiktok_09_tendencias');
+  const tema = await run(`document.querySelector('#tiktok [data-action="trend-use"]')?.dataset.tema||''`);
+  ok(!!tema, `hay temas seguros para un gancho de tendencia («${tema}»)`);
+  await click(`[data-action="trend-use"][data-tema="${tema.replace(/"/g, '\\"')}"]`);
+  ok((await read(`${TK}.tab`)) === 'crear' && (await read(`${TK}.draft.escenas[0].voz`)).toLowerCase().includes(tema.toLowerCase().slice(0, 5)), `«Gancho con esto» pone el tema en la escena 1: «${await read(`${TK}.draft.escenas[0].voz`)}»`);
+  ok(await run(`(()=>{const t=document.querySelector('#tiktok [data-libpick]').textContent;return t.includes('Más ganchos de tu biblioteca')&&t.includes('En tendencia hoy');})()`), 'Crear guion muestra ganchos de la biblioteca y en tendencia');
+  const gLine = await run(`document.querySelector('#tiktok [data-libpick] [data-action="lib-use"][data-col="ganchos"]').closest('.tk-line').querySelector('span').textContent`);
+  const gUse = await run(`document.querySelector('#tiktok [data-libpick] [data-action="lib-use"][data-col="ganchos"]').dataset.id`);
+  await click(`[data-libpick] [data-action="lib-use"][data-id="${gUse}"]`);
+  const gVoz = await read(`${TK}.draft.escenas[0].voz`);
+  ok(gVoz && !/\{/.test(gVoz) && gLine.includes(`«${gVoz}»`), `«Usar» un gancho sugerido lo pone en la escena 1 con los datos reales («${gVoz}»)`);
+  await capture('tiktok_10_crear_tendencia');
+
+  // 14 · Segundo video desde un guion base, con un cierre de la biblioteca
+  await click('[data-tab="biblioteca"]');
+  await click('[data-action="lib-col"][data-col="guiones"]');
+  const gb = await read(`${TK}.libItems('guiones')[0]`);
+  await click(`[data-action="lib-use"][data-col="guiones"][data-id="${gb.id}"]`);
+  let d2 = await read(`${TK}.draft`);
+  ok((await read(`${TK}.tab`)) === 'crear' && d2.formato === gb.formato && d2.escenas.length === gb.escenas.length && !d2.avisos.length, `el guion base «${gb.titulo}» llena el borrador (${d2.formato}, ${d2.escenas.length} escenas, sin avisos)`);
+  ok(d2.escenas.every((s) => !/\{[A-Za-z_]+\}/.test(`${s.voz} ${s.texto}`)), 'los marcadores {producto}, {precio}… se reemplazan por los datos reales');
+  const ctaId = await run(`document.querySelector('#tiktok [data-action="lib-use"][data-col="ctas"]').dataset.id`);
+  await click(`[data-action="lib-use"][data-col="ctas"][data-id="${ctaId}"]`);
+  d2 = await read(`${TK}.draft`);
+  ok(/Colombia/.test(d2.escenas[d2.escenas.length - 1].voz) && !d2.avisos.length, `el cierre de la biblioteca va en la última escena («${d2.escenas[d2.escenas.length - 1].voz}»)`);
+  const nums2 = csv('registro/videos.csv').map((r) => +r.id.slice(1)).concat(fs.readdirSync(path.join(ws, 'videos')).filter((x) => /^V\d+/.test(x)).map((x) => +x.match(/^V(\d+)/)[1]));
+  const expected2 = `V${String(Math.max(...nums2) + 1).padStart(3, '0')}`;
+  await click('[data-action="create"]', 60000);
+  const id2 = await read(`${TK}.videoId`);
+  const row2 = csv('registro/videos.csv').find((r) => r.id === id2);
+  const guion2 = row2 ? fs.readFileSync(path.join(ws, row2.carpeta, 'guion.md'), 'utf8') : '';
+  ok(id2 === expected2 && row2 && row2.estado === 'guion' && d2.escenas.every((s) => !s.voz || guion2.includes(s.voz)), `crea ${expected2} desde el guion base con todo su texto en guion.md`);
+  await clean('Kit del guion base');
+
+  await click('[data-action="reload"]');
+  ok((await read(`${TK}.ctx.videos.length`)) === registro.length + 2, 'Recargar lee los 2 videos nuevos');
+  ok((await read(`${TK}.libItems('ganchos').length`)) === seeds.length - 1 + 46 + (gFile.items.length - 47) && (await read(`${TK}.snaps.length`)) >= 2, 'Recargar conserva la biblioteca y las tendencias guardadas');
+
+  // 15 · Volver al inicio; el espacio real queda intacto
   await click('[data-action="home"]');
   ok(await run(`document.getElementById('tiktok').hidden&&!document.getElementById('home').hidden`), '← Inicio vuelve al inicio de Relieve3D');
   ok(snapshot(src) === realBefore, 'el espacio TikTok real no se tocó');

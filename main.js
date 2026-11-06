@@ -274,6 +274,36 @@ app.whenReady().then(() => {
     else tiktokOpened.push(u.href);
     return u.href;
   });
+  quoteHandle('tiktok-lib-save', ({ col, archivo, resumen } = {}) => tiktok.saveBiblioteca(col, archivo, resumen));
+  quoteHandle('tiktok-trend-fetch', fuente => tiktok.fetchTrend(fuente));
+  quoteHandle('tiktok-trend-save', list => tiktok.saveTrends(list));
+  // Creative Center en su propia ventana (sesión persistente: si inicias sesión ahí, se recuerda y puedes elegir Colombia).
+  const CC_URL = 'https://ads.tiktok.com/business/creativecenter/inspiration/popular/hashtag/pc/es?countryCode=CO&period=7';
+  let ccWin = null;
+  quoteHandle('tiktok-cc-open', async () => {
+    if (ccWin && !ccWin.isDestroyed()) {
+      if (!tiktokNoOpen) { ccWin.show(); ccWin.focus(); }
+      return { url: ccWin.webContents.getURL(), abierta: true };
+    }
+    ccWin = new BrowserWindow({
+      width: 1280, height: 900, show: !tiktokNoOpen, title: 'TikTok Creative Center · Relieve3D', autoHideMenuBar: true,
+      webPreferences: { partition: 'persist:tiktok-cc', contextIsolation: true, nodeIntegration: false, sandbox: true },
+    });
+    ccWin.webContents.setWindowOpenHandler(({ url }) => (/^https:\/\//.test(url) ? { action: 'allow' } : { action: 'deny' }));
+    ccWin.on('closed', () => { ccWin = null; });
+    if (win && !win.isDestroyed()) win.once('closed', () => { if (ccWin && !ccWin.isDestroyed()) ccWin.destroy(); });
+    await ccWin.loadURL(CC_URL).catch(() => {});
+    return { url: ccWin && !ccWin.isDestroyed() ? ccWin.webContents.getURL() : CC_URL, abierta: false };
+  });
+  quoteHandle('tiktok-cc-capture', async () => {
+    if (!ccWin || ccWin.isDestroyed()) throw new Error('Primero abre el Creative Center (botón «Abrir Creative Center»).');
+    const url = ccWin.webContents.getURL();
+    let host = '';
+    try { host = new URL(url).hostname; } catch {}
+    if (!/(^|\.)tiktok\.com$/i.test(host)) throw new Error('La ventana del Creative Center no está en tiktok.com.');
+    const texto = await ccWin.webContents.executeJavaScript('document.body ? document.body.innerText : ""', true);
+    return { url, texto: String(texto || '').slice(0, 200_000) };
+  });
   createWindow();
   setupAutoUpdates();
 });

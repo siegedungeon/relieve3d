@@ -18,7 +18,22 @@ const DOCS = {
   videosCsv: 'registro/videos.csv',
   metricasCsv: CSV.metricas,
   pedidosCsv: CSV.pedidos,
+  ideas: 'ideas/banco-de-ideas.md',
 };
+const COLECCIONES = { ganchos: 'gan', guiones: 'gui', ctas: 'cta', hashtags: 'has', ideas: 'ide', respuestas: 'res', sonidos: 'son' };
+const RE_ITEM_ID = /^(gan|gui|cta|has|ide|res|son)-(b\d{2}|\d{3,})$/;
+const MAX_LIB_BYTES = 5 * 1024 * 1024;
+const MAX_LIB_ITEMS = 5000;
+// Solo estas direcciones públicas (RSS/Atom); el Creative Center se lee desde su propia ventana o pegando el texto.
+const TREND_URLS = {
+  'google-co': 'https://trends.google.com/trending/rss?geo=CO',
+  'reddit-bambulab': 'https://www.reddit.com/r/BambuLab/top/.rss?t=week',
+  'reddit-3dprinting': 'https://www.reddit.com/r/3Dprinting/top/.rss?t=week',
+};
+const TREND_SOURCES = [...Object.keys(TREND_URLS), 'creative-center'];
+const MAX_TREND_BYTES = 3 * 1024 * 1024;
+const TREND_DAYS = 14;
+const USER_AGENT = 'Relieve3D/1.18 (Estudio TikTok Pabonitas)';
 const RE_ID = /^V\d{3,}$/;
 const RE_CARPETA = /^videos\/V\d{3,}[^/\\]*$/;
 const RE_FECHA_PLAN = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}$/;
@@ -30,7 +45,7 @@ const defaultRoot = () => path.join(os.homedir(), 'Documents', 'TikTok-Impresion
 const exists = (p) => fs.access(p).then(() => true, () => false);
 const isDir = (p) => fs.stat(p).then((s) => s.isDirectory(), () => false);
 
-function createTiktokWorkspace({ configFile, env = process.env, fallbackRoot = defaultRoot() } = {}) {
+function createTiktokWorkspace({ configFile, env = process.env, fallbackRoot = defaultRoot(), fetchImpl = globalThis.fetch, fetchTimeoutMs = 15_000 } = {}) {
   let config = null;
   let busy = null;
 
@@ -116,7 +131,130 @@ function createTiktokWorkspace({ configFile, env = process.env, fallbackRoot = d
         kit: await exists(path.join(dir, 'kit.md')),
       });
     }
-    return { ...base, ok: true, docs, videos };
+    return { ...base, ok: true, docs, videos, biblioteca: await loadBiblioteca(s.root), tendencias: await loadTrends(s.root) };
+  }
+
+  const pad2 = (n) => String(n).padStart(2, '0');
+  const localDay = (d = new Date()) => `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())}`;
+  async function writeAtomic(file, text) {
+    const tmp = `${file}.${process.pid}.tmp`;
+    await fs.writeFile(tmp, text, 'utf8');
+    try { await fs.rename(tmp, file); }
+    catch (e) { await fs.rm(tmp, { force: true }); throw e; }
+  }
+
+  // biblioteca/<colección>.json: null si no existe, { error } si está dañado (la app sigue con las semillas).
+  async function loadBiblioteca(root) {
+    const out = {};
+    for (const col of Object.keys(COLECCIONES)) {
+      const file = path.join(root, 'biblioteca', `${col}.json`);
+      if (!(await exists(file))) { out[col] = null; continue; }
+      try { out[col] = JSON.parse(await readText(file)); }
+      catch (e) { out[col] = { error: `biblioteca/${col}.json está dañado (${e.message}). Al guardar, el archivo dañado se respalda en biblioteca/.anterior/` }; }
+    }
+    return out;
+  }
+
+  async function saveBiblioteca(col, archivo, resumen = '') {
+    const pre = COLECCIONES[col];
+    if (!pre) throw new Error(`Colección no permitida: ${col}`);
+    if (!archivo || typeof archivo !== 'object' || !Array.isArray(archivo.items)) throw new Error('Biblioteca inválida.');
+    if (archivo.items.length > MAX_LIB_ITEMS) throw new Error(`Máximo ${MAX_LIB_ITEMS} elementos por colección.`);
+    const ids = new Set();
+    for (const it of archivo.items) {
+      const id = it && typeof it === 'object' ? String(it.id || '') : '';
+      if (!RE_ITEM_ID.test(id) || !id.startsWith(`${pre}-`) || ids.has(id)) throw new Error(`Elemento con id inválido o repetido: ${id || '—'}`);
+      ids.add(id);
+    }
+    const ocultos = [...new Set((Array.isArray(archivo.ocultos) ? archivo.ocultos : []).filter((id) => typeof id === 'string' && RE_ITEM_ID.test(id) && id.startsWith(`${pre}-b`)))];
+    const ultimo = Math.max(0, Number.isInteger(archivo.ultimo) && archivo.ultimo > 0 && archivo.ultimo < 1e6 ? archivo.ultimo : 0, ...[...ids].map((id) => +((id.match(/-(\d{3,})$/) || [])[1] || 0)));
+    const data = { coleccion: col, version: 1, actualizado: String(archivo.actualizado || '').slice(0, 40), ultimo, ocultos, items: archivo.items };
+    const json = `${JSON.stringify(data, null, 2)}\n`;
+    if (Buffer.byteLength(json) > MAX_LIB_BYTES) throw new Error('La colección pasa de 5 MB: exporta y divide.');
+    const s = await settings();
+    const dir = path.join(s.root, 'biblioteca');
+    const file = path.join(dir, `${col}.json`);
+    await fs.mkdir(path.join(dir, '.anterior'), { recursive: true });
+    if (await exists(file)) {
+      const prev = await fs.readFile(file, 'utf8');
+      // Solo un archivo con el formato completo va a .anterior/<col>.json (que se pisa en cada guardado).
+      // Uno dañado o con otra forma se guarda aparte con fecha para no perder nada de lo que tenía.
+      let sano = false;
+      try {
+        const j = JSON.parse(prev.replace(/^\uFEFF/, ''));
+        const vistos = new Set();
+        sano = !!j && typeof j === 'object' && !Array.isArray(j) && Array.isArray(j.items) && j.items.every((it) => {
+          const id = it && typeof it === 'object' ? String(it.id || '') : '';
+          if (!RE_ITEM_ID.test(id) || !id.startsWith(`${pre}-`) || vistos.has(id)) return false;
+          vistos.add(id);
+          return true;
+        });
+      } catch { sano = false; }
+      const stamp = new Date().toISOString().replace(/[:.]/g, '-');
+      let destino = path.join(dir, '.anterior', sano ? `${col}.json` : `${col}.danado-${stamp}.json`);
+      for (let k = 2; !sano && (await exists(destino)); k++) destino = path.join(dir, '.anterior', `${col}.danado-${stamp}-${k}.json`);
+      await fs.writeFile(destino, prev, 'utf8');
+    }
+    await writeAtomic(file, json);
+    await bitacora(`Relieve3D · Estudio TikTok: biblioteca/${col}.json — ${String(resumen || 'guardada').slice(0, 200)}.`);
+    return { archivo: `biblioteca/${col}.json`, items: data.items.length, ocultos: ocultos.length };
+  }
+
+  // Lo último guardado de cada fuente (busca en los últimos 14 días con datos).
+  async function loadTrends(root) {
+    const base = path.join(root, 'tendencias');
+    let dias = [];
+    try { dias = (await fs.readdir(base, { withFileTypes: true })).filter((d) => d.isDirectory() && RE_FECHA.test(d.name)).map((d) => d.name).sort().reverse().slice(0, TREND_DAYS); }
+    catch { return {}; }
+    const out = {};
+    for (const fuente of TREND_SOURCES) {
+      for (const dia of dias) {
+        const file = path.join(base, dia, `${fuente}.json`);
+        if (!(await exists(file))) continue;
+        try { out[fuente] = { ...JSON.parse(await readText(file)), archivo: `tendencias/${dia}/${fuente}.json`, dia }; break; }
+        catch {}
+      }
+    }
+    return out;
+  }
+
+  async function fetchTrend(fuente) {
+    const url = TREND_URLS[fuente];
+    if (!url) throw new Error(`Fuente no permitida: ${fuente}`);
+    if (typeof fetchImpl !== 'function') throw new Error('Esta versión no puede descargar (sin fetch).');
+    const ctrl = new AbortController();
+    const timer = setTimeout(() => ctrl.abort(), fetchTimeoutMs);
+    try {
+      const res = await fetchImpl(url, { headers: { 'User-Agent': USER_AGENT, Accept: 'application/rss+xml, application/atom+xml, application/xml;q=0.9, text/xml;q=0.8, */*;q=0.5' }, signal: ctrl.signal, redirect: 'follow' });
+      if (!res.ok) throw new Error(`${fuente} respondió ${res.status}${res.status === 429 ? ' (demasiadas consultas: espera unos minutos)' : res.status === 403 ? ' (bloqueado: intenta más tarde o abre la página en el navegador)' : ''}`);
+      const texto = await res.text();
+      if (texto.length > MAX_TREND_BYTES) throw new Error(`${fuente}: la respuesta es demasiado grande`);
+      return { fuente, url, texto, obtenido: new Date().toISOString() };
+    } catch (e) {
+      if (e.name === 'AbortError') throw new Error(`${fuente}: no respondió en ${Math.round(fetchTimeoutMs / 1000)} s (¿hay internet?)`);
+      throw e;
+    } finally { clearTimeout(timer); }
+  }
+
+  async function saveTrends(list) {
+    if (!Array.isArray(list) || !list.length || list.length > TREND_SOURCES.length) throw new Error('Tendencias inválidas.');
+    for (const snap of list) {
+      if (!snap || !TREND_SOURCES.includes(snap.fuente) || !Array.isArray(snap.items) || snap.items.length > 500) throw new Error(`Tendencia inválida: ${snap?.fuente || '—'}`);
+    }
+    const s = await settings();
+    const dia = s.today || localDay();
+    const dir = path.join(s.root, 'tendencias', dia);
+    await fs.mkdir(dir, { recursive: true });
+    const out = [];
+    for (const snap of list) {
+      const { archivo, dia: _d, ...limpio } = snap;
+      const json = `${JSON.stringify({ ...limpio, guardado: new Date().toISOString() }, null, 2)}\n`;
+      if (Buffer.byteLength(json) > MAX_TREND_BYTES) throw new Error(`${snap.fuente}: demasiado grande para guardar`);
+      await writeAtomic(path.join(dir, `${snap.fuente}.json`), json);
+      out.push(`tendencias/${dia}/${snap.fuente}.json`);
+    }
+    await bitacora(`Relieve3D · Estudio TikTok: guardé tendencias de ${list.map((x) => `${x.fuente} (${x.items.length})`).join(', ')}.`);
+    return out;
   }
 
   function validateArgs(args) {
@@ -326,7 +464,7 @@ function createTiktokWorkspace({ configFile, env = process.env, fallbackRoot = d
     await fs.appendFile(file, `${prefix}- ${pad(now.getHours())}:${pad(now.getMinutes())} ${String(texto).replace(/[\r\n]+/g, ' ')}\n`, 'utf8');
   }
 
-  return { settings, saveConfig, load, run, createVideo, saveKit, appendCsv, resolveInside, validateArgs, bitacora, isBusy: () => !!busy };
+  return { settings, saveConfig, load, run, createVideo, saveKit, appendCsv, resolveInside, validateArgs, bitacora, saveBiblioteca, fetchTrend, saveTrends, isBusy: () => !!busy };
 }
 
-module.exports = { createTiktokWorkspace, defaultRoot, RE_URL_TIKTOK };
+module.exports = { createTiktokWorkspace, defaultRoot, RE_URL_TIKTOK, TREND_URLS };

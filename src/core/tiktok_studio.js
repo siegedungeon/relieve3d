@@ -122,7 +122,7 @@ export function precioTexto(p) {
   return (p.desde ? 'desde ' : '') + formatCOP(p.precio);
 }
 
-const pron = (g) => ({ m: 'lo', f: 'la', mp: 'los', fp: 'las' }[g] || 'lo');
+export const pron = (g) => ({ m: 'lo', f: 'la', mp: 'los', fp: 'las' }[g] || 'lo');
 
 export function slug(s) {
   return String(s || '').normalize('NFKD').replace(/[\u0300-\u036f]/g, '').toLowerCase()
@@ -583,7 +583,7 @@ export function diagnose(m, { mediana = 220, duracion = 0 } = {}) {
 
 // ------------------------------------------------------------------ borrador de video
 
-const art = (p) => ({ m: 'el', f: 'la', mp: 'los', fp: 'las' }[p.g] || 'el');
+export const art = (p) => ({ m: 'el', f: 'la', mp: 'los', fp: 'las' }[p.g] || 'el');
 const uniq = (xs) => [...new Set(xs.filter(Boolean))];
 // Short text for an on-screen card: whole words only, never an unclosed parenthesis.
 export function recortar(s, n) {

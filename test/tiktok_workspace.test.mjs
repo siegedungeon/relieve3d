@@ -215,3 +215,88 @@ test('saveKit, resolveInside y configuración no salen del espacio', async () =>
     assert.equal(s.root, dir, 'R3D_TIKTOK_DIR manda sobre la configuración');
   } finally { done(); }
 });
+
+test('biblioteca: guarda solo colecciones e ids permitidos, de forma atómica, con respaldo y bitácora', async () => {
+  const { ws, dir, done } = workspace();
+  try {
+    let r = await ws.load();
+    assert.deepEqual(Object.keys(r.biblioteca).sort(), ['ctas', 'ganchos', 'guiones', 'hashtags', 'ideas', 'respuestas', 'sonidos']);
+    assert.equal(r.biblioteca.ganchos, null);
+    assert.match(r.docs.ideas, /\| I001 \|/);
+    await assert.rejects(ws.saveBiblioteca('../x', { items: [] }), /no permitida/);
+    await assert.rejects(ws.saveBiblioteca('ganchos', { items: [{ id: 'gui-001', texto: 'x' }] }), /id inválido/);
+    await assert.rejects(ws.saveBiblioteca('ganchos', { items: [{ id: 'gan-001' }, { id: 'gan-001' }] }), /repetido/);
+    await assert.rejects(ws.saveBiblioteca('ganchos', { items: 'x' }), /inválida/);
+    const archivo = { actualizado: '2026-11-04T10:00', ocultos: ['gan-b03', 'gan-001', '../x'], items: [{ id: 'gan-001', texto: 'Uno', fuente: 'ChatGPT' }] };
+    assert.deepEqual(await ws.saveBiblioteca('ganchos', archivo, 'ChatGPT: 1 nuevo'), { archivo: 'biblioteca/ganchos.json', items: 1, ocultos: 1 });
+    const file = path.join(dir, 'biblioteca', 'ganchos.json');
+    assert.deepEqual(JSON.parse(fs.readFileSync(file, 'utf8')).ocultos, ['gan-b03']);
+    await ws.saveBiblioteca('ganchos', { ...archivo, items: [...archivo.items, { id: 'gan-002', texto: 'Dos' }] });
+    assert.equal(JSON.parse(fs.readFileSync(path.join(dir, 'biblioteca', '.anterior', 'ganchos.json'), 'utf8')).items.length, 1);
+    assert.deepEqual(fs.readdirSync(path.join(dir, 'biblioteca')).filter((f) => f.endsWith('.tmp')), []);
+    fs.writeFileSync(path.join(dir, 'biblioteca', 'ctas.json'), '{ roto');
+    r = await ws.load();
+    assert.equal(r.biblioteca.ganchos.items.length, 2);
+    assert.match(r.biblioteca.ctas.error, /dañado/);
+    await ws.saveBiblioteca('ctas', { items: [] });
+    assert.ok(fs.readdirSync(path.join(dir, 'biblioteca', '.anterior')).some((f) => /^ctas\.danado-.*\.json$/.test(f)));
+    assert.match(fs.readFileSync(path.join(dir, 'bitacora', '2026-11-04.md'), 'utf8'), /biblioteca\/ganchos\.json — ChatGPT: 1 nuevo/);
+    // JSON válido pero con otra forma (un arreglo exportado, ids a mano): se respalda aparte con fecha, nunca en el respaldo que se pisa.
+    const ideas = path.join(dir, 'biblioteca', 'ideas.json');
+    const exportado = JSON.stringify([{ id: 'ide-001', idea: 'Idea exportada' }]);
+    fs.writeFileSync(ideas, exportado);
+    await ws.saveBiblioteca('ideas', { items: [] });
+    await ws.saveBiblioteca('ideas', { items: [{ id: 'ide-002', idea: 'Otra' }] });
+    const anterior = path.join(dir, 'biblioteca', '.anterior');
+    const danadas = fs.readdirSync(anterior).filter((f) => /^ideas\.danado-.*\.json$/.test(f));
+    assert.equal(danadas.length, 1);
+    assert.equal(fs.readFileSync(path.join(anterior, danadas[0]), 'utf8'), exportado);
+    fs.writeFileSync(ideas, JSON.stringify({ items: [{ id: 'ide-1', idea: 'Id escrito a mano' }] }));
+    await ws.saveBiblioteca('ideas', { items: [] });
+    assert.equal(fs.readdirSync(anterior).filter((f) => /^ideas\.danado-.*\.json$/.test(f)).length, 2);
+    // El contador de ids se guarda y no baja del id más alto.
+    await ws.saveBiblioteca('ideas', { ultimo: 9, items: [{ id: 'ide-003', idea: 'Tercera' }] });
+    assert.equal(JSON.parse(fs.readFileSync(ideas, 'utf8')).ultimo, 9);
+    await ws.saveBiblioteca('ideas', { ultimo: 'x', items: [{ id: 'ide-012', idea: 'Doce' }] });
+    assert.equal(JSON.parse(fs.readFileSync(ideas, 'utf8')).ultimo, 12);
+  } finally { done(); }
+});
+
+test('tendencias: descarga solo de las fuentes permitidas, con su User-Agent y errores claros; guarda por fecha', async () => {
+  const { TREND_URLS } = require('../src/main/tiktok_workspace.cjs');
+  const TR = await import('../src/core/tiktok_tendencias.js');
+  for (const k of TR.FUENTES_AUTO) assert.equal(TREND_URLS[k], TR.FUENTES[k].url, `${k}: la URL del proceso principal y la del módulo deben coincidir`);
+  const llamadas = [];
+  const fakeFetch = async (url, opts) => {
+    llamadas.push({ url, ua: opts.headers['User-Agent'] });
+    if (url.includes('3Dprinting')) return { ok: false, status: 429, text: async () => '' };
+    if (url.includes('BambuLab')) return new Promise((_, rej) => opts.signal.addEventListener('abort', () => rej(Object.assign(new Error('abort'), { name: 'AbortError' }))));
+    return { ok: true, status: 200, text: async () => '<rss><channel><item><title>superluna</title></item></channel></rss>' };
+  };
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'r3d-tiktok-'));
+  try {
+    fs.cpSync(fixtures, dir, { recursive: true });
+    fs.mkdirSync(path.join(dir, 'herramientas'));
+    fs.writeFileSync(path.join(dir, 'herramientas', 'tiktok3d.py'), STUB);
+    const ws = createTiktokWorkspace({ configFile: path.join(dir, '.cfg', 't.json'), env: { R3D_TIKTOK_DIR: dir, R3D_TIKTOK_TODAY: '2026-11-06' }, fetchImpl: fakeFetch, fetchTimeoutMs: 200 });
+    await assert.rejects(ws.fetchTrend('https://evil.example'), /no permitida/);
+    await assert.rejects(ws.fetchTrend('creative-center'), /no permitida/);
+    const g = await ws.fetchTrend('google-co');
+    assert.match(g.texto, /superluna/);
+    assert.equal(g.url, TREND_URLS['google-co']);
+    assert.match(llamadas[0].ua, /^Relieve3D\//);
+    await assert.rejects(ws.fetchTrend('reddit-3dprinting'), /429.*espera unos minutos/);
+    await assert.rejects(ws.fetchTrend('reddit-bambulab'), /no respondió/);
+    const snap = TR.snapshotDe('google-co', { texto: g.texto, obtenido: g.obtenido });
+    await assert.rejects(ws.saveTrends([{ ...snap, fuente: '../../x' }]), /inválida/);
+    assert.deepEqual(await ws.saveTrends([snap]), ['tendencias/2026-11-06/google-co.json']);
+    const viejo = path.join(dir, 'tendencias', '2026-11-01');
+    fs.mkdirSync(viejo);
+    fs.writeFileSync(path.join(viejo, 'creative-center.json'), JSON.stringify({ fuente: 'creative-center', items: [{ hashtag: '#navidad' }] }));
+    fs.writeFileSync(path.join(viejo, 'google-co.json'), JSON.stringify({ fuente: 'google-co', items: [{ termino: 'viejo' }] }));
+    const r = await ws.load();
+    assert.equal(r.tendencias['google-co'].items[0].termino, 'superluna', 'gana lo más reciente');
+    assert.equal(r.tendencias['creative-center'].dia, '2026-11-01');
+    assert.match(fs.readFileSync(path.join(dir, 'bitacora', '2026-11-06.md'), 'utf8'), /guardé tendencias de google-co \(1\)/);
+  } finally { fs.rmSync(dir, { recursive: true, force: true }); }
+});
