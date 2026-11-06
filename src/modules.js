@@ -94,7 +94,7 @@ export const MODULES = [
   },
   {
     id: 'phonestand', group: '3d', icon: '📱', title: 'Soporte celular llavero',
-    desc: 'Llavero que se abre en soporte para el celular (bisagra impresa armada): corazón, ratón, flor u otra forma arriba, logo o marca del cliente, chip NFC y abre latas opcionales.',
+    desc: 'Llavero con pata plegable que se abre en soporte para el celular (bisagra impresa armada, 2 tamaños): corazón, ratón, flor u otra forma arriba, logo o marca del cliente, chip NFC y abre latas opcionales.',
   },
   {
     id: 'tiktok', group: 'social', icon: '🎬', title: 'Estudio TikTok · Pabonitas',

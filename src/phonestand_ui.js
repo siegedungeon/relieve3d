@@ -1,6 +1,7 @@
 // Módulo «Soporte celular llavero»: llavero que se abre en soporte para el celular (bisagra impresa en su lugar).
-// Formulario paramétrico → core/phonestand.js (manifold) → vista 3D (como se imprime, abierto con celular, de arriba)
-// → 3MF por colores con la pausa del chip NFC, STL, foto PNG y proyecto .r3p.
+// Formulario paramétrico → core/phonestand.js (manifold) → vista 3D (como se imprime, abierto con celular, cerrado,
+// de arriba; la pata gira en la bisagra y el chip NFC se ve en dorado a través del cuerpo) → 3MF por colores con la
+// pausa del chip NFC, STL, foto PNG y proyecto .r3p.
 import * as THREE from 'three';
 import { parse as parseFont } from 'opentype.js';
 import { Viewer3D } from './viewer3d.js';
@@ -9,8 +10,8 @@ import { ensureFont } from './core/text.js';
 import { FontPicker } from './font_picker.js';
 import { threeMF, stlBinary } from './core/exporters.js';
 import {
-  PHONESTAND_SHAPES, PHONESTAND_FONTS, DEFAULT_PHONESTAND, normalizePhoneStand, preparePhoneStand,
-  buildPhoneStand, shapeThumbnails, phoneStandProject, readPhoneStandProject,
+  PHONESTAND_SHAPES, PHONESTAND_FONTS, PHONESTAND_SIZES, PHONESTAND_VARIANTS, DEFAULT_PHONESTAND, normalizePhoneStand,
+  preparePhoneStand, buildPhoneStand, shapeThumbnails, phoneStandProject, readPhoneStandProject,
 } from './core/phonestand.js';
 
 const esc = (s) => String(s).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
@@ -23,11 +24,14 @@ const f1 = (v) => String(Math.round(v * 10) / 10).replace('.', ',');
 const D2R = Math.PI / 180;
 const fileBase = (s) => String(s || '').replace(/[<>:"/\\|?*\x00-\x1f]/g, '_').replace(/[ .]+$/, '').trim() || 'soporte-celular';
 
-const TABS = [['print', '🖨️ Como se imprime'], ['stand', '📱 Abierto con celular'], ['top', '⬆️ Vista de arriba']];
-// camera azimuth / elevation (degrees) and how open the flap is when the tab is chosen
-const VIEWS = { print: { az: -30, el: 46, amt: 0 }, stand: { az: 55, el: 16, amt: 1 }, top: { az: 0, el: 89.5, amt: 0 } };
+const TABS = [['print', '🖨️ Como se imprime'], ['stand', '📱 Abierto con celular'], ['closed', '🔑 Cerrado (llavero)'], ['top', '⬆️ Vista de arriba']];
+// camera azimuth / elevation (degrees) and the leg's pose (core info.poses) when the tab is chosen
+const VIEWS = {
+  print: { az: -30, el: 46, pose: 'print' }, stand: { az: 35, el: 18, pose: 'stand' },
+  closed: { az: -30, el: 40, pose: 'closed' }, top: { az: 0, el: 89.5, pose: 'closed' },
+};
 // fields that change the outline of the shapes (thumbnails); colours, logo, text and extras do not
-const OUTLINE_KEYS = ['shapeScale', 'width', 'thickness', 'flapLength', 'rail', 'frontBar', 'clearance', 'phoneAngle', 'ring'];
+const OUTLINE_KEYS = ['shapeScale', 'width', 'size', 'variant', 'clearance', 'latch', 'ring'];
 
 function readDataURL(file) {
   return new Promise((res, rej) => {
@@ -66,7 +70,7 @@ export class PhoneStandStudio {
     this.fonts = new Map(); // family → Promise<opentype font>
     this.res = null;        // last buildPhoneStand() result
     this.tab = 'print';
-    this.amt = 0;           // 0 = closed (print position) … 1 = open (stand)
+    this.amt = -1;          // leg: 0 = closed (keychain) … 1 = open on its stop (stand); −1 = the tab's pose
     this.seq = 0;
     this.building = false;
     this.engineReady = false;
@@ -115,7 +119,7 @@ export class PhoneStandStudio {
           <button class="btn wide" data-a="logo">🖼️ Cargar logo (PNG/JPG)</button>
           ${chk('Poner el logo', 'logo.enabled')}
           <div data-show="logo">
-            ${sel('Dónde', 'logo.where', [['top', 'En la forma de arriba'], ['flap', 'En la tapa']], 'La tapa es la cara grande del llavero cerrado; la forma de arriba es la parte decorativa')}
+            <div data-show="barOk">${sel('Dónde', 'logo.where', [['top', 'En la forma de arriba'], ['bar', 'En la barra (detrás de la bisagra)']], 'La barra es la franja lisa entre la bisagra y la forma de arriba. En el modelo corto todo va en la forma de arriba')}</div>
             ${num('Tamaño (%)', 'logo.size', '100 % = lo más grande que cabe. Con más de 100 % se recorta en el borde')}
             ${num('Mover a la derecha (mm)', 'logo.dx', 'Negativo = hacia la izquierda')}
             ${num('Mover hacia arriba (mm)', 'logo.dy', 'Negativo = hacia abajo')}
@@ -131,7 +135,7 @@ export class PhoneStandStudio {
           ${chk('Agregar texto', 'text.enabled', 'Nombre de la marca, de la persona o una frase corta (máximo 40 letras)')}
           <div data-show="text">
             <label class="row">Texto <input type="text" data-k="text.value" maxlength="40" placeholder="Ej.: Pabonitas" /></label>
-            ${sel('Dónde', 'text.where', [['flap', 'En la tapa'], ['top', 'En la forma de arriba']])}
+            <div data-show="barOk">${sel('Dónde', 'text.where', [['bar', 'En la barra (detrás de la bisagra)'], ['top', 'En la forma de arriba']])}</div>
             <label class="row">Fuente <select data-k="text.font">${fontOpts}</select></label>
             <div data-show="textSize">${num('Tamaño (%)', 'text.size', '100 % = lo más grande que cabe')}</div>
             <div data-show="textRel">${num('Alto de letra (% del logo)', 'text.rel', 'El texto va debajo del logo, con esta altura de letra')}</div>
@@ -139,21 +143,21 @@ export class PhoneStandStudio {
         </section>
         <section class="card">
           <h3>🎨 Acabado y colores</h3>
-          ${sel('Logo y texto', 'logo.mode', [['relief', 'En relieve (sobresale)'], ['inlay', 'Incrustado a ras (2 colores)'], ['engrave', 'Grabado (hundido)']], 'Incrustado: queda liso, al ras, en el 2.º color. Grabado: hundido en la pieza')}
+          ${sel('Logo y texto', 'logo.mode', [['relief', 'En relieve (sobresale)'], ['inlay', 'Incrustado a ras (2 colores)'], ['engrave', 'Grabado (hundido)']], 'Incrustado: queda liso, al ras, en el 2.º color. Grabado: hundido en la pieza. La señal 📶 del NFC se hace igual')}
           <div data-show="relief">${num('Alto del relieve (mm)', 'logo.height')}</div>
           <div data-show="sunk">${num('Profundidad (mm)', 'logo.depth')}</div>
           ${col('Color del cuerpo', 'colors.body')}
           ${col('Color del logo / acento', 'colors.accent')}
-          ${chk('Logo y texto en el 2.º color', 'colors.twoColor', 'Necesita cambio de filamento (AMS) o una pausa para cambiar el color')}
-          ${chk('Tapa en el 2.º color', 'colors.flapAccent')}
+          ${chk('Logo y texto en el 2.º color', 'colors.twoColor', 'También la señal 📶 del NFC. Necesita cambio de filamento (AMS) o una pausa para cambiar el color')}
+          ${chk('Pata en el 2.º color', 'colors.flapAccent', 'La pata de la bisagra (la que sostiene el celular) en el color del logo')}
         </section>
       </aside>
 
       <section class="center">
         <div class="hb-tabs seg" data-r="tabs">${TABS.map(([k, l]) => `<button class="seg-btn" data-tab="${k}">${l}</button>`).join('')}
           <span class="spacer"></span>
-          <label class="cs-explode" title="Mueve la tapa para ver cómo gira en la bisagra">Abrir tapa <input type="range" min="0" max="1" step="0.01" value="0" data-r="amt" /></label>
-          <button class="btn mini" data-a="animate" title="Mira cómo se abre la tapa">▶ Animar</button>
+          <label class="cs-explode" title="Gira la pata en la bisagra: a la izquierda cerrada (llavero), a la derecha abierta sobre su tope (soporte)">Mover la pata <input type="range" min="0" max="1" step="0.01" value="0" data-r="amt" /></label>
+          <button class="btn mini" data-a="animate" title="Mira cómo se abre la pata y se apoya el celular">▶ Animar</button>
         </div>
         <div class="views mode-3d"><div class="view dark" data-r="view"></div></div>
         <div class="statusbar"><span data-r="status"></span><span class="spacer"></span><span data-r="time"></span></div>
@@ -162,13 +166,14 @@ export class PhoneStandStudio {
       <aside class="panel right">
         <section class="card">
           <h3>✨ Extras</h3>
-          ${chk('📶 Chip NFC escondido', 'nfc.enabled', 'Bolsillo cerrado: la impresora hace una pausa, metes el sticker NFC redondo y la impresión lo tapa')}
+          ${chk('📶 Chip NFC escondido', 'nfc.enabled', 'Bolsillo cerrado: la impresora hace una pausa, metes el sticker NFC redondo y la impresión lo tapa. En la vista se ve en dorado a través del cuerpo')}
           <div data-show="nfc">
-            ${num('Diámetro del chip (mm)', 'nfc.diameter', 'Los stickers NFC redondos (NTAG213/215) miden 25 mm: deja 0,5 mm de juego')}
+            ${num('Diámetro del chip (mm)', 'nfc.diameter', 'Los stickers NFC redondos (NTAG213/215) miden 25 mm: deja 0,5 mm de juego. Si no cabe, la forma de arriba se alarga sola')}
             ${num('Grosor del chip (mm)', 'nfc.depth', 'Se redondea a capas de 0,2 mm')}
-            ${sel('Dónde', 'nfc.where', [['auto', 'Automático'], ['top', 'En la forma de arriba'], ['flap', 'En la tapa']])}
+            ${sel('Dónde', 'nfc.where', [['auto', 'Automático (debajo del logo)'], ['top', 'En la forma de arriba'], ['bar', 'Cerca de la bisagra']], 'Automático: debajo del logo, así el cliente sabe dónde tocar con el celular. Arriba: lo más alto que quepa sin tocar el aro del llavero')}
+            ${chk('Señal 📶 encima del chip', 'nfc.mark', 'El símbolo de pago sin contacto sobre el chip, para saber dónde tocar con el celular. Se hace como el logo (relieve, a ras o grabado) y en su color. Si el logo ya está encima del chip no hace falta')}
           </div>
-          ${chk('🥫 Abre latas', 'opener.enabled', 'Ranura en un borde: mete la pestaña de la lata y haz palanca')}
+          ${chk('🥫 Abre latas', 'opener.enabled', 'Ranura en un borde: mete la pestaña de la lata y haz palanca. Si no hay borde libre, la forma de arriba se alarga sola')}
           <div data-show="opener">${sel('Lado', 'opener.side', [['right', 'Derecho'], ['left', 'Izquierdo']])}</div>
           ${chk('🔑 Agujero para la argolla', 'ring.enabled')}
           <div data-show="ring">${num('Diámetro del agujero (mm)', 'ring.diameter')}</div>
@@ -176,16 +181,13 @@ export class PhoneStandStudio {
         <section class="card">
           <h3>📏 Medidas</h3>
           <label class="row">Nombre <input type="text" data-k="name" maxlength="60" /></label>
-          ${num('Ancho (mm)', 'width', 'De 38 a 60 mm')}
-          ${num('Grosor (mm)', 'thickness', 'De 6 a 10 mm: más grueso = bisagra más fuerte')}
-          ${num('Largo de la tapa (mm)', 'flapLength', 'De 22 a 40 mm: más larga = el celular se apoya más alto')}
-          ${num('Inclinación del celular (°)', 'phoneAngle', 'De 50° (más acostado) a 75° (más parado), medido desde la mesa')}
-          ${num('Holgura de la bisagra (mm)', 'clearance', 'Juego entre la tapa y el cuerpo. 0,4 mm sirve en la mayoría de impresoras; si la tapa sale pegada súbela a 0,5; si queda floja bájala a 0,3')}
+          ${sel('Tamaño', 'size', PHONESTAND_SIZES.map((s) => [s.id, s.name]), 'Pequeño: 11 mm de grueso, para celulares de hasta 11,6 mm con forro. Grande: 12 mm y pata más larga, para celulares de hasta 12,7 mm con forro')}
+          ${sel('Modelo', 'variant', PHONESTAND_VARIANTS.map((s) => [s.id, s.name]), 'Estándar: con barra detrás de la bisagra; sostiene el celular parado y acostado. Corto: más pequeño, mejor con el celular acostado')}
+          ${num('Ancho (mm)', 'width', 'De 30 a 46 mm (36 = como el modelo de referencia)')}
+          ${num('Holgura de la bisagra (mm)', 'clearance', 'Juego de la bisagra impresa en su lugar. 0,3 mm sirve en la mayoría de impresoras bien calibradas; si la pata sale pegada súbela a 0,4; si queda floja bájala a 0,25')}
           <details class="ps-adv"><summary>Avanzado</summary>
-            ${num('Rieles laterales (mm)', 'rail', 'Ancho de los rieles a cada lado de la tapa')}
-            ${num('Barra delantera (mm)', 'frontBar', 'Barra delante de la tapa')}
-            ${num('Radio del pasador (mm)', 'pin', 'Se limita solo según el grosor')}
-            ${num('Topes del celular (mm)', 'ridge', 'Alto de los topes que evitan que el celular se resbale')}
+            ${num('Clic de cierre (mm)', 'latch', 'De 0 a 0,6: cuánto se traba la pata cerrada para que no se abra en el bolsillo. 0 = sin clic')}
+            ${num('Radio del pasador (mm)', 'pin', 'Radio de los conos de la bisagra; se limita solo según el grosor')}
             ${num('Pared de la argolla (mm)', 'ring.wall', 'Material mínimo alrededor del agujero de la argolla')}
           </details>
         </section>
@@ -193,7 +195,7 @@ export class PhoneStandStudio {
           <h3>✅ Resultado</h3>
           <div class="hb-warn" data-r="warn"></div>
           <div class="hb-list small" data-r="list"></div>
-          <div class="ps-tip muted small">🖨️ PLA · capas de 0,2 mm · <b>sin soportes</b> · imprímelo acostado tal como sale: la bisagra sale armada. Al terminar, dobla la tapa con cuidado para soltarla.<span data-show="nfc"> 📶 En la pausa mete el chip y dale continuar.</span></div>
+          <div class="ps-tip muted small">🖨️ PLA · capas de 0,2 mm · <b>sin soportes</b> · imprímelo tal como sale: el cuerpo acostado y la pata parada en su ranura; la bisagra sale armada. Al terminar, mueve la pata con cuidado hacia adelante y hacia atrás para soltarla y dóblala hasta que haga clic.<span data-show="nfc"> 📶 En la pausa mete el chip y dale continuar.</span></div>
         </section>
       </aside>
     </main>
@@ -300,9 +302,11 @@ export class PhoneStandStudio {
 
   updateVisibility() {
     const c = this.cfg;
-    const share = c.logo.enabled && !!this.logoImg && c.text.enabled && c.logo.where === c.text.where;
+    // the short variant has no bar: logo and text both go on the shape
+    const wh = (w) => (c.variant === 'short' ? 'top' : w);
+    const share = c.logo.enabled && !!this.logoImg && c.text.enabled && wh(c.logo.where) === wh(c.text.where);
     const show = {
-      custom: c.shape === 'custom', logo: c.logo.enabled, text: c.text.enabled, textRel: share, textSize: !share,
+      custom: c.shape === 'custom', logo: c.logo.enabled, text: c.text.enabled, textRel: share, textSize: !share, barOk: c.variant !== 'short',
       relief: c.logo.mode === 'relief', sunk: c.logo.mode !== 'relief', nfc: c.nfc.enabled, opener: c.opener.enabled, ring: c.ring.enabled,
     };
     for (const el of this.root.querySelectorAll('[data-show]')) el.hidden = !show[el.dataset.show];
@@ -396,7 +400,6 @@ export class PhoneStandStudio {
       const t0 = performance.now();
       this.renderShapes();
       const res = buildPhoneStand(this.cfg, { logoImage: this.logoImg, shapeImage: this.shapeImg, font });
-      for (const p of res.parts) { p.openGeometry?.dispose(); delete p.openGeometry; }   // the view turns the flap itself
       this.res = res;
       this.$('time').textContent = `${Math.round(performance.now() - t0)} ms`;
       this.renderInfo();
@@ -421,27 +424,40 @@ export class PhoneStandStudio {
       : '<div class="hb-ok">✓ Listo para imprimir: sin soportes y con la bisagra armada.</div>';
     const sw = (color) => `<span class="sw" style="background:${esc(color)}"></span>`;
     const row = (k, v) => `<div class="hb-pc"><span>${k}</span><span class="muted">${v}</span></div>`;
-    const shapeName = PHONESTAND_SHAPES.find((s) => s.id === i.shape.id)?.name || i.shape.id;
-    const fils = [...new Set(res.parts.map((p) => p.filamentIndex))].sort();
-    const where = (w) => (w === 'top' ? 'en la forma' : 'en la tapa');
-    let h = row('Forma', esc(shapeName));
-    h += row('Medidas', `${f1(i.size.w)} × ${f1(i.size.l)} × ${f1(i.size.h)} mm`);
+    const name = (list, id) => list.find((s) => s.id === id)?.name || id;
+    const shapeName = name(PHONESTAND_SHAPES, i.shape.id);
+    const real = res.parts.filter((p) => !p.preview);
+    const fils = [...new Set(real.map((p) => p.filamentIndex))].sort();
+    const dims = (s) => `${f1(s.w)} × ${f1(s.l)} × ${f1(s.h)} mm`;
+    const ok = (v) => (v >= 0 ? '✓' : '⚠ puede voltearse');
+    const grown = i.shape.grow ? ` · alargada ${f1(i.shape.grow)} mm para que quepa${i.shape.growFor.length > 1 ? 'n' : ''} ${i.shape.growFor.map((k) => (k === 'nfc' ? 'el chip NFC' : 'el abre latas')).join(' y ')}` : '';
+    let h = row('Forma', esc(shapeName) + grown);
+    h += row('Modelo', `${esc(name(PHONESTAND_SIZES, i.model.size))} · ${esc(name(PHONESTAND_VARIANTS, i.model.variant))}`);
+    h += row('Llavero cerrado', dims(i.closedSize));
+    h += row('Al imprimir', `${f1(i.size.h)} mm de alto (la pata sale parada)`);
     h += row('Peso aprox.', `${f1(i.grams)} g de PLA`);
     h += row('Filamentos', `${fils.length} ${fils.map((f) => sw(f ? c.accent : c.body)).join('')}`);
-    h += row('Celular', `inclinado ${f1(i.phoneAngle)}° · apoyo a ${f1(i.supportHeight)} mm`);
-    h += row('Estabilidad', `vertical ${i.stability.portrait >= 0 ? '✓' : '⚠ puede voltearse'} · horizontal ${i.stability.landscape >= 0 ? '✓' : '⚠'}`);
-    h += row('Bisagra', `pasador Ø${f1(i.hinge.pinDiameter)} mm · holgura ${f1(i.hinge.clearance)} mm`);
+    h += row('Celular', `inclinado ${f1(i.phone.angle)}° · hasta ${f1(i.phone.tMax)} mm de grueso con forro`);
+    h += row('Estabilidad', `vertical ${ok(i.stability.portrait)} · horizontal ${ok(i.stability.landscape)}${i.phone.landscape ? ' · úsalo horizontal' : ''}`);
+    h += row('Bisagra', `conos Ø${f1(i.hinge.pinDiameter)} mm · holgura ${f1(i.hinge.clearance)} mm`);
+    h += row('Cierre', i.latch ? `clic de ${f1(i.latch.interference)} mm (no se abre en el bolsillo)` : 'sin clic');
     if (i.ring) h += row('Argolla', `agujero Ø${f1(2 * i.ring.r)} mm`);
-    if (i.nfc) h += row('Chip NFC', `${where(i.nfc.where)} · Ø${f1(2 * i.nfc.r)} mm · pausa a Z = ${f1(i.nfc.z1)} mm`);
+    if (i.nfc) {
+      const n = i.nfc, made = { relief: 'en relieve', inlay: 'a ras', engrave: 'grabada' }[i.art.mode];
+      const where = n.covered ? `debajo del ${n.under}: toca el ${n.under} con el celular` : n.where === 'bar' ? 'cerca de la bisagra' : 'en la forma de arriba';
+      h += row('Chip NFC 📶', `Ø${f1(2 * n.r)} mm · ${where}${n.mark ? ` · señal 📶 ${made} encima: toca la señal con el celular` : ''}`);
+      h += row('Pausa NFC', `a Z = ${f1(n.z1)} mm: mete el chip y continúa`);
+    }
     if (i.opener) h += row('Abre latas', `lado ${i.opener.side === 'left' ? 'izquierdo' : 'derecho'}${i.opener.angle ? ` · girado ${i.opener.angle}°` : ''}`);
-    for (const w of ['top', 'flap']) {
+    for (const w of ['top', 'bar']) {
       const a = i.art[w];
-      if (a) h += row(a.logo && a.text ? 'Logo y texto' : a.logo ? 'Logo' : 'Texto', `${f1(a.w)} × ${f1(a.h)} mm ${where(w)}`);
+      if (a) h += row(a.logo && a.text ? 'Logo y texto' : a.logo ? 'Logo' : 'Texto', `${f1(a.w)} × ${f1(a.h)} mm ${w === 'top' ? 'en la forma' : 'en la barra'}`);
     }
     h += '<h4>Piezas del 3MF</h4>';
-    h += res.parts.map((p) => `<div class="hb-pc"><span>${sw(p.color)} ${esc(p.name)}</span><span class="muted">filamento ${p.filamentIndex + 1}</span></div>`).join('');
+    h += real.map((p) => `<div class="hb-pc"><span>${sw(p.color)} ${esc(p.name)}</span><span class="muted">filamento ${p.filamentIndex + 1}</span></div>`).join('');
+    if (real.length < res.parts.length) h += `<div class="hb-pc"><span>${sw('#d9a400')} Chip NFC</span><span class="muted">solo en la vista (va en la pausa)</span></div>`;
     this.$('list').innerHTML = h;
-    this.$('status').textContent = `${shapeName} · ${f1(i.size.w)} × ${f1(i.size.l)} × ${f1(i.size.h)} mm · ${f1(i.grams)} g${res.warnings.length ? ` · ⚠ ${res.warnings.length} aviso(s)` : ''}`;
+    this.$('status').textContent = `${shapeName} · ${dims(i.closedSize)} · ${f1(i.grams)} g${res.warnings.length ? ` · ⚠ ${res.warnings.length} aviso(s)` : ''}`;
   }
 
   // colour pickers only repaint (no rebuild): filament 0 = body colour, 1 = accent
@@ -450,6 +466,7 @@ export class PhoneStandStudio {
     this.root.style.setProperty('--ps-accent', c.accent);
     if (!this.res) return;
     this.res.parts.forEach((p, i) => {
+      if (p.preview) return;
       p.color = p.filamentIndex ? c.accent : c.body;
       this.viewer?.meshes.get('p' + i)?.material.color.set(p.color);
     });
@@ -463,7 +480,7 @@ export class PhoneStandStudio {
     if (!v || !res) return;
     if (this.pivot) { v.model.remove(this.pivot); this.pivot = null; }
     v.clear();
-    // the flap and its logo turn about the hinge axis (X through y = axis.y, z = axis.z)
+    // the leg turns about the hinge axis (X through y = axis.y, z = axis.z)
     const { axis } = res;
     const pivot = new THREE.Group();
     pivot.position.set(0, axis.y, axis.z);
@@ -473,14 +490,28 @@ export class PhoneStandStudio {
       const m = v.addPiece('p' + i, p.geometry);
       v.updatePiece('p' + i, { color: p.color, height: 1, z: 0, visible: true });
       if (p.moving) { v.model.remove(m); m.position.set(0, -axis.y, -axis.z); pivot.add(m); }
+      if (p.preview) {
+        // the hidden NFC chip, seen through the body (x-ray) in gold
+        Object.assign(m.material, { transparent: true, opacity: 0.5, depthTest: false, depthWrite: false });
+        m.material.emissive.set(p.color);
+        m.material.emissiveIntensity = 0.45;
+        m.material.needsUpdate = true;
+        m.renderOrder = 10;
+      } else if (p.art) {
+        // logo/text/📶 sign drawn after the chip (still hidden by whatever is in front), so they show over it
+        m.material.transparent = true;
+        m.material.needsUpdate = true;
+        m.renderOrder = 11;
+      }
     });
     v.setExtra('phone', res.phone, { color: '#1f2937' });
     const ph = v.extras.get('phone');
     Object.assign(ph.material, { transparent: true, opacity: 0.5, depthWrite: false, roughness: 0.25 });
     ph.material.needsUpdate = true;
-    // centre the closed keychain on the grid
+    ph.renderOrder = 12;   // the glass last: it tints the chip and the art behind it too
+    // centre the piece as printed on the grid
     const b = new THREE.Box3();
-    for (const p of res.parts) { p.geometry.computeBoundingBox(); b.union(p.geometry.boundingBox); }
+    for (const p of res.parts) { if (p.preview) continue; p.geometry.computeBoundingBox(); b.union(p.geometry.boundingBox); }
     v.model.position.set(-(b.min.x + b.max.x) / 2, -(b.min.y + b.max.y) / 2, 0);
     this.applyView(!this.framed);
     this.framed = true;
@@ -496,17 +527,27 @@ export class PhoneStandStudio {
     if (!VIEWS[tab]) return;
     this.stopAnim();
     this.tab = tab;
-    this.amt = VIEWS[tab].amt;
+    this.amt = -1;
     this.applyView(true);
   }
 
+  // slider 0 = closed (keychain) … 1 = open on its stop (stand) ↔ leg pose (deg from the print pose, core info.poses)
+  poseAt(a) { const p = this.res.info.poses; return p.closed + (p.stand - p.closed) * a; }
+  amtOf(pose) { const p = this.res.info.poses; return (p[pose] - p.closed) / (p.stand - p.closed); }
+
   setAmt(a) {
+    const res = this.res;
+    if (!(a >= 0)) {   // −1: the tab's pose
+      if (!res) { this.amt = -1; return; }
+      a = this.amtOf(VIEWS[this.tab].pose);
+    }
     this.amt = Math.max(0, Math.min(1, +a || 0));
     this.$('amt').value = String(this.amt);
-    if (!this.res || !this.pivot) return;
-    this.pivot.rotation.x = -this.amt * this.res.info.thetaOpen * D2R;
+    if (!res || !this.pivot) return;
+    this.pivot.rotation.x = this.poseAt(this.amt) * D2R;
+    // the phone leans on the leg only when it is open on its stop
     const ph = this.viewer.extras.get('phone');
-    if (ph) ph.visible = this.tab === 'stand' && this.amt > 0.999;
+    if (ph) ph.visible = this.amt > 0.999;
     this.viewer.requestRender();
   }
 
@@ -534,7 +575,8 @@ export class PhoneStandStudio {
   animate() {
     this.stopAnim();
     if (!this.res) return;
-    const from = this.amt > 0.999 ? 0 : this.amt, t0 = performance.now(), dur = 300 + 1300 * (1 - from);
+    // closed → open on its stop (the phone appears at the end)
+    const from = this.amt > 0.999 || !(this.amt >= 0) ? 0 : this.amt, t0 = performance.now(), dur = 300 + 1700 * (1 - from);
     const step = (now) => {
       const k = Math.min(1, (now - t0) / dur), e = k < 0.5 ? 2 * k * k : 1 - (-2 * k + 2) ** 2 / 2;
       this.setAmt(from + (1 - from) * e);
@@ -611,7 +653,7 @@ export class PhoneStandStudio {
     this.cb.showBusy('Generando 3MF…');
     await nextFrame();
     try {
-      const parts = res.parts.map(({ name: n, color, filamentIndex, geometry }) => ({ name: n, color, filamentIndex, geometry }));
+      const parts = res.parts.filter((p) => !p.preview).map(({ name: n, color, filamentIndex, geometry }) => ({ name: n, color, filamentIndex, geometry }));
       const data = threeMF(parts, name, { pauses: res.pauses });
       const p = await window.api.saveFile({ defaultPath: fileBase(name) + '.3mf', filters: [{ name: '3MF', extensions: ['3mf'] }], data });
       if (p) this.cb.toast(`✓ 3MF guardado${res.pauses.length ? ` · pausa para el chip NFC a Z = ${f1(res.pauses[0].z)} mm` : ''}`);
@@ -627,7 +669,7 @@ export class PhoneStandStudio {
     if (!(await this.ready())) return null;
     const res = this.res, name = this.cfg.name || 'Soporte celular';
     try {
-      const data = stlBinary(res.parts.map((p) => p.geometry));
+      const data = stlBinary(res.parts.filter((p) => !p.preview).map((p) => p.geometry));
       const p = await window.api.saveFile({ defaultPath: fileBase(name) + '.stl', filters: [{ name: 'STL', extensions: ['stl'] }], data });
       if (p) this.cb.toast(`✓ STL guardado (un solo color${res.pauses.length ? `; agrega a mano la pausa del chip NFC a Z = ${f1(res.pauses[0].z)} mm` : ''})`);
       return p;
@@ -638,18 +680,22 @@ export class PhoneStandStudio {
     }
   }
 
-  // PNG of the current view on a light background (to show the client)
+  // PNG of the current view on a light background (to show the client): the piece as it really looks, without the
+  // see-through NFC chip
   async photo() {
     if (!(await this.ready()) || !this.viewer) return null;
     const v = this.viewer, old = { bg: v.scene.background, grid: v.grid.visible };
+    const helpers = this.res.parts.map((p, i) => (p.preview ? v.meshes.get('p' + i) : null)).filter((m) => m?.visible);
     let url;
     try {
       v.scene.background = new THREE.Color(0xf3f4f6);
       v.grid.visible = false;
+      for (const m of helpers) m.visible = false;
       url = v.snapshot();
     } finally {
       v.scene.background = old.bg;
       v.grid.visible = old.grid;
+      for (const m of helpers) m.visible = true;
       v.requestRender();
     }
     const bin = atob(url.split(',')[1]), data = new Uint8Array(bin.length);
@@ -683,7 +729,7 @@ export class PhoneStandStudio {
     this.shapeVer++;
     this.res = null;
     this.tab = 'print';
-    this.amt = 0;
+    this.amt = -1;
     this.framed = false;
     await this.open();
     this.cb.toast('✓ Proyecto abierto');

@@ -261,36 +261,51 @@ Regresiones: `node test\pencil.test.mjs` comprueba sólidos, calibre y paredes; 
 
 ### Módulo Soporte celular llavero
 
-Llavero plano con una **tapa en bisagra** que se abre y sostiene el celular, vertical u horizontal. Se imprime acostado y **la bisagra sale armada** (print-in-place): sin soportes ni piezas para pegar. Es un diseño paramétrico propio de Relieve3D.
+Llavero que se abre y sostiene el celular. Tiene una **pata en bisagra** que se despliega y queda firme sobre su tope; el celular se apoya en ella a unos **60°**, con el borde de abajo dentro de una ranura en V. Cerrada, la pata entra en su hueco con un **clic** y no se abre en el bolsillo. Todo **se imprime armado** (print-in-place), sin soportes ni piezas para pegar: el cuerpo acostado y la pata parada sobre sus pasadores cónicos a 45°.
 
-- **Forma de arriba**: corazón, ratón (estilo Mickey), osito, gatito, flor, estrella, nube, corona, círculo, clásico o **Tu silueta** (sube una imagen con la forma que quieras). Cada botón muestra el contorno real de esa forma. *Tamaño de la forma* va de 70 a 140 %, y la forma nunca sobresale del borde delantero: ahí se recorta recta.
-- **Logo o marca del cliente**: arrástralo a la ventana o usa **🖼️ Logo** (PNG/JPG con fondo liso o transparente). Puede ir en la forma de arriba o en la tapa, con tamaño y posición ajustables. Se acomoda solo dentro de la forma, sin tocar el agujero de la argolla. **Texto o nombre** opcional, en la tapa o junto al logo.
-- **Acabado** del logo y el texto: en relieve, incrustado a ras (2 colores) o grabado. Puedes elegir el color del cuerpo y el del acento, y pintar la tapa con el 2.º color.
+- **Tamaño**:
+  - *Pequeño*: 11 mm de grueso, para celulares de hasta 11,6 mm con forro.
+  - *Grande*: 12 mm de grueso y pata más larga, para celulares de hasta 12,7 mm con forro.
+- **Modelo**:
+  - *Estándar*: con una barra detrás de la bisagra; sostiene el celular parado y acostado.
+  - *Corto*: la forma va justo detrás de la bisagra; es más pequeño y se usa con el celular acostado.
+- **Forma de arriba**: corazón, ratón (estilo Mickey), osito, gatito, flor, estrella, nube, corona, círculo, clásico o **Tu silueta** (sube una imagen con la forma que quieras). Cada botón muestra el contorno real de esa forma. *Tamaño de la forma* va de 70 a 140 %.
+- **Logo o marca del cliente**: arrástralo a la ventana o usa **🖼️ Logo** (PNG/JPG con fondo liso o transparente). Puede ir en la forma de arriba o en la barra, con tamaño y posición ajustables, y se acomoda solo sin tocar el agujero de la argolla. **Texto o nombre** opcional, en la barra o junto al logo. En el modelo corto, logo y texto van juntos arriba.
+- **Acabado** del logo, el texto y la señal 📶: en relieve, incrustado a ras o grabado. Elige el color del cuerpo y el del logo. La pata también puede ir en el 2.º color.
 - **Extras** (cada uno se activa o desactiva):
-  - **Chip NFC escondido**: bolsillo para un sticker NTAG213/215 de 25 mm (diámetro y grosor editables). En *Automático* el chip va en la forma de arriba si cabe (p. ej. en un lóbulo del corazón); si no, va en la tapa. El 3MF incluye una **pausa** a la altura justa («Inserta el chip NFC en el bolsillo y continúa»): mete el chip y dale continuar, y las capas siguientes lo tapan.
-  - **Abre latas**: ranura en el borde derecho o izquierdo. Mete la pestaña de la lata y haz palanca.
-  - **Agujero para la argolla**, con diámetro editable.
-- **Medidas**:
-  - ancho (38–60 mm), grosor (6–10 mm), largo de la tapa (22–40 mm), inclinación del celular (50–75°) y holgura de la bisagra;
-  - en *Avanzado*: barra delantera, pasador, topes del celular y pared de la argolla.
-
-  Un valor fuera de rango se ajusta al salir del campo. **Resultado** muestra:
-  - medidas, peso y estabilidad del celular (vertical y horizontal);
-  - bisagra y NFC;
+  - **📶 Chip NFC escondido**: bolsillo cerrado para un sticker NTAG213/215 redondo (diámetro y grosor editables). En la vista, el chip se ve **en dorado a través del cuerpo**.
+    - *Dónde*: en *Automático* va debajo del logo (el cliente toca el logo con el celular); también puede ir lo más arriba posible en la forma o cerca de la bisagra.
+    - Si nada lo tapa, lleva encima la **señal 📶** (sin contacto) para saber dónde tocar. Se hace igual que el logo y en su color.
+    - Si el chip no cabe, la forma de arriba **se alarga sola** y *Resultado* dice cuánto.
+    - El 3MF trae una **pausa** a la altura justa («Inserta el chip NFC en el bolsillo y continúa»): mete el chip, dale continuar y las capas siguientes lo tapan.
+  - **🥫 Abre latas**: ranura en el borde derecho o izquierdo, girada si el borde es curvo. Mete la pestaña de la lata y haz palanca. Si no hay un borde libre, la forma también se alarga sola.
+  - **🔑 Agujero para la argolla**, con diámetro editable.
+- **Medidas**: ancho (30–46 mm) y holgura de la bisagra. En *Avanzado*: clic de cierre (0–0,6 mm; 0 = sin clic), radio del pasador y pared de la argolla. Un valor fuera de rango se ajusta al salir del campo.
+- **Resultado** muestra:
+  - medidas cerrado y al imprimir, peso y filamentos;
+  - ángulo y grosor máximo del celular, y estabilidad (vertical y horizontal);
+  - bisagra, clic, NFC (dónde tocar y la pausa) y abre latas;
   - piezas del 3MF y avisos.
-- **Vistas**: *Como se imprime*, *Abierto con celular* (con un celular de referencia) y *Vista de arriba*. El deslizador *Abrir tapa* y **▶ Animar** muestran el giro de la bisagra.
+- **Vistas**: *Como se imprime*, *Abierto con celular* (con un celular de referencia), *Cerrado (llavero)* y *Vista de arriba*. El deslizador *Mover la pata* y **▶ Animar** muestran el giro de la bisagra.
 - **Exportar**:
   - **3MF** con los colores y la pausa del NFC, para Bambu Studio y OrcaSlicer;
   - **STL** único: un solo color y sin la pausa, que debes agregar a mano en el laminador;
   - **📸 Foto**: PNG para enviar al cliente;
-  - **💾 Guardar proyecto** `.r3p`: medidas, logo y silueta. Se reabre con **📂 Abrir** o arrastrándolo a la ventana.
+  - **💾 Guardar proyecto** `.r3p`: medidas, logo y silueta. Se reabre con **📂 Abrir** o arrastrándolo a la ventana. Los proyectos de la versión 1.17 se abren con su forma, logo, texto y extras; la bisagra se rehace con los valores por defecto.
 
-**Impresión**: PLA, capas de 0,2 mm, sin soportes, acostado tal como sale. Al terminar, dobla la tapa con cuidado para soltarla. Imprime primero una pieza de prueba y ajusta la *holgura de la bisagra* a tu impresora (0,3–0,5 mm; 0,4 por defecto).
+**Impresión**: PLA, capas de 0,2 mm, sin soportes, tal como sale. Al terminar, mueve la pata con cuidado hacia adelante y hacia atrás para soltarla, y dóblala hasta que haga clic. Imprime primero una pieza de prueba y ajusta a tu impresora:
+- *Holgura de la bisagra*: 0,3 mm por defecto. Si la pata sale pegada, súbela a 0,4; si queda floja, bájala a 0,25.
+- *Clic de cierre*: 0,3 mm por defecto. Si cuesta cerrarla, bájalo; si se abre sola, súbelo (hasta 0,6).
 
-**Licencia**: el diseño es original y no usa la malla del modelo «Profile - Standard + NFC + Can Opener» de mgm86. Ese modelo tiene en MakerWorld una licencia de archivo digital estándar, solo para uso personal; para vender ese modelo en particular necesitas la licencia comercial de su autor. «Mickey» es una marca de Disney, por eso el módulo ofrece una cabeza de ratón genérica. No uses personajes ni marcas de terceros sin permiso.
+**Licencia y créditos**: el mecanismo (pata en bisagra con tope, clic y ranura en V) se inspira en «Small smartphone stand – print in place design» de mgm86 (MakerWorld), y su versión «Profile - Standard + NFC + Can Opener». Esos archivos tienen una licencia estándar de archivo digital, solo para uso personal; la licencia comercial la vende su autor. Relieve3D **no usa ni incluye su malla**: la geometría se genera desde cero con medidas propias. «Mickey» es una marca de Disney, por eso el módulo ofrece una cabeza de ratón genérica. No uses personajes ni marcas de terceros sin permiso.
 
 Regresiones:
-- `node test\phonestand.test.mjs` cubre formas, bisagra, NFC, abre latas, estabilidad y proyecto.
+- `node test\phonestand.test.mjs` cubre:
+  - tamaños, modelos y formas;
+  - la bisagra: giro libre, tope, clic y celular apoyado;
+  - impresión sin voladizos;
+  - el NFC (lugar, señal 📶, pausa y alargue) y el abre latas;
+  - las piezas del 3MF, la migración desde 1.17 y el proyecto.
 - `node test\e2e\run.mjs phonestand` recorre el flujo completo en la app y verifica las exportaciones reales.
 
 ### Módulo Separar colores 3D

@@ -1,12 +1,16 @@
 // Phone-stand keychain ("Soporte de celular llavero"): parametric print-in-place generator. Pure JS, no DOM.
-// Original Relieve3D design (no third-party mesh is copied): a flat card printed lying down whose flap, held by a
-// cone-pin hinge printed in place, flips up to hold a phone; a decorative top (heart, mouse head, flower…) with a
-// key-ring hole; optional NFC pocket (print pause to drop the chip in), can-tab opener slot and the client's
-// logo/brand in relief, inlay or engraving.
-// Units: mm. Print orientation = use orientation: X width, Y length (front bar at y = 0, decorative top towards
-// +Y), Z up (bed z = 0, top face z = T). The flap hinges about the X axis through (y = yh, z = T/2); opening by θ
-// maps (u, w) = (y − yh, z − T/2) → (u·cosθ + w·sinθ, −u·sinθ + w·cosθ): the tip rises and leans back, the old
-// bottom face becomes the face the phone leans on and the old top face swings onto the stop behind the hinge.
+// The hinge re-creates, parametrically, the working principle of the classic print-in-place pocket stand (credit:
+// "Small smartphone stand – print in place" by mgm86; no mesh is copied): a body (frame) with a hinged leg on
+// 45° cone pins. The leg prints standing up; it folds forward flat into its slot (keychain, held by a snap lip) and
+// swings back onto a stop to hold the phone, whose back leans on the leg's slanted front face while its bottom
+// edge sits in the V groove the closed leg leaves in the body. Plus a decorative top (heart, mouse head, flower…)
+// with a key-ring hole, optional NFC pocket (print pause to drop the chip in), can-tab opener slot and the
+// client's logo/brand in relief, inlay or engraving.
+// Units: mm. Print orientation: X width, Y length (front edge at y = 0, decorative top towards +Y), Z up (bed
+// z = 0, top face z = T). Hinge frame: s = yh − y (towards the front), v = z − R (R = T/2), axis at the origin.
+// Leg frame (s', v'): leg upright, back face s' = −R, barrel = circle R. Pose φ (deg, + = top forward) maps
+// (s', v') → (s'·cosφ + v'·sinφ, −s'·sinφ + v'·cosφ); 90° = closed (back face flush with the top face). In 3D a
+// pose is a rotation about the X axis through (y = yh, z = R) by +φ (Manifold/three.js right-handed).
 import * as THREE from 'three';
 import { toCreasedNormals } from 'three/addons/utils/BufferGeometryUtils.js';
 import { traceLogo, flatten, layoutText, capHeightRatio, HABLADOR_FONTS } from './hablador.js';
@@ -19,6 +23,19 @@ const LAYER = 0.2;
 const DENSITY = 1.24; // PLA, g/cm³
 // can-tab opener slot (mm): length along the edge, depth into the body, floor at the mouth/inner end, ceiling
 const SLOT = { len: 16, depth: 10, mouth: 1, inner: 2, top: 3.4, wall: 2.5 };
+// Hinge geometry per size (mm, leg frame), after the reference small/large stands: T body thickness (= barrel Ø),
+// Ht leg length from the axis, Hend side-plate length, rt tip radius, K keel apex (the front face runs from the
+// tip down to K, the keel from K back down to the neck at 40° from vertical).
+const SIZES = {
+  small: { T: 11, Ht: 24.6, Hend: 20.6, rt: 1.25, K: [3.3, 11.9] },
+  large: { T: 12, Ht: 26.6, Hend: 22.6, rt: 1.3, K: [3.6, 12.9] },
+};
+export const PHONESTAND_SIZES = [{ id: 'small', name: 'Pequeño (11 mm)' }, { id: 'large', name: 'Grande (12 mm)' }];
+export const PHONESTAND_VARIANTS = [{ id: 'standard', name: 'Estándar (con barra)' }, { id: 'short', name: 'Corto' }];
+const PHI_PRINT = 5, PHI_STOP = -1, PHI_END = 91;   // leg poses (deg): as printed, design stop, end of the cut sweep
+const END_W = 5.5;   // width of each side knuckle / leg side plate
+const BAR = 22;      // standard variant: bar between the hinge and the decorative shape
+const GROW_MAX = 40;  // the decorative shape may move back up to this much to make room for the NFC chip / can opener
 
 let engine, loading;
 export async function preparePhoneStand() {
@@ -47,22 +64,19 @@ export const DEFAULT_PHONESTAND = () => ({
   name: 'Soporte celular',
   shape: 'heart',
   shapeScale: 100,   // % of the decorative shape's default size
-  width: 46,         // body width (rails + window)
-  thickness: 7,      // card thickness T
-  flapLength: 30,    // hinged flap length L (how high the phone leans on it)
-  rail: 8,           // side rails beside the window
-  frontBar: 7,       // bar in front of the window
-  clearance: 0.4,    // print-in-place gap: hinge cones, flap sides, stop
-  pin: 2.2,          // hinge cone radius (auto-limited by the thickness)
-  ridge: 3,          // bumps that stop the phone sliding forward
-  phoneAngle: 62,    // phone lean from the table, degrees
+  size: 'small',     // 'small' (11 mm thick) | 'large' (12 mm, longer leg)
+  variant: 'standard', // 'standard' (bar behind the hinge, phone upright) | 'short' (shape right behind the hinge)
+  width: 36,         // body width (side knuckles + leg)
+  clearance: 0.3,    // print-in-place gap: hinge cones, leg sides, swept clearance
+  pin: 3.5,          // hinge cone radius (auto-limited by the thickness)
+  latch: 0.3,        // snap interference that keeps the leg closed (0 = no snap)
   ring: { enabled: true, diameter: 5, wall: 2.5 },
-  nfc: { enabled: false, diameter: 25.5, depth: 1, where: 'auto' },   // where: 'auto' | 'top' | 'flap'
+  nfc: { enabled: false, diameter: 25.5, depth: 1, where: 'auto', mark: true },   // where: 'auto' | 'top' | 'bar'; mark: 📶 tap sign over the chip, made like the logo
   opener: { enabled: false, side: 'right' },
-  // logo/text: where = 'top' (decorative shape) | 'flap' (hinged tab, the big face of the closed keychain);
+  // logo/text: where = 'top' (decorative shape) | 'bar' (bar behind the hinge; on the short variant it joins 'top');
   // mode applies to both: relief (on top), inlay (flush, 2nd colour) or engrave (sunk)
   logo: { enabled: true, where: 'top', mode: 'relief', height: 0.8, depth: 0.6, size: 100, dx: 0, dy: 0, invert: false, minFeature: 1.2, tolerance: 40 },
-  text: { enabled: false, where: 'flap', value: '', font: 'Montserrat Black', size: 100, rel: 28 },   // rel: cap height % of the logo height when they share a place
+  text: { enabled: false, where: 'bar', value: '', font: 'Montserrat Black', size: 100, rel: 28 },   // rel: cap height % of the logo height when they share a place
   colors: { body: '#f4e9dc', accent: '#e8127c', twoColor: true, flapAccent: false },
 });
 
@@ -72,33 +86,41 @@ const num = (v, d, lo, hi) => {
 };
 const hex = (v, d) => (/^#[0-9a-f]{6}$/i.test(String(v)) ? String(v) : d);
 
-export function normalizePhoneStand(cfg = {}) {
+// v1.17 cards (flat card + flap) had these keys and no `size`: their look is kept, the hinge restarts from defaults
+const LEGACY_KEYS = ['thickness', 'flapLength', 'rail', 'frontBar', 'ridge', 'phoneAngle'];
+
+export function normalizePhoneStand(cfgIn = {}) {
   const D = DEFAULT_PHONESTAND();
+  let cfg = cfgIn || {};
+  if (!('size' in cfg) && LEGACY_KEYS.some((k) => k in cfg)) {
+    cfg = { ...cfg };
+    for (const k of ['width', 'clearance', 'pin']) delete cfg[k];
+  }
   const c = { ...D, ...cfg };
+  for (const k of LEGACY_KEYS) delete c[k];
   for (const k of ['ring', 'nfc', 'opener', 'logo', 'text', 'colors']) c[k] = { ...D[k], ...(cfg[k] || {}) };
+  const place = (v, d) => (v === 'flap' ? 'bar' : v === 'top' || v === 'bar' ? v : d);
   c.name = String(c.name || D.name).slice(0, 60);
   c.shape = PHONESTAND_SHAPES.some((s) => s.id === c.shape) ? c.shape : D.shape;
   c.shapeScale = num(c.shapeScale, D.shapeScale, 70, 140);
-  c.width = num(c.width, D.width, 38, 60);
-  c.thickness = num(c.thickness, D.thickness, 6, 10);
-  c.flapLength = num(c.flapLength, D.flapLength, 22, 40);
-  c.rail = num(c.rail, D.rail, 6, 12);
-  c.frontBar = num(c.frontBar, D.frontBar, 5, 12);
+  c.size = SIZES[c.size] ? c.size : D.size;
+  c.variant = c.variant === 'short' ? 'short' : 'standard';
+  c.width = num(c.width, D.width, 30, 46);
   c.clearance = num(c.clearance, D.clearance, 0.2, 0.6);
-  c.pin = num(c.pin, D.pin, 1.2, 4);
-  c.ridge = num(c.ridge, D.ridge, 1.5, 5);
-  c.phoneAngle = num(c.phoneAngle, D.phoneAngle, 50, 75);
+  c.pin = num(c.pin, D.pin, 2, 4.5);
+  c.latch = num(c.latch, D.latch, 0, 0.6);
   c.ring.enabled = c.ring.enabled !== false;
   c.ring.diameter = num(c.ring.diameter, D.ring.diameter, 3, 8);
   c.ring.wall = num(c.ring.wall, D.ring.wall, 1.6, 5);
   c.nfc.enabled = !!c.nfc.enabled;
   c.nfc.diameter = num(c.nfc.diameter, D.nfc.diameter, 10, 40);
   c.nfc.depth = num(c.nfc.depth, D.nfc.depth, 0.4, 2);
-  c.nfc.where = ['auto', 'top', 'flap'].includes(c.nfc.where) ? c.nfc.where : 'auto';
+  c.nfc.where = c.nfc.where === 'auto' ? 'auto' : place(c.nfc.where, 'auto');
+  c.nfc.mark = c.nfc.mark !== false;
   c.opener.enabled = !!c.opener.enabled;
   c.opener.side = c.opener.side === 'left' ? 'left' : 'right';
   c.logo.enabled = c.logo.enabled !== false;
-  c.logo.where = c.logo.where === 'flap' ? 'flap' : 'top';
+  c.logo.where = place(c.logo.where, 'top');
   c.logo.mode = ['relief', 'inlay', 'engrave'].includes(c.logo.mode) ? c.logo.mode : 'relief';
   c.logo.height = num(c.logo.height, D.logo.height, 0.4, 3);
   c.logo.depth = num(c.logo.depth, D.logo.depth, 0.4, 2);
@@ -109,7 +131,7 @@ export function normalizePhoneStand(cfg = {}) {
   c.logo.minFeature = num(c.logo.minFeature, D.logo.minFeature, 0.6, 3);
   c.logo.tolerance = num(c.logo.tolerance, D.logo.tolerance, 5, 120);
   c.text.enabled = !!c.text.enabled;
-  c.text.where = c.text.where === 'top' ? 'top' : 'flap';
+  c.text.where = place(c.text.where, 'bar');
   c.text.size = num(c.text.size, D.text.size, 20, 150);
   c.text.value = String(c.text.value ?? '').slice(0, 40);
   c.text.font = HABLADOR_FONTS[c.text.font] ? c.text.font : D.text.font;
@@ -121,39 +143,54 @@ export function normalizePhoneStand(cfg = {}) {
   return c;
 }
 
-// Pure mechanism math (no geometry engine): hinge, stop, phone contact, stability.
+// Pure hinge math (no geometry engine): leg profile key points, axis position, stop, pins and snap latch.
 export function phoneStandMechanism(cfgIn) {
   const cfg = normalizePhoneStand(cfgIn);
-  const W = cfg.width, T = cfg.thickness, L = cfg.flapLength, R = cfg.rail, F = cfg.frontBar, c = cfg.clearance;
-  const xw = W / 2 - R;                          // window half width
-  const wf = 2 * (xw - c);                       // flap width
-  const gf = Math.hypot(L, T / 2) - L + c;       // front gap: the tip corner swings out of radius √(L²+T²/4)
-  const yh = F + gf + L;                         // hinge axis
-  const phi = cfg.phoneAngle, thOpen = 180 - phi - 4;   // flap 4° steeper than the phone → it touches the tip
-  const uE = (T / 2) * Math.tan((thOpen / 2) * D2R);    // stop edge on the top face: the open flap's back face meets it
-  // stop face through E at distance T/2 + c from the axis: (T/2)·tan(θs/2) + c/sin θs = uE (g is increasing on [60°, θ])
-  const d = T / 2 + c;
-  const g = (s) => (T / 2) * Math.tan((s / 2) * D2R) + c / Math.sin(s * D2R) - uE;
-  let lo = 60, hi = thOpen;
-  for (let i = 0; i < 64; i++) { const m = (lo + hi) / 2; if (g(m) > 0) hi = m; else lo = m; }
-  const thS = (lo + hi) / 2;
-  const stopU = (w) => (d - w * Math.cos(thS * D2R)) / Math.sin(thS * D2R);
-  const ym = yh + uE + 1;                        // end of the mechanism: the decorative region starts here
-  const rcMax = T / 2 - 1 + c - c * Math.SQRT2;  // keeps ≥ 1 mm of flap around the socket
+  const Z = SIZES[cfg.size], W = cfg.width, c = cfg.clearance;
+  const T = Z.T, R = T / 2, Ht = Z.Ht, Hend = Z.Hend, rt = Z.rt, K = Z.K;
+  const xm = W / 2 - END_W;                       // half width of the leg's middle (the side plates reach W/2)
+  const tc = [-R + rt, Ht - rt];                  // tip circle, tangent to the back face
+  // front face (the phone rest): tangent from the keel apex K to the tip circle, on its front side
+  const dx = tc[0] - K[0], dy = tc[1] - K[1], Ld = Math.hypot(dx, dy), al = Math.asin(rt / Ld);
+  const fd = [(dx * Math.cos(al) + dy * Math.sin(al)) / Ld, (-dx * Math.sin(al) + dy * Math.cos(al)) / Ld];
+  const T1 = [K[0] + fd[0] * Ld * Math.cos(al), K[1] + fd[1] * Ld * Math.cos(al)];
+  const J = [-0.5, K[1] - (K[0] + 0.5) / Math.tan(40 * D2R)];   // keel J → K at 40° from vertical (45° when printed)
+  const faceIncl = Math.atan2(fd[1], -fd[0]) / D2R;              // front face lean from the table, leg upright
+  const tipR = Math.hypot(tc[0], tc[1]) + rt;                    // farthest leg point from the axis
+  const yh = Math.sqrt((tipR + c) ** 2 - R * R) + 2.5;           // front wall: 2.5 mm past the tip's sweep
+  // stop: top edge (sC, R) of the slot's back wall. The leg's back face lands on it at PHI_STOP and is ≥ c in
+  // front of it as printed.
+  const sC = Math.min(R * (Math.sin(PHI_STOP * D2R) - 1) / Math.cos(PHI_STOP * D2R),
+    (-R - c + R * Math.sin(PHI_PRINT * D2R)) / Math.cos(PHI_PRINT * D2R));
+  let lo = -20, hi = PHI_PRINT;
+  for (let i = 0; i < 60; i++) {
+    const m = (lo + hi) / 2, mr = m * D2R;
+    if (sC * Math.cos(mr) - R * Math.sin(mr) + R > 0) lo = m; else hi = m;
+  }
+  const phiS = hi;
+  const rcMax = R - 1.2 - (Math.SQRT2 - 1) * c;    // ≥ 1.2 mm of barrel around the socket
   const rc = Math.min(cfg.pin, rcMax);
-  const rs = rc - c + c * Math.SQRT2;            // socket radius at the flap side face
-  const th = thOpen * D2R, ph = phi * D2R;
-  // phone: leans on the open flap's tip edge P, its back-bottom edge B rests on the rails, the ridges stop it
-  const Pu = -L * Math.cos(th) - (T / 2) * Math.sin(th), Pw = L * Math.sin(th) - (T / 2) * Math.cos(th);
-  const P = [yh + Pu, T / 2 + Pw];
-  const By = P[0] - (P[1] - T) / Math.tan(ph);
-  const yr = By - cfg.ridge * Math.tan(ph);
-  const s = -(T / 2) * (1 + Math.cos(th)) / Math.sin(th);
-  const flapAtTop = yh + s * Math.cos(th) - (T / 2) * Math.sin(th);
-  const cg = (H, t) => By + (H / 2) * Math.cos(ph) - (t / 2) * Math.sin(ph);
+  const sock = rc + (Math.SQRT2 - 1) * c;          // 45° socket radius at the leg's side face (= its depth)
+  const yh0 = yh - sC + 1.5;                       // back end of the hinge zone
+  const ym = cfg.variant === 'short' ? yh0 : yh0 + BAR;   // the decorative shape starts here
+  // snap latch: a lip on the top face over each side plate's far end. The plate's back-top corner is cut at 45°
+  // (v' − s' ≥ kn) so it clears the lip by c when closed; its far end passes the lip with `pen` interference.
+  const rA = Math.hypot(R, Hend) + c, sA = Math.sqrt(rA * rA - R * R);
+  const latchAt = (e) => {
+    const kn = sA - e + R - c * Math.SQRT2, p1 = Math.max(-R, Hend - kn);
+    return { e, kn, p1, pen: Math.hypot(p1, Hend) - Math.hypot(sA - e, R) };
+  };
+  let latch = null;
+  if (cfg.latch > 0) {
+    let a = 0.05, b = 3;
+    for (let i = 0; i < 60; i++) { const m = (a + b) / 2; if (latchAt(m).pen < cfg.latch) a = m; else b = m; }
+    latch = latchAt(b);
+  }
+  const plateR = latch ? Math.hypot(latch.p1, Hend) : Math.hypot(R, Hend);   // side plate's reach from the axis
   return {
-    cfg, W, T, L, R, F, c, xw, wf, gf, yh, phi, thOpen, uE, thS, stopU, ym, rc, rcMax, rs,
-    P, By, yr, flapAtTop, baseClear: flapAtTop - By, cgPortrait: cg(160, 9), cgLandscape: cg(75, 9),
+    cfg, size: cfg.size, variant: cfg.variant, W, T, R, c, Ht, Hend, rt, K, J, T1, tc, fd, xm, faceIncl, tipR, yh,
+    sC, phiS, phoneAngle: faceIncl + phiS, rc, rcMax, sock, yh0, ym, rA, sA, latch, plateR,
+    poses: { print: 0, stand: phiS - PHI_PRINT, closed: 90 - PHI_PRINT },
   };
 }
 
@@ -318,9 +355,101 @@ function customSilhouette(S, img, warnings) {
   return { cs, def: { factor: 1.2, join: b.max[1] - 0.55 * (b.max[1] - b.min[1]) } };
 }
 
-// Card outline: body rectangle (front bar + rails + mechanism) topped by the decorative shape. The shape is
-// pushed up until the stand cannot tip backwards with a tall phone (convex footprint ≥ 5 mm behind its CG).
-function makeOutline(S, mech, cfg, shapeImage, warnings) {
+// ------------------------------------------------------------------ hinge sections (2D, engine)
+// (s, v) hinge frame / (s', v') leg frame; toYZ maps (s, v) → (y, z) for alongX.
+function halfPlaneN(S, n, d) {   // {p : n·p ≥ d}, n unit
+  const { o, CS } = S;
+  const sq = o(o(CS.square([2000, 2000])).translate([0, -1000]));
+  return o(o(sq.rotate(Math.atan2(n[1], n[0]) / D2R)).translate([n[0] * d, n[1] * d]));
+}
+const toYZ = (S, mech, cs) => S.o(S.o(cs.mirror([1, 0])).translate([mech.yh, mech.R]));
+
+// Union of a leg-frame section over poses (deg) = the space it sweeps. Steps keep the chord at radius rho ≤ 1.2·c,
+// so a section offset by c (round joins) still clears ≥ 0.8·c between the sampled poses.
+function sweep2D(S, cs, keys, rho, c) {
+  const step = Math.min(1, (1.2 * c) / rho / D2R);
+  const list = [];
+  for (let i = 0; i + 1 < keys.length; i++) {
+    const n = Math.max(1, Math.ceil((keys[i + 1] - keys[i]) / step - 1e-9));
+    for (let k = i ? 1 : 0; k <= n; k++) list.push(S.o(cs.rotate(-(keys[i] + ((keys[i + 1] - keys[i]) * k) / n))));
+  }
+  return S.o(S.CS.union(list));
+}
+
+function hingeSections(S, mech) {
+  const { o, CS } = S, { R, c, tc, rt, T1, J, K, Hend, latch, phiS, tipR, rA, sC } = mech;
+  // leg side profile: barrel + neck + keel + slanted front face + round tip (back face flat at s' = −R)
+  const a0 = Math.atan2(T1[1] - tc[1], T1[0] - tc[0]);
+  const pts = [[-R, 0], [-0.5, 0], J, K, T1];
+  for (let i = 1; i <= 24; i++) { const a = a0 + ((Math.PI - a0) * i) / 24; pts.push([tc[0] + rt * Math.cos(a), tc[1] + rt * Math.sin(a)]); }
+  const prof = o(o(new CS([pts], 'NonZero')).add(circle(S, 0, 0, R, 128)));
+  // flat foot under the barrel where it sits on the bed (print pose), inside the slot's swept clearance
+  const k = Math.SQRT1_2 * R, q = (Math.SQRT2 - 1) * R;
+  const foot = o(o(o(new CS([[[-k, -k], [-q, -R], [q, -R], [k, -k]]], 'NonZero')).intersect(circle(S, 0, 0, R + c - 0.1, 128))).rotate(PHI_PRINT));
+  const legMid = o(prof.add(foot));
+  // side plates: the leg above the barrel's clearance; latch notch on the back-top corner
+  let plate = o(prof.intersect(roundRect(S, -50, 50, R + c, Hend)));
+  if (latch) plate = o(plate.subtract(halfPlaneN(S, [-Math.SQRT1_2, Math.SQRT1_2], latch.kn * Math.SQRT1_2)));
+  // body cuts: through slot round the axis (its back wall is the stop) + all the leg sweeps while folding
+  const off = (cs) => o(cs.offset(c, 'Round', 2, 64));
+  const midCarve = o(roundRect(S, sC, R + c, -R - 1, R + 1).add(sweep2D(S, off(legMid), [PHI_PRINT, 90, PHI_END], tipR + c, c)));
+  const endCarve = sweep2D(S, off(plate), [phiS - 1, phiS, PHI_PRINT, 90, PHI_END], rA, c);
+  const sec = { prof, legMid, plate, midCarve, endCarve };
+  phoneSeat(S, mech, () => sec);
+  return sec;
+}
+
+// Phone seat at the stand pose: the phone's back leans on the leg's front face (plane n·p = a) and its bottom edge
+// slides down until it meets the body's mid section (the V groove the folded leg leaves) or the table: u·p = b.
+// Also the thickest phone (case included) that clears the body's top edges, and the phone's centre of gravity.
+// Sets mech.seat and mech.cgNeed (y the footprint must reach: portrait phone, landscape on the short variant).
+const seatCache = new Map();
+function phoneSeat(S, mech, sections) {
+  const key = [mech.size, mech.c, mech.latch ? mech.latch.e.toFixed(5) : 0].join('|');
+  let seat = seatCache.get(key);
+  if (!seat) {
+    const sec = sections(), { o } = S, { R, yh, phoneAngle: pa } = mech;
+    const n = [Math.sin(pa * D2R), Math.cos(pa * D2R)], u = [-Math.cos(pa * D2R), Math.sin(pa * D2R)];
+    const dot = (w, p) => w[0] * p[0] + w[1] * p[1];
+    let a = -Infinity;
+    for (const p of o(sec.prof.rotate(-mech.phiS)).toPolygons()) for (const v of p) a = Math.max(a, dot(n, v));
+    const pts = [];
+    for (const p of o(roundRect(S, -40, yh, -R, R).subtract(sec.midCarve)).toPolygons()) {
+      for (let i = 0, j = p.length - 1; i < p.length; j = i++) {
+        const A = p[j], B = p[i], m = Math.max(1, Math.ceil(Math.hypot(B[0] - A[0], B[1] - A[1]) / 0.1));
+        for (let k = 0; k < m; k++) pts.push([A[0] + ((B[0] - A[0]) * k) / m, A[1] + ((B[1] - A[1]) * k) / m]);
+      }
+    }
+    for (let s = -40; s <= yh + 60; s += 0.1) pts.push([s, -R]);   // the table
+    const bAt = (t) => {
+      let b = -Infinity;
+      for (const p of pts) { const d = dot(n, p); if (d >= a && d <= a + t) b = Math.max(b, dot(u, p)); }
+      return b;
+    };
+    const b = bAt(9);
+    // top-face edges in front of the phone (front wall, side walls, snap lips): a thicker phone would sit on them
+    const edge = (cs) => maxAt(cs.toPolygons(), 1, R - 0.01);
+    const cands = [[edge(sec.midCarve), R], [edge(sec.endCarve), R], [yh, R]];
+    if (mech.latch) cands.push([mech.sA - mech.latch.e, R]);
+    let tMax = Infinity;
+    for (const p of cands) if (Number.isFinite(p[0]) && dot(u, p) > b + 0.3) tMax = Math.min(tMax, dot(n, p) - a);
+    const cgY = (H, t) => yh - (n[0] * (a + t / 2) + u[0] * (bAt(t) + H / 2));
+    seat = { n, u, a, b, bMin: bAt(6), tMax, cgPortrait: cgY(160, 9), cgLandscape: cgY(75, 9) };
+    seatCache.set(key, seat);
+    if (seatCache.size > 32) seatCache.delete(seatCache.keys().next().value);
+  }
+  mech.seat = seat;
+  mech.cgNeed = mech.variant === 'short' ? seat.cgLandscape : seat.cgPortrait;
+  return seat;
+}
+
+// Card outline: body rectangle (hinge zone + bar) topped by the decorative shape. The shape is pushed up until the
+// stand cannot tip backwards with the phone on it (convex footprint ≥ 5 mm behind the phone's CG: portrait on the
+// standard variant, landscape on the short one) and, on the short variant, until at least 0.6·width of it shows
+// behind the hinge zone (room for the key ring and the logo); grow (mm) moves it further back (room for the NFC
+// chip). In the hinge zone nothing may stick out past the body's sides (the leg's side plates fold down there and
+// the phone rests on it).
+function makeOutline(S, mech, cfg, shapeImage, warnings, grow = 0) {
   const { o, CS } = S;
   const W = mech.W, sc = cfg.shapeScale / 100;
   let id = cfg.shape, def = SHAPE_DEFS[id], unit = null;
@@ -329,8 +458,9 @@ function makeOutline(S, mech, cfg, shapeImage, warnings) {
     if (cust) { unit = cust.cs; def = cust.def; } else id = 'classic';
   }
   let raw, yTop, yRect;
+  const minTop = mech.variant === 'short' ? mech.yh0 + 0.6 * W * sc : -Infinity;
   if (id === 'classic') {
-    yTop = Math.max(mech.ym + 24 * sc, mech.cgPortrait + 5);
+    yTop = Math.max(mech.ym + 24 * sc, mech.cgNeed + 5, minTop) + grow;
     yRect = yTop;
     raw = o(CS.union([roundRect(S, -W / 2, W / 2, 0, yTop - 10, 4), roundRect(S, -W / 2, W / 2, 10, yTop, 9)]));
   } else {
@@ -346,10 +476,11 @@ function makeOutline(S, mech, cfg, shapeImage, warnings) {
     const mb = mm.bounds();
     const hullTop = maxAt(o(mm.hull()).toPolygons(), 0, 0);
     const joinDrop = mb.max[1], hullDrop = Number.isFinite(hullTop) ? mb.max[1] - hullTop : 0;
-    yTop = Math.max(mech.ym + joinDrop, mech.cgPortrait + 5 + hullDrop);
+    yTop = Math.max(mech.ym + joinDrop, mech.cgNeed + 5 + hullDrop, minTop) + grow;
     yRect = yTop - joinDrop;
-    // nothing may stick out past the front edge (a big heart's tip would poke out under the front bar)
-    const placed = o(o(mm.translate([0, yRect])).intersect(halfPlane(S, 0)));
+    // nothing may stick out past the front edge, nor past the sides in the hinge zone
+    const allowed = o(halfPlane(S, mech.yh0).add(roundRect(S, -W / 2, W / 2, 0, mech.yh0 + 0.01)));
+    const placed = o(o(mm.translate([0, yRect])).intersect(allowed));
     raw = o(CS.union([roundRect(S, -W / 2, W / 2, 0, yRect, 4), placed]));
     if (cfg.shape === 'custom') {
       const ch = crossings(placed.toPolygons(), 1, yRect - 0.5);
@@ -384,27 +515,19 @@ function ringSpot(S, deco, cfg, warnings) {
   return { x: best[0], y: best[1] - 0.05, r };
 }
 // ------------------------------------------------------------------ logo / brand text
-// Two places: 'top' (decorative shape, clear of the ring) and 'flap' (top face of the hinged tab, i.e. the big
-// centre face of the closed keychain). Reliefs keep clear of the open flap's rest edge E: when open, the flap's
-// old top face leans back from E at (180 − θ) and a relief on either side must fit inside that wedge.
-function artRegions(S, mech, cfg, outline, ring, used) {
+// Two places on the body's top face, behind the hinge zone (nothing goes on the leg: its faces are the phone rest
+// and the lid of the folded keychain): 'bar' = a line right behind the hinge (standard variant; on the short one it
+// joins 'top') and 'top' = the decorative shape — the whole face behind the hinge zone when the bar is free, else
+// what the bar's block leaves behind it. Both keep clear of the key ring.
+function shapeRegion(S, outline, ring, y0) {
   const { o } = S;
-  const a = (180 - mech.thOpen) * D2R, sa = Math.sin(a), ca = Math.cos(a);
-  const relief = cfg.logo.mode === 'relief' ? cfg.logo.height : 0;
-  const hf = used.flap ? relief : 0, ht = used.top ? relief : 0;
-  const yE = mech.yh + mech.uE;
-  const yB = yE + Math.max(1.2, (hf + ca * ht) / sa + 0.5);
-  let topFit = o(o(outline.offset(-1.8, 'Round', 2, 48)).intersect(halfPlane(S, yB)));
-  let topClip = o(o(outline.offset(-0.8, 'Round', 2, 48)).intersect(halfPlane(S, yB - 0.4)));
+  let fit = o(o(outline.offset(-1.8, 'Round', 2, 48)).intersect(halfPlane(S, y0 + 0.5)));
+  let clip = o(o(outline.offset(-0.8, 'Round', 2, 48)).intersect(halfPlane(S, y0 + 0.1)));
   if (ring) {
-    topFit = o(topFit.subtract(circle(S, ring.x, ring.y, ring.r + 1.6)));
-    topClip = o(topClip.subtract(circle(S, ring.x, ring.y, ring.r + 1)));
+    fit = o(fit.subtract(circle(S, ring.x, ring.y, ring.r + 1.6)));
+    clip = o(clip.subtract(circle(S, ring.x, ring.y, ring.r + 1)));
   }
-  const fx = mech.wf / 2, y0 = mech.yh - mech.L, y1 = mech.yh - mech.uE - Math.max(1.5, (ca / sa) * hf + 1);
-  return {
-    top: { fit: topFit, clip: topClip, name: 'la forma' },
-    flap: { fit: roundRect(S, -fx + 1.5, fx - 1.5, y0 + 1.5, y1, 2), clip: roundRect(S, -fx + 0.8, fx - 0.8, y0 + 0.8, y1 + 0.4, 2), name: 'la tapa' },
-  };
+  return { fit, clip, name: 'la forma' };
 }
 
 function buildArt(S, mech, cfg, outline, ring, { logoImage, font }, warnings) {
@@ -412,17 +535,25 @@ function buildArt(S, mech, cfg, outline, ring, { logoImage, font }, warnings) {
   const wantText = !!(cfg.text.enabled && cfg.text.value.trim());
   if (wantText && !font) warnings.push('No se pudo cargar la fuente del texto; se omite el texto.');
   const hasText = wantText && !!font;
-  const out = { top: null, flap: null };
-  const used = {};
-  for (const w of ['top', 'flap']) used[w] = { logo: hasLogo && cfg.logo.where === w, text: hasText && cfg.text.where === w };
-  const regions = artRegions(S, mech, cfg, outline, ring, { top: used.top.logo || used.top.text, flap: used.flap.logo || used.flap.text });
-  for (const w of ['top', 'flap']) if (used[w].logo || used[w].text) out[w] = fitBlock(S, regions[w], used[w], cfg, { logoImage, font }, warnings);
+  const at = (w) => (w === 'bar' && mech.variant !== 'short' ? 'bar' : 'top');
+  const used = { top: { logo: false, text: false }, bar: { logo: false, text: false } };
+  if (hasLogo) used[at(cfg.logo.where)].logo = true;
+  if (hasText) used[at(cfg.text.where)].text = true;
+  const out = { top: null, bar: null };
+  let y0 = mech.yh0;
+  if (used.bar.logo || used.bar.text) {
+    const x = mech.W / 2, ya = mech.yh0, yb = mech.ym;
+    const bar = { fit: roundRect(S, -x + 1.5, x - 1.5, ya + 0.5, yb - 0.5, 2), clip: roundRect(S, -x + 0.8, x - 0.8, ya + 0.2, yb - 0.1, 2), name: 'la barra' };
+    out.bar = fitBlock(S, bar, used.bar, cfg, { logoImage, font }, warnings, 'low');
+    y0 = out.bar ? out.bar.box.cy + out.bar.box.h / 2 + 1.2 : mech.ym;
+  }
+  if (used.top.logo || used.top.text) out.top = fitBlock(S, shapeRegion(S, outline, ring, y0), used.top, cfg, { logoImage, font }, warnings);
   return out;
 }
 
 // The block (logo with the text under it when both share the place) is fitted as large as possible inside the
 // region, then rebuilt at its real size so the trace honours the minimum printable feature.
-function fitBlock(S, region, items, cfg, { logoImage, font }, warnings) {
+function fitBlock(S, region, items, cfg, { logoImage, font }, warnings, prefer = 'centre') {
   const { o, CS } = S;
   const { fit: fitR, clip: clipR, name } = region;
   if (fitR.isEmpty()) { warnings.push(`No queda espacio para el logo/texto en ${name}.`); return null; }
@@ -461,21 +592,23 @@ function fitBlock(S, region, items, cfg, { logoImage, font }, warnings) {
   };
   const best = { s: 0, yc: (fb.min[1] + fb.max[1]) / 2 };
   const yMid = best.yc;
-  // largest block wins; near-ties (< 0.5 %) go to the most centred position
+  // largest block wins; near-ties (< 0.5 %) go to the most centred position (prefer 'low': the one nearest the hinge)
+  const better = (yc) => (prefer === 'low' ? yc < best.yc : Math.abs(yc - yMid) < Math.abs(best.yc - yMid));
   const scan = (y0, y1, step, iters) => {
     for (let yc = y0; yc <= y1 + 1e-9; yc += step) {
       let lo = 0, hi = sHi;
       for (let i = 0; i < iters; i++) { const m = (lo + hi) / 2; if (fits(m, yc)) lo = m; else hi = m; }
-      if (lo > best.s * 1.005 || (lo > best.s * 0.995 && Math.abs(yc - yMid) < Math.abs(best.yc - yMid))) { best.s = Math.max(lo, best.s); best.yc = yc; }
+      if (lo > best.s * 1.005 || (lo > best.s * 0.995 && better(yc))) { best.s = Math.max(lo, best.s); best.yc = yc; }
     }
   };
   scan(fb.min[1], fb.max[1], 1, 12);
   scan(best.yc - 1, best.yc + 1, 0.25, 18);
-  if (best.s <= 0.02) { warnings.push(`No cabe el logo/texto en ${name}: agranda la forma o la tapa.`); return null; }
+  if (best.s <= 0.02) { warnings.push(`No cabe el logo/texto en ${name}: agranda la forma o el ancho.`); return null; }
 
   const size = items.logo ? cfg.logo.size : cfg.text.size;
   const [dx, dy] = items.logo ? [cfg.logo.dx, cfg.logo.dy] : [0, 0];
   const fin = compose(Hn * best.s * (size / 100));
+  if (!fin) { warnings.push(`El ${items.logo ? 'logo' : 'texto'} queda demasiado pequeño en ${name} para imprimirse: agranda la forma o el ancho.`); return null; }
   let cs = o(fin.cs.translate([xc + dx, best.yc + dy]));
   const a0 = cs.area();
   cs = o(cs.intersect(clipR));
@@ -494,37 +627,50 @@ function fitBlock(S, region, items, cfg, { logoImage, font }, warnings) {
 }
 
 // ------------------------------------------------------------------ NFC pocket (print pause drops the chip in)
-function placeNfc(S, mech, cfg, deco, yTop, ring, art, warnings) {
+// In the body behind the hinge zone, clear of the key ring, ≥ 1.2 mm under the top face (≥ 0.8 mm under an
+// engraved/inlaid logo or the tap sign) so the phone reads it through the plastic. where: 'bar' = right behind the
+// hinge, 'top' = middle of the decorative shape, 'auto' = under the logo/text (tap it) or in the middle.
+// nfcRegion = where the chip's centre may go (1.5 mm walls round it); the shape grows until it is not empty.
+function nfcRegion(S, mech, cfg, outline, ring) {
+  const { o } = S, r = cfg.nfc.diameter / 2;
+  let reg = o(o(outline.intersect(halfPlane(S, mech.yh0))).offset(-(r + 1.5), 'Round', 2, 48));
+  if (ring && !reg.isEmpty()) reg = o(reg.subtract(circle(S, ring.x, ring.y, ring.r + 1.5 + r)));
+  return reg;
+}
+function placeNfc(S, mech, cfg, outline, ring, art, warnings) {
   if (!cfg.nfc.enabled) return null;
-  const T = mech.T, r = cfg.nfc.diameter / 2;
-  const dep = Math.ceil(cfg.nfc.depth / LAYER - 1e-6) * LAYER;
-  const snap = (z) => Math.round(Math.floor(z / LAYER + 1e-6) * LAYER * 100) / 100;
-  // ≥ 1.2 mm of cover over the chip, and ≥ 0.8 mm under an engraved/inlaid logo on the same face
-  const cover = (a) => Math.max(1.2, (a && cfg.logo.mode !== 'relief' ? cfg.logo.depth : 0) + 0.8);
-  const atTop = () => {
-    let reg = S.o(deco.offset(-(r + 1.5), 'Round', 2, 48));
-    if (ring && !reg.isEmpty()) reg = S.o(reg.subtract(circle(S, ring.x, ring.y, ring.r + 1.5 + r)));
-    if (reg.isEmpty()) return null;
-    const p = nearestIn(reg.toPolygons(), art.top ? [art.top.box.cx, art.top.box.cy] : [0, (mech.ym + yTop) / 2]);
-    const z1 = snap(T - cover(art.top));
-    return { where: 'top', x: p[0], y: p[1], r, z0: Math.round((z1 - dep) * 100) / 100, z1 };
-  };
-  const inFlap = () => {
-    const cy = mech.yh - mech.L / 2 - 0.5;
-    if (r + 1.5 > mech.wf / 2 || cy - r < mech.yh - mech.L + 1.5 || cy + r > mech.yh - 2) return null;
-    const z1 = snap(T - cover(art.flap));
-    return { where: 'flap', x: 0, y: cy, r, z0: Math.round((z1 - dep) * 100) / 100, z1 };
-  };
-  const order = cfg.nfc.where === 'top' ? [atTop] : cfg.nfc.where === 'flap' ? [inFlap] : [atTop, inFlap];
-  for (const f of order) {
-    const n = f();
-    if (!n) continue;
-    if (n.z0 < 0.8) warnings.push('Queda poco piso bajo el chip NFC: aumenta el grosor.');
-    return n;
+  const T = mech.T, r = cfg.nfc.diameter / 2, where = cfg.nfc.where;
+  const reg = nfcRegion(S, mech, cfg, outline, ring);
+  if (reg.isEmpty()) {
+    warnings.push(`El chip NFC de Ø${fmt(cfg.nfc.diameter)} mm no cabe detrás de la bisagra: agranda la forma o el ancho, o usa un chip más pequeño.`);
+    return null;
   }
-  const where = cfg.nfc.where === 'top' ? 'en la parte decorativa' : cfg.nfc.where === 'flap' ? 'en la tapa' : 'ni arriba ni en la tapa';
-  warnings.push(`El chip NFC de Ø${fmt(cfg.nfc.diameter)} mm no cabe ${where}: agranda la forma o usa un chip más pequeño.`);
-  return null;
+  const yTop = outline.bounds().max[1];
+  const artAt = (a) => [a.box.cx, a.box.cy];
+  const target = where === 'bar' ? [0, mech.yh0] : where === 'top' ? [0, (mech.ym + yTop) / 2]
+    : art.top ? artAt(art.top) : art.bar ? artAt(art.bar) : [0, (mech.yh0 + yTop) / 2];
+  const [x, y] = nearestIn(reg.toPolygons(), target);
+  const hit = (a) => !!a && rectHitsCircle(a.box.cx - a.box.w / 2, a.box.cx + a.box.w / 2, a.box.cy - a.box.h / 2, a.box.cy + a.box.h / 2, { x, y, r });
+  const over = [art.top, art.bar].filter(hit), covered = over.length > 0;
+  const under = covered ? (over.some((a) => a.items.logo) ? 'logo' : 'texto') : null;   // what to tap
+  const mark = cfg.nfc.mark && !covered;
+  // the tap sign is made like the logo: an engraved/inlaid one sinks into the face just as deep
+  const sunk = (covered || mark) && cfg.logo.mode !== 'relief' ? cfg.logo.depth : 0;
+  const dep = Math.ceil(cfg.nfc.depth / LAYER - 1e-6) * LAYER;
+  const z1 = Math.round(Math.floor((T - Math.max(1.2, sunk + 0.8)) / LAYER + 1e-6) * LAYER * 100) / 100;
+  const z0 = Math.round((z1 - dep) * 100) / 100;
+  return { where, x, y, r, z0, z1, mark, covered, under };
+}
+
+// Contactless sign (dot + 3 arcs) over the chip so people know where to tap the phone. Made like the logo (relief,
+// inlay or engraved, in its colour); lines ≥ 0.8 mm and gaps ≥ 0.6 mm wide so they print.
+function nfcMark(S, nfc) {
+  const { o, CS } = S;
+  const k = Math.min(1.3, Math.max(0.8, nfc.r / 12.75)), L = 20 * k, hw = Math.max(0.4, 0.45 * k);
+  const fan = o(new CS([[[0, 0], ...[-50, -25, 0, 25, 50].map((a) => [L * Math.cos(a * D2R), L * Math.sin(a * D2R)])]], 'NonZero'));
+  const parts = [circle(S, 0, 0, Math.max(1, 1.1 * k), 32)];
+  for (const rr of [2.6, 4.4, 6.2]) parts.push(o(o(circle(S, 0, 0, rr * k + hw, 96).subtract(circle(S, 0, 0, rr * k - hw, 96))).intersect(fan)));
+  return o(o(CS.union(parts)).translate([nfc.x - 2.8 * k, nfc.y]));
 }
 
 // ------------------------------------------------------------------ can-tab opener: a slit open to a side edge
@@ -536,11 +682,10 @@ function placeOpener(mech, cfg, polys, yTop, ring, nfc, warnings) {
   const P0 = sg > 0 ? polys : polys.map((p) => p.map(([x, y]) => [-x, y]));
   const keep0 = [];
   if (ring) keep0.push({ x: sg * ring.x, y: ring.y, r: ring.r + 2.5 });
-  if (nfc && nfc.where === 'top' && nfc.z0 - SLOT.top < 1) keep0.push({ x: sg * nfc.x, y: nfc.y, r: nfc.r + 1 });
-  // 2.5 mm clear of the window, its slanted stop (at the slot's top height) and the finger notch
-  const nd = Math.max(0, Math.min(3, mech.F - 3.5));
-  const wx = mech.xw + 2.5, wy0 = mech.F - nd - 2.5, wy1 = mech.yh + mech.stopU(SLOT.top - mech.T / 2) + 2.5;
-  const win0 = [[-wx, wy0], [wx, wy0], [wx, wy1], [-wx, wy1]];
+  if (nfc && nfc.z0 - SLOT.top < 1) keep0.push({ x: sg * nfc.x, y: nfc.y, r: nfc.r + 1 });
+  // 1.5 mm clear of the hinge zone (slot, knuckles, folding leg): only on the bar or the shape behind it
+  const yKeep = mech.yh0 + 1.5, W2 = mech.W;
+  const win0 = [[-W2, -50], [W2, -50], [W2, yKeep], [-W2, yKeep]];
   const step = 0.5, nLen = Math.round(SLOT.len / step), nWall = Math.round(SLOT.wall / step);
   let best = null;
   for (let deg = -45; deg <= 60; deg += 5) {
@@ -588,91 +733,136 @@ function openerCutter(S, mech, op) {
   return op.sg < 0 ? o(cut.mirror([1, 0, 0])) : cut;
 }
 // ------------------------------------------------------------------ solids
-// Returns live manifold solids (caller must call dispose()). body = card + rails + hinge pins + ridges;
-// flap = hinged tab (printed in place inside the window); logo = relief/inlay piece (null when engraved).
+// Returns live manifold solids (caller must call dispose()). body = frame with the slot, stop, V groove, side
+// knuckles, cone pins and snap lips; leg = hinged leg as printed (standing in its slot, PHI_PRINT); art pieces;
+// chip = preview of the NFC chip (never exported).
 export function phoneStandSolids(cfgIn, { logoImage = null, shapeImage = null, font = null } = {}) {
   if (!engine) throw new Error('El motor 3D no está listo: llama a preparePhoneStand() primero.');
   const { Manifold: M, CrossSection: CS } = engine;
   const o = makeScope(), S = { o, CS, M };
   try {
     const mech = phoneStandMechanism(cfgIn), cfg = mech.cfg;
-    const { W, T, L, F, c, xw, wf, yh, rc } = mech;
+    const { W, T, R, c, xm, yh, rc, sock, sC } = mech;
     const warnings = [];
     if (rc < cfg.pin - 0.01) warnings.push(`Pasador de la bisagra limitado a Ø${fmt(2 * rc)} mm por el grosor.`);
-    if (rc < 1.5) warnings.push('El pasador de la bisagra queda muy pequeño: aumenta el grosor.');
-    if (mech.baseClear < 1) warnings.push('El celular queda muy pegado a la tapa abierta: aumenta el largo de la tapa o el ángulo.');
+    const sec = hingeSections(S, mech), seat = mech.seat;
 
-    const shp = makeOutline(S, mech, cfg, shapeImage, warnings);
+    // the shape moves back (longer neck) in 2 mm steps until the NFC chip and the can opener fit behind the hinge
+    // zone; if they never both fit, the first growth where one of them fits stays (chip first, else none) and
+    // placeNfc / placeOpener warn about the other
+    let shp, ring, wShape;
+    const fitsAt = (g) => {
+      wShape = [];
+      shp = makeOutline(S, mech, cfg, shapeImage, wShape, g);
+      ring = ringSpot(S, o(shp.outline.intersect(halfPlane(S, mech.ym))), cfg, wShape);
+      return [
+        !cfg.nfc.enabled || !nfcRegion(S, mech, cfg, shp.outline, ring).isEmpty(),
+        !cfg.opener.enabled || !!placeOpener(mech, cfg, shp.polys, shp.yTop, ring, null, []),
+      ];
+    };
+    const first = [-1, -1];
+    let grow = -1;
+    for (let g = 0; g <= GROW_MAX && grow < 0; g += 2) {
+      const ok = fitsAt(g);
+      ok.forEach((v, k) => { if (v && first[k] < 0) first[k] = g; });
+      if (ok[0] && ok[1]) grow = g;
+    }
+    if (grow < 0) { grow = Math.max(first[0] >= 0 ? first[0] : first[1], 0); fitsAt(grow); }
+    const growFor = grow ? ['nfc', 'opener'].filter((k, i) => first[i] > 0 && first[i] <= grow) : [];
+    warnings.push(...wShape);
     const { outline, polys, yTop } = shp;
-    const deco = o(outline.intersect(halfPlane(S, mech.ym)));
-    const ring = ringSpot(S, deco, cfg, warnings);
     const art = buildArt(S, mech, cfg, outline, ring, { logoImage, font }, warnings);
-    const nfc = placeNfc(S, mech, cfg, deco, yTop, ring, art, warnings);
+    const nfc = placeNfc(S, mech, cfg, outline, ring, art, warnings);
     const opener = placeOpener(mech, cfg, polys, yTop, ring, nfc, warnings);
 
-    // window with the slanted stop behind the hinge (the open flap rests on its top edge)
-    const winPlan = o(roundRect(S, -xw, xw, F, yh + 10, 2 + c).intersect(halfPlane(S, yh + 0.5, false)));
-    const wedge = alongX(S, o(new CS([[[yh - 0.5, -1], [yh + mech.stopU(-T / 2 - 1), -1], [yh + mech.stopU(T / 2 + 1), T + 1], [yh - 0.5, T + 1]]], 'NonZero')), -xw, xw);
-    const windowCut = o(extrudeZ(S, winPlan, -1, T + 1).add(wedge));
-    // hinge: 45° cone pins on the window walls, matching cone sockets in the flap (normal gap = clearance)
-    const pin = o(o(o(o(M.cylinder(rc, rc, 0, 48)).add(o(o(M.cylinder(0.5, rc, rc, 48)).translate([0, 0, -0.5])))).rotate([0, -90, 0])).translate([xw, yh, T / 2]));
-    const pins = o(pin.add(o(pin.mirror([1, 0, 0]))));
-    const xa = xw - rc - c * Math.SQRT2, xb = xw - c + 1, hs = xb - xa;
-    const sock = o(o(o(M.cylinder(hs, hs, 0, 48)).rotate([0, -90, 0])).translate([xb, yh, T / 2]));
-    const sockets = o(sock.add(o(sock.mirror([1, 0, 0]))));
-    // phone stop ridges on the rails, in front of where the phone's bottom edge lands
-    const h = cfg.ridge, yr = mech.yr;
-    const ridge = alongX(S, o(new CS([[[yr, T - 0.5], [yr, T + h], [yr - 1.5, T + h], [yr - 2 - h, T - 0.5]]], 'NonZero')), xw, W / 2);
-    const ridges = o(o(ridge.add(o(ridge.mirror([1, 0, 0])))).intersect(extrudeZ(S, outline, 0, T + h + 1)));
-    const nd = Math.min(3, F - 3.5);
-    const notch = nd > 0.5 ? extrudeZ(S, roundRect(S, -6, 6, F - nd, F + 6, 2.5), -1, T + 1) : null;
+    const both = (m) => o(m.add(o(m.mirror([1, 0, 0]))));
+    // a solid riding on the leg, turned about the hinge axis by deg (pose relative to the frame of m)
+    const pose = (m, deg) => o(o(o(m.translate([0, -yh, -R])).rotate([deg, 0, 0])).translate([0, yh, R]));
+    const slab = extrudeZ(S, outline, 0, T);
+    const midCut = alongX(S, toYZ(S, mech, sec.midCarve), -(xm + c), xm + c);
+    // side knuckles: what the plates' sweep leaves of the end zones, kept as a 45° cone round the axis (normal gap
+    // c to the plates' 45° undersides)
+    const kh = END_W + 1 + c, kr = R - c * Math.SQRT2;
+    const knuckle = o(o(o(M.cylinder(kh, kr, kr + kh, 96)).rotate([0, 90, 0])).translate([xm - c, yh, R]));
+    const endCut = both(o(alongX(S, toYZ(S, mech, sec.endCarve), xm - c, W / 2 + 1).subtract(knuckle)));
+    // the knuckles' front tops would prop the phone up out of its groove: bevel them back to the phone's plane
+    const rK = R + c - c * Math.SQRT2 + END_W;
+    const bev = o(o(halfPlaneN(S, seat.n, seat.a - 0.2).intersect(halfPlaneN(S, seat.u, seat.bMin - 0.3))).intersect(circle(S, 0, 0, rK + 1, 96)));
+    const bevel = both(alongX(S, toYZ(S, mech, bev), xm + c, W / 2 + 1));
+    let lips = null;
+    if (mech.latch) {
+      const e = mech.latch.e, sA = mech.sA;
+      const tri = o(new CS([[[sA - e, R], [sA + 0.6, R], [sA + 0.6, R - e - 0.6]]], 'NonZero'));
+      lips = o(both(alongX(S, toYZ(S, mech, tri), xm + c, W / 2)).intersect(slab));
+    }
+    // 45° cone pins on the knuckles' inner faces, matching 45° cone sockets in the leg (normal gap = c)
+    const pin = o(o(o(o(M.cylinder(rc, rc, 0, 48)).add(o(o(M.cylinder(0.5, rc, rc, 48)).translate([0, 0, -0.5])))).rotate([0, -90, 0])).translate([xm + c, yh, R]));
+    const hs = sock + 0.5;
+    const socket = o(o(o(M.cylinder(hs, 0, hs, 48)).rotate([0, 90, 0])).translate([xm - sock, yh, R]));
+    // elephant-foot reliefs where the barrel and the knuckles both stand on the bed 1 c apart
+    const footCut = (pts, y0, y1) => both(alongY(S, o(new CS([pts], 'NonZero')), y0, y1));
+    const kneeFoot = footCut([[xm + c - 1, -1], [xm + c + 1.5, -1], [xm + c - 1, 1.5]], yh - R - c, yh - sC);
+    const barrelFoot = footCut([[xm - 1.5, -1], [xm + 1, -1], [xm + 1, 1.5]], yh - R - 2, yh + R + 2);
     const ringCut = ring ? o(o(M.cylinder(T + 2, ring.r, ring.r, 48)).translate([ring.x, ring.y, -1])) : null;
     const pocket = nfc ? o(o(M.cylinder(nfc.z1 - nfc.z0, nfc.r, nfc.r, 96)).translate([nfc.x, nfc.y, nfc.z0])) : null;
     const slot = opener ? openerCutter(S, mech, opener) : null;
-    // logo/text per place: relief piece on the face, or recess (+ inlay piece for a 2nd colour)
-    const artSolid = (a) => {
-      if (!a) return { piece: null, recess: null };
-      if (cfg.logo.mode === 'relief') return { piece: extrudeZ(S, a.cs, T, T + cfg.logo.height), recess: null };
-      return { recess: extrudeZ(S, a.cs, T - cfg.logo.depth, T + 1), piece: cfg.logo.mode === 'inlay' ? extrudeZ(S, a.cs, T - cfg.logo.depth, T) : null };
+    // logo/text per place and the NFC tap sign: relief piece on the face, or recess (+ inlay piece for a 2nd colour)
+    const artSolid = (cs) => {
+      if (!cs) return { piece: null, recess: null };
+      if (cfg.logo.mode === 'relief') return { piece: extrudeZ(S, cs, T, T + cfg.logo.height), recess: null };
+      return { recess: extrudeZ(S, cs, T - cfg.logo.depth, T + 1), piece: cfg.logo.mode === 'inlay' ? extrudeZ(S, cs, T - cfg.logo.depth, T) : null };
     };
-    const artTop = artSolid(art.top), artFlap = artSolid(art.flap);
+    const artTop = artSolid(art.top?.cs), artBar = artSolid(art.bar?.cs), sign = artSolid(nfc?.mark ? nfcMark(S, nfc) : null);
 
-    let body = o(o(o(extrudeZ(S, outline, 0, T).add(ridges)).subtract(windowCut)).add(pins));
-    for (const cut of [notch, ringCut, nfc?.where === 'top' ? pocket : null, slot, artTop.recess]) if (cut) body = o(body.subtract(cut));
-    const flapProf = o(CS.union([o(o(CS.square([L, T])).translate([yh - L, 0])), circle(S, yh, T / 2, T / 2, 64)]));
-    let flap = o(o(alongX(S, flapProf, -wf / 2, wf / 2).intersect(extrudeZ(S, roundRect(S, -wf / 2, wf / 2, yh - L, yh + T, 2), -1, T + 1))).subtract(sockets));
-    if (nfc?.where === 'flap') flap = o(flap.subtract(pocket));
-    if (artFlap.recess) flap = o(flap.subtract(artFlap.recess));
+    let body = o(o(o(slab.subtract(midCut)).subtract(endCut)).subtract(bevel));
+    if (lips) body = o(body.add(lips));
+    body = o(o(body.add(both(pin))).subtract(kneeFoot));
+    for (const cut of [ringCut, pocket, slot, artTop.recess, artBar.recess, sign.recess]) if (cut) body = o(body.subtract(cut));
+
+    // leg, built upright in the leg frame: middle (barrel, neck, keel, front face) + side plates over the knuckles
+    // (45° undersides, no overhang), then turned to its print pose
+    let leg = alongX(S, toYZ(S, mech, sec.legMid), -xm, xm);
+    const keep = alongY(S, o(new CS([[[xm - 1, T + c], [xm, T + c], [W / 2 + 1, T + c + END_W + 1], [W / 2 + 1, T + mech.Ht + 2], [xm - 1, T + mech.Ht + 2]]], 'NonZero')), yh - 40, yh + 40);
+    const plate = o(alongX(S, toYZ(S, mech, sec.plate), xm - 0.5, W / 2).intersect(keep));
+    leg = o(o(leg.add(both(plate))).subtract(both(socket)));
+    leg = o(pose(leg, PHI_PRINT).subtract(barrelFoot));
+    const chip = nfc ? o(o(M.cylinder(Math.max(0.2, nfc.z1 - nfc.z0 - 0.1), nfc.r - 0.2, nfc.r - 0.2, 96)).translate([nfc.x, nfc.y, nfc.z0 + 0.05])) : null;
 
     // solid pieces only: a sealed NFC pocket is an inner shell (negative volume), not a loose piece
     const pieces = (m) => { const d = m.decompose(); const n = d.filter((x) => x.volume() > 1e-6).length; d.forEach((x) => x.delete()); return n; };
-    const nBody = pieces(body), nFlap = pieces(flap);
+    const nBody = pieces(body), nLeg = pieces(leg);
     if (nBody !== 1) warnings.push(`El cuerpo quedó en ${nBody} piezas sueltas: cambia la forma, el tamaño o el abre latas.`);
-    if (nFlap !== 1) warnings.push(`La tapa quedó en ${nFlap} piezas sueltas: revisa el chip NFC.`);
-    const gap = body.minGap(flap, 2);
-    if (gap < 0.9 * c) warnings.push(`La tapa queda a ${fmt(gap)} mm del cuerpo: puede salir pegada.`);
+    if (nLeg !== 1) warnings.push(`La pata quedó en ${nLeg} piezas sueltas.`);
+    const gap = body.minGap(leg, 2);
+    if (gap < 0.9 * c) warnings.push(`La pata queda a ${fmt(gap)} mm del cuerpo: puede salir pegada.`);
 
     const backAtCentre = maxAt(o(outline.hull()).toPolygons(), 0, 0);
-    const solids = [body, flap, artTop.piece, artFlap.piece].filter(Boolean);
-    const box = solids.map((m) => m.boundingBox()).reduce((u, b) => ({ min: u.min.map((v, i) => Math.min(v, b.min[i])), max: u.max.map((v, i) => Math.max(v, b.max[i])) }));
+    const stability = { portrait: backAtCentre - seat.cgPortrait, landscape: backAtCentre - seat.cgLandscape };
+    if (mech.variant === 'short' && stability.portrait < 2) warnings.push('Variante corta: en vertical el celular puede volcarse hacia atrás; úsalo horizontal.');
+    if (seat.tMax < 10) warnings.push(`Solo caben celulares de hasta ${fmt(seat.tMax)} mm de grosor (con forro).`);
+    const bbox = (list) => list.map((m) => m.boundingBox()).reduce((u, b) => ({ min: u.min.map((v, i) => Math.min(v, b.min[i])), max: u.max.map((v, i) => Math.max(v, b.max[i])) }));
+    const dims = (b) => ({ w: b.max[0] - b.min[0], l: b.max[1] - b.min[1], h: b.max[2] - b.min[2] });
+    const solids = [body, leg, artTop.piece, artBar.piece, sign.piece].filter(Boolean);
     const vol = solids.reduce((s, m) => s + m.volume(), 0) / 1000;
+    const closedLeg = pose(leg, mech.poses.closed);
     const artInfo = (a) => (a ? { ...a.box, cap: a.cap, logo: a.items.logo, text: a.items.text } : null);
     const info = {
-      shape: { id: shp.shapeId, yTop, yRect: shp.yRect },
-      size: { w: box.max[0] - box.min[0], l: box.max[1] - box.min[1], h: box.max[2] - box.min[2] },
-      thetaOpen: mech.thOpen, phoneAngle: mech.phi, supportHeight: mech.P[1], baseClear: mech.baseClear,
-      stability: { portrait: backAtCentre - mech.cgPortrait, landscape: backAtCentre - mech.cgLandscape },
-      hinge: { pinDiameter: 2 * rc, socketWall: T / 2 - mech.rs, gap, clearance: c },
+      shape: { id: shp.shapeId, yTop, yRect: shp.yRect, grow, growFor },
+      size: dims(bbox(solids)), closedSize: dims(bbox([body, closedLeg, artTop.piece, artBar.piece, sign.piece].filter(Boolean))),
+      model: { size: mech.size, variant: mech.variant, thickness: T },
+      poses: mech.poses,
+      phone: { angle: mech.phoneAngle, tMax: seat.tMax, landscape: mech.variant === 'short' },
+      stability,
+      hinge: { pinDiameter: 2 * rc, socketWall: R - sock, gap, clearance: c, axis: { y: yh, z: R } },
+      latch: mech.latch ? { e: mech.latch.e, interference: cfg.latch } : null,
       ring, nfc, opener,
-      art: { mode: cfg.logo.mode, top: artInfo(art.top), flap: artInfo(art.flap) },
-      volume: vol, grams: vol * DENSITY, parts: { body: nBody, flap: nFlap },
+      art: { mode: cfg.logo.mode, top: artInfo(art.top), bar: artInfo(art.bar) },
+      volume: vol, grams: vol * DENSITY, parts: { body: nBody, leg: nLeg },
     };
     const pauses = nfc ? [{ z: nfc.z1, msg: NFC_PAUSE_MSG }] : [];
-    // any solid that rides on the flap, turned about the hinge axis (deg = how far the flap is opened)
-    const rotateOpen = (m, deg) => o(o(o(m.translate([0, -yh, -T / 2])).rotate([-deg, 0, 0])).translate([0, yh, T / 2]));
     return {
-      body, flap, topArt: artTop.piece, flapArt: artFlap.piece, art, outline, mech, cfg, info, warnings, pauses,
-      rotateOpen, rotateFlap: (deg) => rotateOpen(flap, deg), dispose: () => o.free(),
+      body, leg, topArt: artTop.piece, barArt: artBar.piece, signArt: sign.piece, chip, art, outline, mech, cfg, info, warnings, pauses, sections: sec,
+      pose, legAt: (deg) => pose(leg, deg), dispose: () => o.free(),
     };
   } catch (err) {
     o.free();
@@ -680,17 +870,23 @@ export function phoneStandSolids(cfgIn, { logoImage = null, shapeImage = null, f
   }
 }
 
-// Phone mock-up (three.js) leaning on the open stand: back face on the flap tip, bottom edge on the rails.
-function phoneMock(mech, H = 150, t = 9, w = 72) {
-  const ph = mech.phi * D2R;
+// Phone mock-up (three.js) on the open stand: back on the leg's front face, bottom edge in the groove. Portrait on
+// the standard variant, landscape on the short one.
+function phoneMock(mech, t = 9) {
+  const s = mech.seat, land = mech.variant === 'short';
+  const H = land ? 72 : 150, w = land ? 150 : 72;
   const g = new THREE.BoxGeometry(w, t, H);
-  g.applyMatrix4(new THREE.Matrix4().makeRotationX((mech.phi - 90) * D2R));
-  g.translate(0, mech.By + (H / 2) * Math.cos(ph) - (t / 2) * Math.sin(ph), mech.T + (H / 2) * Math.sin(ph) + (t / 2) * Math.cos(ph));
+  g.applyMatrix4(new THREE.Matrix4().makeRotationX((mech.phoneAngle - 90) * D2R));
+  const k1 = s.a + t / 2, k2 = s.b + H / 2;
+  g.translate(0, mech.yh - (s.n[0] * k1 + s.u[0] * k2), mech.R + s.n[1] * k1 + s.u[1] * k2);
   return g;
 }
 
 // Ready-to-show/export result (three.js geometries). Requires preparePhoneStand() first.
-// parts[i].moving marks pieces that ride on the flap; their openGeometry is the flap fully open (stand mode).
+// parts[i].moving marks pieces that turn with the leg about axis (x, axis.y, axis.z) — rotation.x = pose (rad),
+// pose = info.poses.* in degrees from the print pose. parts[i].preview marks see-through helpers (NFC chip): shown
+// in the 3D view only, never exported or counted as filament. parts[i].art marks the logo/text/📶 sign pieces (the
+// view draws them over the see-through chip, as they sit over it).
 export function buildPhoneStand(cfgIn, opts = {}) {
   const sol = phoneStandSolids(cfgIn, opts);
   try {
@@ -700,36 +896,34 @@ export function buildPhoneStand(cfgIn, opts = {}) {
     const geo = (m) => meshGeometry(m.getMesh());
     const parts = [
       { name: 'Cuerpo', ...fil(false), geometry: geo(sol.body), moving: false },
-      { name: 'Tapa (bisagra)', ...fil(col.flapAccent), geometry: geo(sol.flap), moving: true, openGeometry: geo(sol.rotateFlap(mech.thOpen)) },
+      { name: 'Pata (bisagra)', ...fil(col.flapAccent), geometry: geo(sol.leg), moving: true },
     ];
-    if (sol.topArt) parts.push({ name: artName(art.top), ...fil(col.twoColor), geometry: geo(sol.topArt), moving: false });
-    if (sol.flapArt) {
-      // contrasts with the flap: the other colour in two-colour mode, else the flap's own colour
-      parts.push({
-        name: `${artName(art.flap)} (tapa)`, ...fil(col.twoColor ? !col.flapAccent : col.flapAccent),
-        geometry: geo(sol.flapArt), moving: true, openGeometry: geo(sol.rotateOpen(sol.flapArt, mech.thOpen)),
-      });
-    }
+    const deco = (name, m) => parts.push({ name, ...fil(col.twoColor), geometry: geo(m), moving: false, art: true });
+    if (sol.topArt) deco(artName(art.top), sol.topArt);
+    if (sol.barArt) deco(`${artName(art.bar)} (barra)`, sol.barArt);
+    if (sol.signArt) deco('Señal NFC', sol.signArt);
+    if (sol.chip) parts.push({ name: 'Chip NFC', color: '#d9a400', filamentIndex: -1, preview: true, geometry: geo(sol.chip), moving: false });
     return {
       cfg, mech, parts, pauses: sol.pauses, warnings: sol.warnings, info: sol.info,
-      phone: phoneMock(mech), axis: { y: mech.yh, z: mech.T / 2 },
+      phone: phoneMock(mech), axis: { y: mech.yh, z: mech.R },
     };
   } finally {
     sol.dispose();
   }
 }
 
-// SVG previews of every top shape with the current measurements (window + key-ring hole cut out).
+// SVG previews of every top shape with the current measurements (hinge slot + key-ring hole cut out).
 export function shapeThumbnails(cfgIn, { shapeImage = null } = {}) {
   if (!engine) throw new Error('El motor 3D no está listo: llama a preparePhoneStand() primero.');
   const o = makeScope(), S = { o, CS: engine.CrossSection };
   try {
     const mech = phoneStandMechanism(cfgIn);
+    phoneSeat(S, mech, () => hingeSections(S, mech));
     const out = {};
     for (const s of PHONESTAND_SHAPES) {
       const w = [];
       const shp = makeOutline(S, mech, { ...mech.cfg, shape: s.id }, shapeImage, w);
-      let cs = o(shp.outline.subtract(roundRect(S, -mech.xw, mech.xw, mech.F, mech.yh + 3, 2)));
+      let cs = o(shp.outline.subtract(roundRect(S, -(mech.xm + mech.c), mech.xm + mech.c, 2.5, mech.yh - mech.sC, 1)));
       const ring = ringSpot(S, o(shp.outline.intersect(halfPlane(S, mech.ym))), mech.cfg, w);
       if (ring) cs = o(cs.subtract(circle(S, ring.x, ring.y, ring.r, 32)));
       const b = cs.bounds(), pad = 2;
@@ -743,14 +937,15 @@ export function shapeThumbnails(cfgIn, { shapeImage = null } = {}) {
 }
 
 // ------------------------------------------------------------------ project file (.r3p)
+// v1 = Relieve3D 1.17 (flat card + flap): read and migrated by normalizePhoneStand.
 export function phoneStandProject(cfg, { logoSrc = null, shapeSrc = null } = {}) {
-  return JSON.stringify({ app: PHONESTAND_PROJECT_APP, version: 1, cfg: normalizePhoneStand(cfg), logoSrc: logoSrc || null, shapeSrc: shapeSrc || null });
+  return JSON.stringify({ app: PHONESTAND_PROJECT_APP, version: 2, cfg: normalizePhoneStand(cfg), logoSrc: logoSrc || null, shapeSrc: shapeSrc || null });
 }
 export function readPhoneStandProject(text) {
   let j;
   try { j = typeof text === 'string' ? JSON.parse(text) : text; } catch { throw new Error('El archivo no es un proyecto válido.'); }
   if (!j || j.app !== PHONESTAND_PROJECT_APP || !j.cfg) throw new Error('No es un proyecto de soporte de celular.');
-  if (j.version !== 1) throw new Error(`Versión de proyecto no compatible (${j.version}).`);
+  if (j.version !== 1 && j.version !== 2) throw new Error(`Versión de proyecto no compatible (${j.version}).`);
   const src = (v) => (typeof v === 'string' && /^data:image\//.test(v) ? v : null);
   return { cfg: normalizePhoneStand(j.cfg), logoSrc: src(j.logoSrc), shapeSrc: src(j.shapeSrc) };
 }
