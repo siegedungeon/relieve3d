@@ -34,3 +34,6 @@ contextBridge.exposeInMainWorld('api', {
   listFonts: () => ipcRenderer.invoke('list-fonts'),
   installUpdate: () => ipcRenderer.invoke('install-update'),
 });
+
+// Solo escritorio, fuera de window.api (la versión web replica window.api): accesos locales de este equipo (src/main/local_links.cjs).
+contextBridge.exposeInMainWorld('r3dLocal', { list: () => ipcRenderer.invoke('local-links'), open: (id, modo) => ipcRenderer.invoke('local-link-open', { id, modo }) });

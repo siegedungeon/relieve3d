@@ -6,6 +6,8 @@ Programa de escritorio (Windows) para convertir una imagen (logo, nombre, dibujo
 
 Descarga y ejecuta `Relieve3D Setup X.Y.Z.exe` desde los Releases de GitHub (o `dist\` si lo compilas localmente) y sigue el asistente. Se crea un acceso directo en el escritorio.
 
+Para actualizar en silencio una instalación existente, por ejemplo con un instalador compilado en local, cierra Relieve3D y ejecuta `& "dist\Relieve3D Setup X.Y.Z.exe" --updated /S /currentuser`. Sin `--updated`, el desinstalador de la versión anterior quita Relieve3D de la barra de tareas. Con `--updated` se conservan el ancla y los accesos directos, igual que en una actualización automática.
+
 ## Actualizaciones automáticas
 
 La app instalada revisa `https://github.com/siegedungeon/relieve3d/releases` al abrirse
@@ -393,6 +395,38 @@ Límites: ninguna página pública publica «los ganchos ganadores de hoy». Por
 
 Requisitos: el espacio TikTok con `herramientas\tiktok3d.py` y Python 3 (con `edge-tts` para la voz guía). Para el montaje, ffmpeg también debe estar instalado.
 
+### Accesos locales (solo en este equipo)
+
+Sirven para abrir desde Relieve3D páginas HTML tuyas (una guía, apuntes, un catálogo) sin que viajen con la app. La sección **Inicio → Solo en este equipo** solo aparece si existe `%APPDATA%\relieve3d\accesos-locales.json`:
+
+```json
+{
+  "accesos": [
+    {
+      "id": "mi-guia",
+      "titulo": "Mi guía",
+      "descripcion": "Apuntes para repasar",
+      "icono": "📘",
+      "archivo": "C:\\Users\\yo\\Documents\\MiGuia\\guia.html"
+    }
+  ]
+}
+```
+
+- **Campos.** `titulo`, `id` y `archivo` son obligatorios.
+  - `id`: minúsculas, números y guiones, hasta 40 caracteres, sin repetir.
+  - `archivo`: ruta completa a un `.html` o `.htm`. Nunca se abren otros tipos de archivo.
+  - Se muestran hasta 30 accesos. Las entradas mal escritas se saltan y la sección dice por qué.
+- **Abrir** la muestra en una ventana aparte y aislada.
+  - La página no tiene acceso a Node ni a Relieve3D, ni al micrófono o la cámara, y no puede abrir otros archivos locales.
+  - Lo que guarda (progreso, `localStorage`) se conserva al cerrar la app y queda separado del navegador.
+  - Los enlaces `http(s)` se abren en el navegador. Las descargas preguntan dónde guardar.
+  - Atajos: Alt+← / Alt+→ (atrás / adelante), F5 (recargar), Ctrl + / − / 0 (zoom), F11 (pantalla completa).
+  - Pulsar **Abrir** otra vez trae al frente la misma ventana.
+- **Abrir en el navegador** usa el navegador predeterminado. Úsalo si la página necesita dictado por voz, que no funciona dentro de la app.
+- Si el archivo se movió o se borró, la tarjeta sale atenuada. La sección se actualiza al volver a la ventana de Relieve3D.
+- **Nada de esto se publica.** La lista vive en tu perfil de Windows, no en el repositorio ni en el instalador. La versión web de Relieve3D tampoco la ve: el puente `window.r3dLocal` está fuera de `window.api` y la web no lo expone.
+
 ## Flujo de trabajo (modelos 3D)
 
 1. **Abrir imagen** (o arrastrarla a la ventana). Ideal: PNG con fondo transparente y colores planos. Si el fondo es blanco/sólido se quita automáticamente.
@@ -439,6 +473,13 @@ Cada error corregido queda cubierto por una prueba en `test/` (falla con el cód
 Estudio TikTok: `npm run test:tiktok` (unitarias, con datos de `test/fixtures/tiktok/`) y `node test/e2e/run.mjs tiktok`.
 
 Soporte celular llavero: `node test/phonestand.test.mjs` (incluida en `npm test`) y `node test/e2e/run.mjs phonestand`.
+
+Accesos locales: `npm run test:local` (incluida en `npm test`) y `node test/e2e/run.mjs local-links`.
+
+- El E2E prepara su propia guía y su configuración con `R3D_LOCAL_LINKS_CONFIG`, que solo se respeta en modo prueba (con `R3D_TEST_FILE`).
+- `R3D_LOCAL_LINKS_NO_OPEN` registra los enlaces externos y **Abrir en el navegador** en lugar de abrirlos.
+- Las pruebas E2E usan el perfil real (`%APPDATA%\relieve3d`). Por eso, al terminar, `run.mjs` borra la partición de la guía de prueba (`Partitions\local-e2e-…`) y, si no puede, marca la prueba como fallida.
+- También comprueba que una ventana con solo `window.api`, como la versión web, no muestra la sección.
 
 El E2E copia el espacio real (`R3D_TIKTOK_E2E_SRC` o `Documentos\TikTok-Impresion3D`) en `test/out/e2e/tiktok/` y recorre el flujo completo sobre la copia: kit, guion, prompts, crear video, voz guía, animatic, revisar, publicar, métricas, pedido, panel, biblioteca (importar 50 ganchos, exportar, ocultar, volver a la base), tendencias en vivo y un segundo video creado desde un guion base. Al final comprueba que el original no cambió. Necesita Python, ffmpeg e internet para edge-tts y Google Trends.
 

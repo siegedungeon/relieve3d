@@ -1,12 +1,14 @@
-const { app, BrowserWindow, ipcMain, dialog, Menu, shell } = require('electron');
+const { app, BrowserWindow, ipcMain, dialog, Menu, shell, session } = require('electron');
 const path = require('path');
 const fs = require('fs/promises');
+const { pathToFileURL } = require('url');
 const { autoUpdater } = require('electron-updater');
 const { createQuoteStore } = require('./src/main/quote_store.cjs');
 const { exportCommercial } = require('./src/main/quote_export.cjs');
 const { writeNewExportFolder } = require('./src/main/export_folder.cjs');
 const { getBambuPencilProfile, normalizePencilPlates } = require('./src/main/bambu_profile.cjs');
 const { createTiktokWorkspace } = require('./src/main/tiktok_workspace.cjs');
+const { createLocalLinks } = require('./src/main/local_links.cjs');
 
 if (process.platform === 'win32') app.setAppUserModelId('com.relieve3d.app');
 
@@ -131,6 +133,63 @@ function createWindow() {
       }
     });
   }
+}
+
+// Local shortcut window (src/main/local_links.cjs): the HTML runs sandboxed, without preload (no window.api) and in its
+// own persistent partition, so its localStorage survives restarts and stays apart from Relieve3D's. It can only use the
+// clipboard and fullscreen; http(s) links go to the default browser and nothing else is opened.
+const LOCAL_PERMISSIONS = new Set(['clipboard-sanitized-write', 'fullscreen']);
+function localSession(id) {
+  const ses = session.fromPartition(`persist:local-${id}`);
+  ses.setPermissionRequestHandler((_wc, permission, done) => done(LOCAL_PERMISSIONS.has(permission)));
+  ses.setPermissionCheckHandler((_wc, permission) => LOCAL_PERMISSIONS.has(permission));
+  return ses;
+}
+function sameFile(url, fileUrl) {
+  try {
+    const a = new URL(url), b = new URL(fileUrl);
+    return a.protocol === 'file:' && decodeURIComponent(a.pathname).toLowerCase() === decodeURIComponent(b.pathname).toLowerCase();
+  } catch { return false; }
+}
+function openLocalWindow(link, openUrl) {
+  const fileUrl = pathToFileURL(link.archivo).href;
+  const w = new BrowserWindow({
+    width: 1400, height: 920, minWidth: 720, minHeight: 520, show: false, title: `${link.titulo} · Relieve3D`,
+    icon: path.join(__dirname, 'build', 'icon.png'), autoHideMenuBar: true,
+    webPreferences: { session: localSession(link.id), contextIsolation: true, nodeIntegration: false, sandbox: true, spellcheck: false },
+  });
+  const reveal = () => { if (!w.isDestroyed() && !w.isVisible()) w.show(); };
+  w.once('ready-to-show', reveal);
+  setTimeout(reveal, 4000);
+  w.on('page-title-updated', (e, title) => { e.preventDefault(); w.setTitle(title ? `${title} · Relieve3D` : `${link.titulo} · Relieve3D`); });
+  const external = (url) => { if (/^https?:\/\//i.test(url)) openUrl(url); };
+  w.webContents.setWindowOpenHandler(({ url }) => { external(url); return { action: 'deny' }; });
+  w.webContents.on('will-navigate', (e, url) => {
+    if (sameFile(url, fileUrl)) return;
+    e.preventDefault();
+    external(url);
+  });
+  // No application menu: zoom (Ctrl +/−/0 and Ctrl+wheel), reload, fullscreen, back/forward and DevTools by hand.
+  const zoom = (step) => { const wc = w.webContents; wc.setZoomLevel(step ? Math.max(-3, Math.min(4, wc.getZoomLevel() + step)) : 0); };
+  w.webContents.on('zoom-changed', (_e, direction) => zoom(direction === 'in' ? 0.5 : -0.5));
+  const history = (back) => { const h = w.webContents.navigationHistory; if (back ? h.canGoBack() : h.canGoForward()) back ? h.goBack() : h.goForward(); };
+  w.on('app-command', (_e, command) => { if (command === 'browser-backward') history(true); else if (command === 'browser-forward') history(false); });
+  w.webContents.on('before-input-event', (e, input) => {
+    if (input.type !== 'keyDown') return;
+    const key = input.key, ctrl = input.control || input.meta;
+    let done = true;
+    if (ctrl && (key === '+' || key === '=')) zoom(0.5);
+    else if (ctrl && key === '-') zoom(-0.5);
+    else if (ctrl && key === '0') zoom(0);
+    else if (key === 'F5' || (ctrl && key.toLowerCase() === 'r')) w.webContents.reload();
+    else if (key === 'F11') w.setFullScreen(!w.isFullScreen());
+    else if (key === 'F12') w.webContents.toggleDevTools();
+    else if (input.alt && (key === 'ArrowLeft' || key === 'ArrowRight')) history(key === 'ArrowLeft');
+    else done = false;
+    if (done) e.preventDefault();
+  });
+  w.loadFile(link.archivo).catch((err) => console.error('local link', link.id, err.message));
+  return w;
 }
 
 // Installed font family names (Windows: system + per-user fonts), read from the OpenType 'name' table.
@@ -304,7 +363,36 @@ app.whenReady().then(() => {
     const texto = await ccWin.webContents.executeJavaScript('document.body ? document.body.innerText : ""', true);
     return { url, texto: String(texto || '').slice(0, 200_000) };
   });
+  // Accesos locales: HTML de este equipo listados en <userData>/accesos-locales.json (solo escritorio, ver preload.js).
+  const localLinks = createLocalLinks({ configFile: process.env.R3D_TEST_FILE && process.env.R3D_LOCAL_LINKS_CONFIG
+    ? process.env.R3D_LOCAL_LINKS_CONFIG : path.join(app.getPath('userData'), 'accesos-locales.json') });
+  const localNoOpen = !!process.env.R3D_LOCAL_LINKS_NO_OPEN;
+  const localWindows = new Map();
+  const localOpened = [];
+  global.__r3dLocalLinks = { windows: localWindows, opened: localOpened };
+  const localUrl = (url) => (localNoOpen ? localOpened.push(url) : shell.openExternal(url).catch(() => {}));
+  quoteHandle('local-links', () => localLinks.list());
+  quoteHandle('local-link-open', async ({ id, modo } = {}) => {
+    if (modo !== 'app' && modo !== 'browser') throw new Error('Modo de apertura inválido.');
+    const link = await localLinks.find(String(id ?? ''));
+    if (modo === 'browser') {
+      if (localNoOpen) localOpened.push(link.archivo);
+      else { const error = await shell.openPath(link.archivo); if (error) throw new Error(error); }
+      return { modo, archivo: link.archivo };
+    }
+    const open = localWindows.get(link.id);
+    if (open && !open.isDestroyed()) {
+      if (open.isMinimized()) open.restore();
+      open.show(); open.focus();
+      return { modo, archivo: link.archivo, yaAbierta: true };
+    }
+    const w = openLocalWindow(link, localUrl);
+    localWindows.set(link.id, w);
+    w.on('closed', () => { if (localWindows.get(link.id) === w) localWindows.delete(link.id); });
+    return { modo, archivo: link.archivo, yaAbierta: false };
+  });
   createWindow();
+  win.once('closed', () => { for (const w of localWindows.values()) if (!w.isDestroyed()) w.destroy(); });
   setupAutoUpdates();
 });
 app.on('window-all-closed', () => app.quit());

@@ -200,6 +200,11 @@ textarea { width: 100%; font: inherit; font-size: 14px; padding: 6px 8px; border
 .hc-title { font-weight: 700; font-size: 14px; }
 .hc-desc { color: var(--muted); font-size: 12px; line-height: 1.35; }
 .home-foot { margin-top: 28px; text-align: center; }
+.local-card { cursor: pointer; }
+.local-card .local-actions { display: flex; flex-wrap: wrap; gap: 6px; margin-top: auto; padding-top: 8px; }
+.local-card.missing { border-style: dashed; opacity: .75; cursor: default; }
+.local-card.missing:hover { transform: none; box-shadow: none; border-color: var(--border); }
+.local-warn { margin-bottom: 12px; }
 
 /* ---------- studio 2D ---------- */
 .studio { position: fixed; inset: 0; z-index: 45; background: var(--bg); }

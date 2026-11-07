@@ -1,0 +1,28 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<title>Guía de prueba</title>
+<style>body { font: 16px system-ui, sans-serif; margin: 32px; } a, button { display: block; margin: 10px 0; }</style>
+</head>
+<body>
+<!-- Fixture del E2E local-links: un HTML local como la guía de entrevista (localStorage, enlaces, exportar). -->
+<h1>Guía local de prueba</h1>
+<p>Visitas: <b id="visitas"></b></p>
+<a id="ext" href="https://example.com/blank" target="_blank" rel="noopener">Enlace externo en pestaña nueva</a>
+<a id="nav" href="https://example.com/nav">Enlace externo en la misma ventana</a>
+<a id="other" href="otra.html">Otro archivo local</a>
+<a id="hash" href="#/simulador">Ruta interna (#/simulador)</a>
+<button id="download">⬇️ Exportar progreso</button>
+<script>
+  localStorage.setItem('visitas', String(Number(localStorage.getItem('visitas') || 0) + 1));
+  document.getElementById('visitas').textContent = localStorage.getItem('visitas');
+  document.getElementById('download').onclick = () => {
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(new Blob([JSON.stringify({ progreso: 1 })], { type: 'application/json' }));
+    a.download = 'progreso.json';
+    a.click();
+  };
+</script>
+</body>
+</html>

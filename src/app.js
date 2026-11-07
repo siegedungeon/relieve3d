@@ -1876,6 +1876,38 @@ function renderHome() {
   $('homeGrid2d').innerHTML = MODULES.filter((m) => m.group === '2d').map(card).join('');
   $('homeGridBusiness').innerHTML = MODULES.filter((m) => m.group === 'business').map(card).join('');
   $('homeGridSocial').innerHTML = MODULES.filter((m) => m.group === 'social').map(card).join('');
+  renderLocalLinks();
+}
+// Accesos locales: HTML de este equipo (<userData>/accesos-locales.json). Solo escritorio: la versión web no expone
+// window.r3dLocal, así que la sección nunca aparece allí.
+const ipcMessage = (err) => String(err?.message || err).replace(/^Error invoking remote method '[^']+': (?:\w*Error: )?/, '');
+let localLinksSeq = 0;
+async function renderLocalLinks() {
+  const box = $('homeLocal');
+  if (!window.r3dLocal) { box.hidden = true; return; }
+  const seq = ++localLinksSeq;
+  let res;
+  try { res = await window.r3dLocal.list(); } catch (err) { res = { accesos: [], avisos: [ipcMessage(err)] }; }
+  if (seq !== localLinksSeq) return;
+  const accesos = res?.accesos || [], avisos = res?.avisos || [];
+  box.hidden = !accesos.length && !avisos.length;
+  const card = (a) => `<div class="home-card local-card${a.existe ? '' : ' missing'}" data-local="${escHtml(a.id)}" title="${escHtml(a.archivo)}">`
+    + `<span class="hc-icon">${escHtml(a.icono)}</span><span class="hc-title">${escHtml(a.titulo)}</span>`
+    + `<span class="hc-desc">${escHtml(a.existe ? a.descripcion || a.nombre : `No encuentro el archivo: ${a.archivo}`)}</span>`
+    + `<span class="local-actions"><button class="btn primary" data-open="app"${a.existe ? '' : ' disabled'}>Abrir</button>`
+    + `<button class="btn" data-open="browser"${a.existe ? '' : ' disabled'}>Abrir en el navegador</button></span></div>`;
+  box.innerHTML = box.hidden ? '' : '<h2 class="home-group">Solo en este equipo <small>accesos locales · no se publican ni se suben a la nube</small></h2>'
+    + (avisos.length ? `<div class="card warn local-warn">${avisos.map((t) => `<p>⚠ ${escHtml(t)}</p>`).join('')}</div>` : '')
+    + (accesos.length ? `<div class="home-grid">${accesos.map(card).join('')}</div>` : '');
+}
+async function openLocalLink(id, modo) {
+  try {
+    await window.r3dLocal.open(id, modo);
+    if (modo === 'browser') toast('Abierto en tu navegador predeterminado.');
+  } catch (err) {
+    toast(ipcMessage(err), true);
+    renderLocalLinks();
+  }
 }
 function showHome() {
   laser.close();
@@ -1889,6 +1921,7 @@ function showHome() {
   $('home').hidden = false;
   $('homeContinue').hidden = !S.result;
   if (S.result) $('homeContinue').textContent = `↩ Continuar: ${moduleDef(S.module).title}`;
+  renderLocalLinks();
 }
 function hideHome() { $('home').hidden = true; }
 
@@ -2016,6 +2049,12 @@ $('homeGrid3d').addEventListener('click', (e) => { const b = e.target.closest('[
 $('homeGrid2d').addEventListener('click', (e) => { const b = e.target.closest('[data-mod]'); if (b) enterModule(b.dataset.mod); });
 $('homeGridBusiness').addEventListener('click', (e) => { const b = e.target.closest('[data-mod]'); if (b) enterModule(b.dataset.mod); });
 $('homeGridSocial').addEventListener('click', (e) => { const b = e.target.closest('[data-mod]'); if (b) enterModule(b.dataset.mod); });
+$('homeLocal').addEventListener('click', (e) => {
+  const card = e.target.closest('[data-local]'), btn = e.target.closest('[data-open]');
+  if (card && !card.classList.contains('missing') && !btn?.disabled) openLocalLink(card.dataset.local, btn?.dataset.open || 'app');
+});
+// Si editas accesos-locales.json con Relieve3D abierto, Inicio lo refleja al volver a la ventana.
+window.addEventListener('focus', () => { if (!$('home').hidden) renderLocalLinks(); });
 $('homeContinue').onclick = () => { if (S.result) hideHome(); };
 $('homeOpenProject').onclick = () => $('fileProject').click();
 $('btnHome').onclick = showHome;
@@ -2036,7 +2075,7 @@ if (stUpdate) {
     else if (d.state === 'up-to-date' || d.state === 'error') stUpdate.hidden = true;
   });
 }
-window.__r3d = { S, setSelection, doExport, exportParts, saveProject, openProjectFile, undo, redo, commit, hist, setViewMode, enterModule, applyText, showHome, studio, hablador, colorsplit, phonestand, coloring, quote, laser, tiktok, getFeat: () => feat, onSettingChanged, placeRing, loadImageFile, view2d,
+window.__r3d = { S, setSelection, doExport, exportParts, saveProject, openProjectFile, undo, redo, commit, hist, setViewMode, enterModule, applyText, showHome, renderLocalLinks, studio, hablador, colorsplit, phonestand, coloring, quote, laser, tiktok, getFeat: () => feat, onSettingChanged, placeRing, loadImageFile, view2d,
   applyTier, applyComposition, getOrig: () => orig, ringSnap, gramsEstimate, viewer, renderElements };
 
 syncProcInputs();
