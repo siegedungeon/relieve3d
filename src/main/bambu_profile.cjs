@@ -20,26 +20,27 @@ async function readProfile(root, kind, name, ancestors = []) {
   return result;
 }
 
-async function loadBambuPencilProfile(root) {
+async function loadBambuPencilProfile(root, count = 2) {
+  if (![1, 2].includes(count)) throw new Error('Cantidad de filamentos no válida.');
   const machine = 'Bambu Lab A1 0.4 nozzle', process = '0.20mm Standard @BBL A1', filament = 'Bambu PLA Basic @BBL A1';
   const [printer, printing, material] = await Promise.all([
     readProfile(root, 'machine', machine), readProfile(root, 'process', process), readProfile(root, 'filament', filament),
   ]);
   const result = { ...printer, ...printing };
   for (const [key, value] of Object.entries(material)) {
-    result[key] = Array.isArray(value) && value.length === 1 ? [value[0], value[0]] : value;
+    result[key] = Array.isArray(value) && value.length === 1 ? Array(count).fill(value[0]) : value;
   }
   if (result.printer_model !== 'Bambu Lab A1' || !result.machine_start_gcode || !result.change_filament_gcode) {
     throw new Error('El perfil A1 instalado está incompleto. Actualiza Bambu Studio.');
   }
   return {
     ...result, from: 'project', version: '02.08.04.57',
-    printer_settings_id: machine, print_settings_id: process, filament_settings_id: [filament, filament],
-    filament_ids: ['GFA00', 'GFA00'], filament_is_support: ['0', '0'], filament_self_index: ['1', '2'],
-    inherits_group: ['', '', '', ''], different_settings_to_system: [''],
+    printer_settings_id: machine, print_settings_id: process, filament_settings_id: Array(count).fill(filament),
+    filament_ids: Array(count).fill('GFA00'), filament_is_support: Array(count).fill('0'), filament_self_index: Array.from({ length: count }, (_, i) => String(i + 1)),
+    inherits_group: Array(count + 2).fill(''), different_settings_to_system: [''],
     filament_map: ['1'], filament_map_2: ['1'], filament_map_mode: 'Auto For Flush',
     curr_bed_type: 'Textured PEI Plate', enable_support: '0', brim_type: 'no_brim', skirt_loops: '0',
-    print_sequence: 'by layer', wipe_tower_x: ['12'], wipe_tower_y: ['215'], prime_tower_width: '35', enable_prime_tower: '1',
+    print_sequence: 'by layer', wipe_tower_x: ['12'], wipe_tower_y: ['215'], prime_tower_width: '35', enable_prime_tower: count > 1 ? '1' : '0',
   };
 }
 
@@ -56,6 +57,10 @@ async function findBambu() {
 
 async function getBambuPencilProfile() {
   return loadBambuPencilProfile((await findBambu()).profiles);
+}
+
+async function getBambuNameTreeProfile() {
+  return loadBambuPencilProfile((await findBambu()).profiles, 1);
 }
 
 async function normalizePencilPlates(folder, names) {
@@ -76,4 +81,4 @@ async function normalizePencilPlates(folder, names) {
   } finally { await fs.rm(temporary, { recursive: true, force: true }); }
 }
 
-module.exports = { getBambuPencilProfile, loadBambuPencilProfile, normalizePencilPlates };
+module.exports = { getBambuPencilProfile, getBambuNameTreeProfile, loadBambuPencilProfile, normalizePencilPlates };

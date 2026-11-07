@@ -93,6 +93,10 @@ export const MODULES = [
     desc: 'Convierte un 3MF multicolor en piezas de un solo color con encajes a presión: se imprimen sin cambios de filamento y se pegan.',
   },
   {
+    id: 'nametree', group: '3d', icon: '🎄', title: 'Árbol navideño de nombres',
+    desc: 'Nombres encajables, tronco y estrella, corazón o tu silueta. Alto, ancho y grosor a medida; espalda plana y placas separadas por color, sin soportes.',
+  },
+  {
     id: 'phonestand', group: '3d', icon: '📱', title: 'Soporte celular llavero',
     desc: 'Llavero con pata plegable que se abre en soporte para el celular (bisagra impresa armada, 2 tamaños): corazón, ratón, flor u otra forma arriba, logo o marca del cliente, chip NFC y abre latas opcionales.',
   },

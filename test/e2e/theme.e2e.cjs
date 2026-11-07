@@ -91,6 +91,7 @@ module.exports = async ({ win, run, shot, wait }) => {
     ['hablador', '#hablador', '#hablador .btn'],
     ['colorsplit', '#colorsplit', '#colorsplit .btn'],
     ['coloring', '#coloring', '#coloring .btn'],
+    ['nametree', '#nameTree', '#nameTree .btn'],
     ['laser', '#laser', '#laser .btn'],
     ['quote', '#quote', '#quote .q-field > span'],
   ]) {

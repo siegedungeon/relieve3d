@@ -6,7 +6,7 @@ const { autoUpdater } = require('electron-updater');
 const { createQuoteStore } = require('./src/main/quote_store.cjs');
 const { exportCommercial } = require('./src/main/quote_export.cjs');
 const { writeNewExportFolder } = require('./src/main/export_folder.cjs');
-const { getBambuPencilProfile, normalizePencilPlates } = require('./src/main/bambu_profile.cjs');
+const { getBambuPencilProfile, getBambuNameTreeProfile, normalizePencilPlates } = require('./src/main/bambu_profile.cjs');
 const { createTiktokWorkspace } = require('./src/main/tiktok_workspace.cjs');
 const { createLocalLinks } = require('./src/main/local_links.cjs');
 
@@ -276,6 +276,7 @@ ipcMain.handle('save-files-to-folder', async (e, { files, folderName, bambuPlate
 
 ipcMain.handle('app-version', () => app.getVersion());
 ipcMain.handle('pencil-batch-profile', () => getBambuPencilProfile());
+ipcMain.handle('name-tree-profile', () => getBambuNameTreeProfile());
 
 ipcMain.handle('confirm', async (e, { message, buttons, cancelId }) => {
   const r = await dialog.showMessageBox(BrowserWindow.fromWebContents(e.sender), {

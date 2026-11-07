@@ -40,6 +40,7 @@ Regresión del tema: `npm run test:theme` verifica persistencia, navegación, co
 | Módulo | Qué hace |
 |---|---|
 | Llavero | Módulo completo para marcas y merchandising (ver abajo) |
+| Árbol navideño de nombres | Tronco, nombres encajables y estrella, corazón, círculo o silueta propia. Escala uniforme dentro del alto/ancho máximo, espalda plana y grosor inferior/superior configurable. Proyectos `.r3t`, vista armada y placas monocolor con STL por pieza |
 | Soporte celular llavero | Llavero que se abre en **soporte para el celular** (bisagra impresa armada, sin soportes) con la forma de arriba a elegir (corazón, ratón estilo Mickey, flor, estrella… o **tu propia silueta**), el logo o marca del cliente, texto y, opcionales, **chip NFC** y **abre latas** (ver abajo) |
 | Nombres para lápices / lapiceros | Genera un listado completo: **Matemasie blanca sobre base morada, sin figuras**, canal horizontal de **7.9 mm** y máximo **75 × 19 × 13 mm** por nombre. Guarda proyectos editables, 3MF a dos colores, STL unidos y placas Bambu A1. Conserva la edición individual, los adornos opcionales y los montajes anteriores |
 | Logo para micrófono | **Cuerpo completo** del mic flag (cuadrado, estrella, corazón, círculo, hexágono) con bordes redondeados, hueco inferior para el micrófono + ranura del clip (DJI, Hollyland, chinos verticales), aros laterales opcionales y el logo encima. El logo/cuerpo se mueve con el asa ✥ morada, se rota y el botón **Centrar hueco** ajusta el hueco para paredes uniformes. También puedes **cargar tu propio cuerpo STL** (queda guardado en la biblioteca) |
@@ -53,6 +54,12 @@ Regresión del tema: `npm run test:theme` verifica persistencia, navegación, co
 | Separar colores 3D | Abre un **3MF multicolor** (p. ej. de MakerWorld) y lo divide en **piezas de un solo color** para imprimir sin cambios de filamento y pegar (ver abajo) |
 
 Los módulos de texto usan las fuentes más populares y las instaladas en el equipo, con contorno/bordeado opcional.
+
+En **Árbol navideño de nombres**, escribe de 1 a 20 nombres (uno por renglón). El orden automático coloca los más largos abajo; el manual sigue el listado de abajo hacia arriba. Cada nombre conserva las proporciones de la fuente y el árbol completo, incluido tronco y remate, cabe dentro de ambos límites. Los grosores son independientes: espalda plana, cara frontal con una reducción continua, nunca palabras inclinadas en sentidos alternos. Si las letras o encajes quedarían demasiado pequeños, se pide aumentar las medidas en vez de exportar una pieza frágil.
+
+**Placas por color** crea una carpeta nueva con el proyecto, STL numerados, instrucciones de montaje, un 3MF de referencia armado y un 3MF por placa. Las placas de 256 × 256 mm usan el perfil monocolor Bambu A1 instalado; otras medidas salen en 3MF estándar. No requieren AMS: cada pieza se imprime acostada sobre su espalda, sin soportes. Ensambla los encajes de cola de milano deslizando por el grosor, no presionando verticalmente. La holgura predeterminada es **0,2 mm por lado**: prueba una pareja antes del lote, pues el ajuste físico depende de la calibración y del material. Regresión del módulo: `npm run test:nametree`.
+
+Con Bambu Studio instalado en Windows, `npm run test:nametree:print` genera árboles de 2 y 7 nombres, guarda las placas nativas y comprueba su G-code real sin soportes ni torre de purga.
 
 En **Nombres para lápices / lapiceros**, pega un nombre por renglón y pulsa **Generar listado completo**. También acepta comas y punto y coma. Conserva mayúsculas, espacios y copias repetidas; recuerda el listado al reiniciar. Cada ejecución crea una carpeta nueva sin sobrescribir lotes anteriores. Ajusta los nombres largos solo horizontalmente, sin modificar el calibre del canal. Si no caben todos en una placa, crea más placas con separación de 3 mm y espacio reservado para la torre de purga. Los colores indican los filamentos que debes cargar; los STL son monocromos. Revisa los puentes del canal y el ajuste físico del lapicero antes de imprimir.
 
