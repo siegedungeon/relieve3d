@@ -323,6 +323,7 @@ Regresiones:
   - los colores del logo (capas, color del cuerpo, quitar, altos; ningún color se pierde al sumar el texto), el acabado liso en capas enteras, el grabado y el trazo mínimo (bordes lisos, rayitas que no se funden con el contorno);
   - las piezas y objetos del 3MF, la migración desde 1.17 y 1.19 y el proyecto.
 - `node test\e2e\run.mjs phonestand` recorre el flujo completo en la app (también un logo SVG) y verifica las exportaciones reales.
+- `node test\phonestand_bambu.mjs` requiere Bambu Studio instalado en Windows. Lamina con A1, PLA y capas de 0,2 mm, forzando los soportes del perfil: compara un control sin protección, solo ajustes por objeto, solo bloqueos pintados y la exportación de la app. Exige soportes en el control, ninguno en los otros tres y trayectorias de puente en ambos techos. Conserva los 3MF, G-code, logs e informe en `test\out\phonestand-bambu`. Esto comprueba el laminado, no sustituye la pieza física de prueba.
 
 ### Módulo Separar colores 3D
 
