@@ -3,6 +3,8 @@ const path = require('node:path');
 const { PNG } = require('pngjs');
 
 module.exports = async ({ win, run, shot, wait }) => {
+  win.webContents.setBackgroundThrottling(false);
+  win.show(); win.focus();
   const out = process.env.E2E_DIR, exp = process.env.R3D_AUTOSAVE_DIR, errors = [];
   win.webContents.on('console-message', e => { if ((e.level === 'error' || e.level >= 3) && !/disk_cache|WebGLProgram/.test(e.message)) errors.push(e.message); });
   const ok = (value, label) => { console.log('[e2e]', value ? 'ok' : 'FAIL', label); if (!value) throw new Error(label); };
@@ -95,9 +97,10 @@ module.exports = async ({ win, run, shot, wait }) => {
   ok(await run('window.__r3d.coloring.mask.every((v,i)=>v===window.__beforeDecorPen[i])'), 'undo restores the original drawing without moving its decorations');
   const corners = await run(`(async()=>{
     const c=window.__r3d.coloring,{coloringLayout}=await import('./core/coloring.js');
-    const l=coloringLayout(c.base.width,c.base.height,c.state.options);
+    const l=coloringLayout(c.base.width,c.base.height,c.state.options),inset=1/c.view.scale;
     document.querySelector('#coloring [data-tool="rect"]').click();
-    return [[l.x+l.width*.001,l.y+l.height*.001],[l.x+l.width*.999,l.y+l.height*.999]];
+    // Keep the pointers a full screen pixel inside the image after integer rounding.
+    return [[l.x+inset,l.y+inset],[l.x+l.width-inset,l.y+l.height-inset]];
   })()`);
   await gesture(...corners);
   ok(await run('window.__r3d.coloring.pixels===0&&window.__r3d.coloring.hasArtwork()&&!document.querySelector(\'#coloring [data-export="svg"]\').disabled'), 'the ornament layer remains valid artwork when the original drawing is erased');

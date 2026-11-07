@@ -19,6 +19,7 @@ export class View2D {
 
     new ResizeObserver(() => this.resize()).observe(canvas.parentElement);
     this.bindEvents();
+    window.addEventListener('r3d-theme-change', () => this.draw());
   }
 
   setContent(result, image) {
@@ -364,16 +365,18 @@ export function shapesToPath(shapes) {
   return path;
 }
 
-let checkerPattern = null, checkerSize = 0;
+let checkerPattern = null, checkerKey = '';
 function drawChecker(ctx, W, H, size) {
-  if (!checkerPattern || checkerSize !== size) {
+  const key = `${size}:${document.documentElement.dataset.theme}`;
+  if (!checkerPattern || checkerKey !== key) {
+    const colors = getComputedStyle(document.documentElement);
     const t = document.createElement('canvas');
     t.width = t.height = size * 2;
     const c = t.getContext('2d');
-    c.fillStyle = '#f4f5f7'; c.fillRect(0, 0, size * 2, size * 2);
-    c.fillStyle = '#e8eaee'; c.fillRect(0, 0, size, size); c.fillRect(size, size, size, size);
+    c.fillStyle = colors.getPropertyValue('--checker-light').trim() || '#f4f5f7'; c.fillRect(0, 0, size * 2, size * 2);
+    c.fillStyle = colors.getPropertyValue('--checker-dark').trim() || '#e8eaee'; c.fillRect(0, 0, size, size); c.fillRect(size, size, size, size);
     checkerPattern = ctx.createPattern(t, 'repeat');
-    checkerSize = size;
+    checkerKey = key;
   }
   ctx.fillStyle = checkerPattern;
   ctx.fillRect(0, 0, W, H);

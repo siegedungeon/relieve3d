@@ -1,8 +1,9 @@
 // End-to-end runner: starts the real Electron app and drives a whole module flow.
-//   node test/e2e/run.mjs [colorsplit|logo|hablador|pencil|fonts|text-quality|coloring|coloring-decorations|quote|tiktok|phonestand|local-links|all] [input file]
+//   node test/e2e/run.mjs [theme|colorsplit|logo|hablador|pencil|fonts|text-quality|coloring|coloring-decorations|quote|tiktok|phonestand|local-links|all] [input file]
 // Defaults use synthetic inputs (painted sphere 3MF, test/logo.png, generated LOVECUBE mockup).
 // tiktok drives a throwaway copy of the TikTok workspace (R3D_TIKTOK_E2E_SRC, default ~/Documents/TikTok-Impresion3D);
 // it needs Python with edge-tts, ffmpeg and internet for the guide voice. The real workspace is never written.
+// E2E_THEME=dark runs the complete flows in dark mode. Each flow has an isolated application profile.
 // Screenshots and exports go to test/out/e2e/<name>. Exits 1 if any check prints FAIL or the flow didn't finish.
 import fs from 'fs';
 import path from 'path';
@@ -44,7 +45,7 @@ const environments = {
 
 // Per-module cleanup after Electron has exited (its files are no longer locked). Returns false if something was left behind.
 const cleanups = {
-  // The test guide's persistent partition is created in the real profile (%APPDATA%\relieve3d\Partitions): remove it.
+  // Remove the test guide's persistent partition from the isolated profile.
   'local-links': (dir) => {
     const file = path.join(dir, 'partition-path.txt');
     if (!fs.existsSync(file)) return true;
@@ -58,6 +59,7 @@ const cleanups = {
 };
 
 const inputs = {
+  theme: () => path.join(root, 'test', 'logo.png'),
   laser: () => null,
   fonts: () => null,
   'text-quality': () => null,
@@ -78,17 +80,21 @@ const inputs = {
   },
 };
 
-function runOne(name) {
+function runOne(name, restartTheme) {
   const source = inputArg && which !== 'all' ? inputArg : inputs[name]();
   const input = source ? path.resolve(source) : null;
   if (input && !fs.existsSync(input)) { console.log(`FAIL ${name}: input not found ${input}`); return Promise.resolve(false); }
   const dir = path.join(outRoot, name), exp = path.join(dir, 'export');
-  fs.rmSync(dir, { recursive: true, force: true }); fs.mkdirSync(exp, { recursive: true });
-  console.log(`— ${name} (${input ? path.basename(input) : 'sin archivo de entrada'})`);
+  if (!restartTheme) fs.rmSync(dir, { recursive: true, force: true });
+  fs.mkdirSync(exp, { recursive: true });
+  const profile = path.join(dir, 'profile');
+  fs.mkdirSync(profile, { recursive: true });
+  console.log(`— ${name} (${restartTheme ? 'reinicio: ' + restartTheme : input ? path.basename(input) : 'sin archivo de entrada'})`);
   let extra = {};
   try { extra = environments[name]?.(dir) || {}; } catch (err) { console.log(`  FAIL ${name}: ${err.message}`); return Promise.resolve(false); }
   const env = { ...process.env, R3D_TEST_FILE: path.join(here, `${name}.e2e.cjs`), E2E_DIR: dir, E2E_INPUT: input || '', R3D_AUTOSAVE_DIR: exp,
-    R3D_QUOTE_TEST_DIR: path.join(dir, 'quotation-data'), ...extra };
+    R3D_QUOTE_TEST_DIR: path.join(dir, 'quotation-data'), R3D_TEST_USER_DATA: profile,
+    R3D_TEST_THEME: restartTheme ? '' : process.env.E2E_THEME || 'light', E2E_THEME_RESTART: restartTheme || '', ...extra };
   return new Promise((resolve) => {
     const p = spawn(electron, ['.'], { cwd: root, env });
     let buf = '', fails = 0, done = false;
@@ -103,17 +109,20 @@ function runOne(name) {
       }
     };
     p.stdout.on('data', onData); p.stderr.on('data', onData);
-    p.on('close', () => {
+    p.on('close', async () => {
       let cleaned = true;
       try { cleaned = cleanups[name]?.(dir) ?? true; } catch (err) { console.log(`  FAIL cleanup: ${err.message}`); cleaned = false; }
-      const ok = done && !fails && cleaned;
+      let ok = done && !fails && cleaned;
+      if (ok && name === 'theme' && !restartTheme) {
+        for (const value of ['dark', 'light']) ok = (await runOne(name, value)) && ok;
+      }
       console.log(`  ${ok ? 'OK' : 'FAILED'} — screenshots in ${path.relative(root, dir)}`); resolve(ok);
     });
   });
 }
 
 const names = which === 'all' ? Object.keys(inputs) : [which];
-if (!names.every((n) => inputs[n])) { console.log('usage: node test/e2e/run.mjs [colorsplit|logo|hablador|pencil|fonts|text-quality|coloring|coloring-decorations|quote|tiktok|phonestand|local-links|all] [input]'); process.exit(2); }
+if (!names.every((n) => inputs[n])) { console.log('usage: node test/e2e/run.mjs [theme|colorsplit|logo|hablador|pencil|fonts|text-quality|coloring|coloring-decorations|quote|tiktok|phonestand|local-links|all] [input]'); process.exit(2); }
 let allOk = true;
 for (const n of names) allOk = (await runOne(n)) && allOk;
 console.log(allOk ? '\ne2e OK' : '\ne2e FAILED');

@@ -11,6 +11,7 @@ const { createTiktokWorkspace } = require('./src/main/tiktok_workspace.cjs');
 const { createLocalLinks } = require('./src/main/local_links.cjs');
 
 if (process.platform === 'win32') app.setAppUserModelId('com.relieve3d.app');
+if (process.env.R3D_TEST_FILE && process.env.R3D_TEST_USER_DATA) app.setPath('userData', process.env.R3D_TEST_USER_DATA);
 
 let win;
 let updateReadyToInstall = false;
@@ -108,7 +109,15 @@ function createWindow() {
           catch (err) { if (i > 5) throw err; await wait(1000); }
         }
       };
-      try { await wait(4000); await require(process.env.R3D_TEST_FILE)({ win, run, shot, wait }); }
+      try {
+        await wait(4000);
+        if (process.env.R3D_TEST_THEME) await run(`(() => {
+          const select = document.getElementById('themeSelect');
+          select.value = ${JSON.stringify(process.env.R3D_TEST_THEME)};
+          select.dispatchEvent(new Event('change'));
+        })()`);
+        await require(process.env.R3D_TEST_FILE)({ win, run, shot, wait });
+      }
       catch (err) { console.log('[test error]', err.stack || err.message); }
       app.quit();
     });

@@ -4,10 +4,12 @@
   <meta charset="utf-8" />
   <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-inline' 'wasm-unsafe-eval'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; worker-src 'self' blob:" />
   <title>Relieve3D</title>
+  <script src="theme.js"></script>
   <link rel="stylesheet" href="styles.css" />
   <link rel="stylesheet" href="quote.css" />
   <link rel="stylesheet" href="laser.css" />
   <link rel="stylesheet" href="tiktok.css" />
+  <link rel="stylesheet" href="theme.css" />
   <script type="importmap">
     {
       "imports": {
@@ -25,6 +27,13 @@
   </script>
 </head>
 <body>
+  <div class="theme-bar">
+    <label for="themeSelect">Tema</label>
+    <select id="themeSelect" aria-label="Tema de la aplicación">
+      <option value="light">Claro</option>
+      <option value="dark">Oscuro</option>
+    </select>
+  </div>
   <header class="topbar">
     <button id="btnHome" class="btn" title="Volver a la pantalla de inicio">⌂ Inicio</button>
     <div class="brand"><span class="logo">◆</span> Relieve3D <span id="moduleName" class="module-name"></span> <span id="docName" class="doc-name"></span></div>

@@ -31,6 +31,10 @@ a mano salvo para probar localmente.
 
 Al abrir aparece una **pantalla de inicio** para elegir qué crear (botón **Inicio** para volver). Las medidas de los modelos están en **milímetros**.
 
+El selector **Tema → Claro / Oscuro**, en la barra superior, está disponible en Inicio y en todos los módulos. La elección se recuerda al cerrar y volver a abrir la aplicación; una instalación sin preferencia empieza en claro. Cambia la interfaz y el fondo de trabajo 2D, no los colores de los diseños, filamentos, hojas de impresión ni archivos exportados.
+
+Regresión del tema: `npm run test:theme` verifica persistencia, navegación, contraste, teclado, el cotizador estrecho y exportaciones idénticas. Para recorrer todos los flujos existentes en oscuro: `$env:E2E_THEME='dark'; npm run test:e2e`. Cada prueba utiliza un perfil aislado y no cambia tu preferencia.
+
 **Modelos 3D** (exportan 3MF multicolor para Bambu Lab, STL único/por color, OBJ y SVG):
 
 | Módulo | Qué hace |

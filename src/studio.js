@@ -54,6 +54,7 @@ export class Studio {
     this.hist = [];
     this.hidx = -1;
     this.build();
+    window.addEventListener('r3d-theme-change', () => this.draw());
   }
 
   // ------------------------------------------------------------------ DOM
@@ -849,8 +850,9 @@ export class Studio {
   _draw() {
     const ctx = this.ctx, dpr = window.devicePixelRatio || 1, W = this.canvas.width, H = this.canvas.height;
     ctx.setTransform(1, 0, 0, 1, 0, 0);
-    ctx.fillStyle = '#e9ebef'; ctx.fillRect(0, 0, W, H);
-    const sz = 12 * dpr; ctx.fillStyle = '#f6f7f9';
+    const colors = getComputedStyle(document.documentElement);
+    ctx.fillStyle = colors.getPropertyValue('--studio-checker-base').trim() || '#e9ebef'; ctx.fillRect(0, 0, W, H);
+    const sz = 12 * dpr; ctx.fillStyle = colors.getPropertyValue('--studio-checker-light').trim() || '#f6f7f9';
     for (let y = 0; y < H; y += sz) for (let x = (y / sz) % 2 ? sz : 0; x < W; x += sz * 2) ctx.fillRect(x, y, sz, sz);
     this.$('drop').classList.toggle('hidden', !!this.st.source?.dataURL);
     const c = this.comp;
