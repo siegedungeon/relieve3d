@@ -83,6 +83,9 @@ module.exports = async ({ win, run, shot, wait }) => {
   ok(l0.tab === 'print' && Math.abs(l0.rot) < 1e-6 && Math.abs(poseOf(l0)) < 1e-6 && !l0.phone, `opens on «Como se imprime»: leg standing as printed (slider ${l0.amt.toFixed(3)}), no phone`);
   const r0 = [await row('Bisagra'), await row('Cierre'), await row('Celular')];
   ok(/conos Ø/.test(r0[0]) && /clic de 0,3 mm/.test(r0[1]) && /inclinado 6\d/.test(r0[2]), `«Resultado» explains the hinge: ${r0.join(' · ')}`);
+  const r0b = [await row('Muesca para abrir'), await row('Argolla'), await row('Soportes')];
+  ok(/^1[23],\d mm al frente · 3,5 mm bajo la punta/.test(r0b[0]) && /^agujero Ø5 mm con chaflán/.test(r0b[1]) && r0b[2] === 'ninguno',
+    `«Resultado» shows the finger notch, the key-ring hole and no supports: ${r0b.join(' · ')}`);
   const thumbs = await run(`document.querySelectorAll('#phonestand [data-shape] svg path').length`);
   const up = await run(`!!document.querySelector('#phonestand [data-shape="custom"] .ps-up')`);
   ok(thumbs === 10 && up, `shape buttons show the live outline of each shape (${thumbs}/10) and «Tu silueta» an upload button`);
@@ -158,6 +161,8 @@ module.exports = async ({ win, run, shot, wait }) => {
   const trayRow = await row('Bandeja NFC 📶');
   ok(trayRow.includes(`lado ${i2.nfc?.side === 'left' ? 'izquierdo' : 'derecho'}`) && /aparte, sin pausa/.test(trayRow) && (await row('Bandeja NFC')) === 'filamento 1 · objeto aparte',
     `«Resultado»: ${trayRow}; the tray is its own object in the 3MF`);
+  const supRow = await row('Soportes');
+  ok(/^ninguno · puentes: /.test(supRow) && /abre latas 16 mm/.test(supRow) && /ranura NFC 29,4 mm/.test(supRow), `«Soportes»: ${supRow}`);
   // the view re-frames when the tray appears beside the stand: every vertex of every piece projects inside the screen
   const reach = await P(`(()=>{const v=ps.viewer; v.scene.updateMatrixWorld(true); v.camera.updateMatrixWorld(); const q=v.camera.position.clone(), out={};
     ps.res.parts.forEach((p,i)=>{ const m=v.meshes.get('p'+i); if(!m||!m.visible) return; const a=m.geometry.attributes.position; let w=0;
@@ -397,6 +402,11 @@ module.exports = async ({ win, run, shot, wait }) => {
       `3MF: the stand (${asm[0]?.[1]} pieces) and the NFC tray are separate objects on the plate`);
     ok(mats.join() === fin.filaments.map((c) => c.toUpperCase()).join() && mats[0] === '#FDE68A' && mats.includes('#1D4ED8'), `3MF filament colours = the design's ${mats.length}: ${mats.join(' ')}`);
     ok(!z['Metadata/custom_gcode_per_layer.xml'], '3MF with the tray: no print pause');
+    // supports off on both objects, the body's slit/slot ceilings painted as support blockers (Bambu Studio honours both)
+    const msc = z['Metadata/model_settings.config'] ? strFromU8(z['Metadata/model_settings.config']) : '';
+    const body = (model.match(/name="Cuerpo" pid="1"[\s\S]*?<\/triangles>/) || [''])[0];
+    const nBlock = (body.match(/paint_supports="8"/g) || []).length;
+    ok((msc.match(/<metadata key="enable_support" value="0"\/>/g) || []).length === 2 && nBlock > 0, `3MF: supports off on both objects, ${nBlock} body faces painted as support blockers`);
   }
   if (files.stl) {
     const n = files.stl.readUInt32LE(80);

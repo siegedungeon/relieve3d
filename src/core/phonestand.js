@@ -42,6 +42,9 @@ const GROW_MAX = 40;  // the decorative shape may move back up to this much to m
 // NFC tray (mm): pocket rim, floor under the chip, slot side walls, snap arm width, slit, snap interference, extra
 // depth of the wall notches, nail notch radius, distance from the hinge zone, shortest snap arm, snap bump length
 const TRAY = { rim: 1.2, floor: 0.6, wall: 1.6, arm: 1, slit: 0.8, snap: 0.3, notch: 0.15, nail: 3.5, hinge: 2.5, armMin: 6, bump: 1.2 };
+// finger notch in the front edge under the folded leg's tip (mm): radius, reach past the tip's centre, room under the tip
+const NOTCH = { r: 6.5, past: 2, under: 3.5 };
+const RING_CH = 0.6;   // 45° chamfer round both ends of the key-ring hole
 
 let engine, loading;
 export async function preparePhoneStand() {
@@ -224,9 +227,15 @@ export function phoneStandMechanism(cfgIn) {
     latch = latchAt(b);
   }
   const plateR = latch ? Math.hypot(latch.p1, Hend) : Math.hypot(R, Hend);   // side plate's reach from the axis
+  // finger notch: closed, the leg's round tip lies flush with the top face right behind the thin front wall, with
+  // the body under it, so there is nothing to grab. A round scoop (vertical walls, flat floor: no overhang) in the
+  // front edge, past the tip's centre, leaves `under` mm under the tip for a nail or fingertip to lift it.
+  const tipY = yh - (Ht - rt), tipZ = T - 2 * rt;   // closed: tip centre y, tip underside z
+  const nR = Math.min(NOTCH.r, xm - c - 1), reach = tipY + NOTCH.past, ny = reach - nR;
+  const notch = { x: 0, y: ny, r: nR, z: tipZ - NOTCH.under, reach, tipY, tipZ, under: NOTCH.under, width: 2 * Math.sqrt(nR * nR - ny * ny) };
   return {
     cfg, size: cfg.size, variant: cfg.variant, W, T, R, c, Ht, Hend, rt, K, J, T1, tc, fd, xm, faceIncl, tipR, yh,
-    sC, phiS, phoneAngle: faceIncl + phiS, rc, rcMax, sock, yh0, ym, rA, sA, latch, plateR,
+    sC, phiS, phoneAngle: faceIncl + phiS, rc, rcMax, sock, yh0, ym, rA, sA, latch, plateR, notch,
     poses: { print: 0, stand: phiS - PHI_PRINT, closed: 90 - PHI_PRINT },
   };
 }
@@ -843,18 +852,25 @@ function makeOutline(S, mech, cfg, shapeImage, warnings, grow = 0) {
   return { outline: out, polys: out.toPolygons(), yTop: b.max[1], yRect, shapeId: id };
 }
 
-// Key-ring hole: on the centre line as high as the wall allows (falls back to the region's topmost point).
+// Key-ring hole: on the centre line as high as the wall allows (falls back to the region's topmost point). When the
+// asked hole does not fit (a narrow star), the biggest one ≥ 4 mm that does, in 0.5 mm steps; `asked` tells the UI.
 function ringSpot(S, deco, cfg, warnings) {
   if (!cfg.ring.enabled) return null;
-  const r = cfg.ring.diameter / 2;
-  const inset = S.o(deco.offset(-(r + cfg.ring.wall), 'Round', 2, 48));
-  if (inset.isEmpty()) { warnings.push('No cabe el agujero del llavero: aumenta el tamaño de la forma.'); return null; }
-  const polys = inset.toPolygons();
-  const y = maxAt(polys, 0, 0);
-  if (Number.isFinite(y)) return { x: 0, y: y - 0.05, r };
-  let best = null;
-  for (const p of polys) for (const v of p) if (!best || v[1] > best[1]) best = v;
-  return { x: best[0], y: best[1] - 0.05, r };
+  const D = cfg.ring.diameter;
+  for (let d = D; d >= Math.min(4, D) - 1e-9; d -= 0.5) {
+    const r = d / 2;
+    const inset = S.o(deco.offset(-(r + cfg.ring.wall), 'Round', 2, 48));
+    if (inset.isEmpty()) continue;
+    const asked = D / 2;
+    const polys = inset.toPolygons();
+    const y = maxAt(polys, 0, 0);
+    if (Number.isFinite(y)) return { x: 0, y: y - 0.05, r, asked };
+    let best = null;
+    for (const p of polys) for (const v of p) if (!best || v[1] > best[1]) best = v;
+    return { x: best[0], y: best[1] - 0.05, r, asked };
+  }
+  warnings.push('No cabe el agujero del llavero: aumenta el tamaño de la forma.');
+  return null;
 }
 // ------------------------------------------------------------------ logo / brand text
 // Two places on the body's top face, behind the hinge zone (nothing goes on the leg: its faces are the phone rest
@@ -1337,7 +1353,19 @@ export function phoneStandSolids(cfgIn, { logoImage = null, shapeImage = null, f
     const footCut = (pts, y0, y1) => both(alongY(S, o(new CS([pts], 'NonZero')), y0, y1));
     const kneeFoot = footCut([[xm + c - 1, -1], [xm + c + 1.5, -1], [xm + c - 1, 1.5]], yh - R - c, yh - sC);
     const barrelFoot = footCut([[xm - 1.5, -1], [xm + 1, -1], [xm + 1, 1.5]], yh - R - 2, yh + R + 2);
-    const ringCut = ring ? o(o(M.cylinder(T + 2, ring.r, ring.r, 48)).translate([ring.x, ring.y, -1])) : null;
+    // key-ring hole, chamfered 45° at both faces (easy to see and to thread a split ring in, no elephant foot)
+    let ringCut = null;
+    if (ring) {
+      ring.chamfer = RING_CH;
+      const h = RING_CH + 1, r = ring.r;
+      ringCut = o(M.union([
+        o(o(M.cylinder(T + 2, r, r, 48)).translate([0, 0, -1])),
+        o(o(M.cylinder(h, r + h, r, 48)).translate([0, 0, -1])),
+        o(o(M.cylinder(h, r, r + h, 48)).translate([0, 0, T - RING_CH])),
+      ]));
+      ringCut = o(ringCut.translate([ring.x, ring.y, 0]));
+    }
+    const nt = mech.notch, notchCut = extrudeZ(S, circle(S, nt.x, nt.y, nt.r, 96), nt.z, T + 1);
     const pocket = nfc?.mount === 'pause' ? o(o(M.cylinder(nfc.z1 - nfc.z0, nfc.r, nfc.r, 96)).translate([nfc.x, nfc.y, nfc.z0])) : null;
     const ts = nfc?.mount === 'tray' ? traySolids(S, mech, outline, nfc) : null;
     const slot = opener ? openerCutter(S, mech, opener) : null;
@@ -1367,7 +1395,7 @@ export function phoneStandSolids(cfgIn, { logoImage = null, shapeImage = null, f
     let body = o(o(o(slab.subtract(midCut)).subtract(endCut)).subtract(bevel));
     if (lips) body = o(body.add(lips));
     body = o(o(body.add(both(pin))).subtract(kneeFoot));
-    for (const cut of [ringCut, pocket, ts?.slot, ts?.nail, slot, recess]) if (cut) body = o(body.subtract(cut));
+    for (const cut of [ringCut, notchCut, pocket, ts?.slot, ts?.nail, slot, recess]) if (cut) body = o(body.subtract(cut));
     // leg, built upright in the leg frame: middle (barrel, neck, keel, front face) + side plates over the knuckles
     // (45° undersides, no overhang), then turned to its print pose
     let leg = alongX(S, toYZ(S, mech, sec.legMid), -xm, xm);
@@ -1411,6 +1439,17 @@ export function phoneStandSolids(cfgIn, { logoImage = null, shapeImage = null, f
       // it cannot come off the body (it is printed in place, already assembled)
       hinge: { pinDiameter: 2 * rc, socketWall: R - sock, gap, clearance: c, axis: { y: yh, z: R }, retention: rc - c, captured: rc - c >= 1 },
       latch: mech.latch ? { e: mech.latch.e, interference: cfg.latch } : null,
+      notch: { width: nt.width, depth: nt.reach, under: nt.under, floor: nt.z },
+      // prints with no supports at all (the 3MF turns them off and paints blockers): the only faces facing down
+      // are these flat ceilings, bridged across `span` mm (the sealed pocket's lid is printed over the chip)
+      print: {
+        supports: false,
+        bridges: [
+          opener && { kind: 'opener', z: SLOT.top, span: SLOT.len },
+          nfc?.mount === 'tray' && { kind: 'tray', z: nfc.z1, span: 2 * (nfc.dims.Bt + TRAY.snap + TRAY.notch) },
+          nfc?.mount === 'pause' && { kind: 'pocket', z: nfc.z1, span: 2 * nfc.r },
+        ].filter(Boolean),
+      },
       ring, nfc, opener,
       art: { mode, top: artInfo(art.top), bar: artInfo(art.bar), minLine: cfg.logo.minLine },
       logo,
@@ -1495,12 +1534,16 @@ export function buildPhoneStand(cfgIn, opts = {}) {
 }
 
 // What goes into the 3MF: the printable parts (no see-through previews) as objects — the stand with its art, and
-// each part printed apart (the NFC tray, already beside it on the plate) as its own object.
+// each part printed apart (the NFC tray, already beside it on the plate) as its own object. Nothing needs supports
+// (the slits and slots are bridged): every object turns them off, and every face looking down is painted as a
+// support blocker too, so a slicer preset with supports on (or an import that drops the object settings) can't
+// fill the can opener's slit or the NFC slot with supports that never come out.
 export function phoneStandExport(res) {
-  const parts = res.parts.filter((p) => !p.preview);
+  const parts = res.parts.filter((p) => !p.preview).map((p) => ({ ...p, blockSupports: true }));
   const apart = parts.map((p, i) => (p.apart ? i : -1)).filter((i) => i >= 0);
-  const assemblies = [{ name: res.cfg.name || 'Soporte celular', parts: parts.map((_, i) => i).filter((i) => !parts[i].apart) }];
-  for (const i of apart) assemblies.push({ name: parts[i].name, parts: [i] });
+  const settings = { enable_support: '0' };
+  const assemblies = [{ name: res.cfg.name || 'Soporte celular', parts: parts.map((_, i) => i).filter((i) => !parts[i].apart), settings }];
+  for (const i of apart) assemblies.push({ name: parts[i].name, parts: [i], settings });
   return { parts, assemblies, pauses: res.pauses };
 }
 
@@ -1518,6 +1561,8 @@ export function shapeThumbnails(cfgIn, { shapeImage = null } = {}) {
       let cs = o(shp.outline.subtract(roundRect(S, -(mech.xm + mech.c), mech.xm + mech.c, 2.5, mech.yh - mech.sC, 1)));
       const ring = ringSpot(S, o(shp.outline.intersect(halfPlane(S, mech.ym))), mech.cfg, w);
       if (ring) cs = o(cs.subtract(circle(S, ring.x, ring.y, ring.r, 32)));
+      const nt = mech.notch;
+      cs = o(cs.subtract(circle(S, nt.x, nt.y, nt.r, 48)));
       const b = cs.bounds(), pad = 2;
       const d = cs.toPolygons().map((p) => 'M' + p.map(([x, y]) => `${x.toFixed(2)} ${(-y).toFixed(2)}`).join('L') + 'Z').join('');
       out[s.id] = { d, viewBox: `${(b.min[0] - pad).toFixed(2)} ${(-b.max[1] - pad).toFixed(2)} ${(b.max[0] - b.min[0] + 2 * pad).toFixed(2)} ${(b.max[1] - b.min[1] + 2 * pad).toFixed(2)}`, custom: s.id === 'custom' && shp.shapeId !== 'custom' };

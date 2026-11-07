@@ -168,6 +168,41 @@ function checkPhone(label, cfg, sol, fixed) {
   ok(vBody < 0.01 && vLeg < 0.01 && gBody < 0.05 && gLeg < 0.05, `${label}: el celular se apoya en la pata y en la ranura (cruce ${f2(vBody + vLeg)} mm³, distancia ${f2(gBody)} / ${f2(gLeg)} mm)`);
 }
 
+const box = (x0, x1, y0, y1, z0, z1) => { const a = Manifold.cube([x1 - x0, y1 - y0, z1 - z0]), b = a.translate([x0, y0, z0]); a.delete(); return b; };
+// the finger notch in the front edge: closed, the leg's tip shows in it with ≥ 3 mm free under it for a nail, open
+// to the front; the scoop leaves the wall's foot under it whole (the latch still clicks: checkHinge)
+function checkNotch(label, sol, fixed) {
+  const m = sol.mech, nt = m.notch, I = sol.info.notch, closed = sol.legAt(m.poses.closed);
+  const scoop = box(-3, 3, -1, nt.tipY + 1, nt.z + 0.05, m.T + 3), tip = box(-3, 3, nt.tipY - 1, nt.tipY + 1, nt.tipZ + 0.05, m.T);
+  const col = box(-3, 3, -1, nt.tipY, 0, m.T), legCol = closed.intersect(col), floor = box(-3, 3, 0.3, 2, 0.1, nt.z - 0.1);
+  const vScoop = overlap(fixed, scoop), vTip = overlap(closed, tip), gap = legCol.boundingBox().min[2] - nt.z, vFloor = overlap(fixed, floor), floorVol = floor.volume();
+  for (const x of [closed, scoop, tip, col, legCol, floor]) x.delete();
+  ok(vScoop < 1e-3 && I.width >= 12 && I.depth >= nt.tipY + 1.5, `${label}: muesca para abrir de ${f2(I.width)} mm al frente, libre (${f2(vScoop)} mm³ dentro)`);
+  ok(vTip > 15 && gap >= 3, `${label}: la punta de la pata cerrada asoma en la muesca (${f2(vTip)} mm³) con ${f2(gap)} mm libres debajo para la uña`);
+  ok(vFloor > 0.99 * floorVol, `${label}: el pie de la pared queda entero bajo la muesca`);
+}
+
+// no supports needed: the 3MF turns them off; the only faces looking down past 45° above the bed are the declared
+// flat bridge ceilings (each present, ≤ 30 mm across); the leg stands on its barrel; the tray prints flat
+function checkPrint(label, sol) {
+  const P = sol.info.print, g = sol.body.getMesh(), V = g.vertProperties, np = g.numProp, Tv = g.triVerts;
+  const at = new Map(P.bridges.map((b) => [b.z, 0]));
+  let bad = 0;
+  for (let t = 0; t < Tv.length; t += 3) {
+    const p = [0, 1, 2].map((k) => [V[Tv[t + k] * np], V[Tv[t + k] * np + 1], V[Tv[t + k] * np + 2]]);
+    const u = p[1].map((v, i) => v - p[0][i]), w = p[2].map((v, i) => v - p[0][i]);
+    const n = [u[1] * w[2] - u[2] * w[1], u[2] * w[0] - u[0] * w[2], u[0] * w[1] - u[1] * w[0]], L = Math.hypot(...n);
+    const zs = p.map((q) => q[2]), z0 = Math.min(...zs);
+    if (L < 1e-12 || n[2] / L >= -0.72 || z0 <= 0.01) continue;
+    const z = [...at.keys()].find((b) => Math.abs(b - z0) < 1e-4);
+    if (z !== undefined && n[2] / L < -0.999 && Math.max(...zs) - z0 < 1e-4) at.set(z, at.get(z) + L / 2); else bad += L / 2;
+  }
+  const lg = overhangs(sol.leg), tz = sol.tray ? sol.tray.boundingBox().min[2] : 0, tl = sol.tray && lowered(sol.tray, tz), tr = tl ? overhangs(tl).area : 0;
+  if (tl) tl.delete();
+  ok(P.supports === false && bad < 0.01 && [...at.values()].every((a) => a > 1) && P.bridges.every((b) => b.span <= 30) && lg.zTop < 0.7 && tr < 0.01,
+    `${label}: sin soportes, solo puentes planos (${P.bridges.map((b) => `${b.kind} z ${b.z} ${f2(b.span)} mm`).join(', ') || 'ninguno'}; otro voladizo ${f2(bad)} mm², bandeja ${f2(tr)} mm²)`);
+}
+
 // ------------------------------------------------------------------ every shape in both variants, plain and with all the extras
 console.log('Formas (estándar y corto | solo logo y con NFC, abre latas y texto):');
 for (const variant of ['standard', 'short']) {
@@ -189,14 +224,16 @@ for (const variant of ['standard', 'short']) {
         const opened = sol.outline.offset(-1, 'Round', 2, 48), back = opened.offset(1, 'Round', 2, 48), lost = sol.outline.subtract(back);
         ok(lost.area() < 1, `${label}: contorno sin astillas de menos de 2 mm (${f2(lost.area())} mm²)`);
         opened.delete(); back.delete(); lost.delete();
-        // key-ring hole: through the body, art clear of it
+        // key-ring hole: through the body, Ø5 chamfered at both faces (Ø6,2 at the face), art clear of it
         const ring = I.ring;
         ok(!!ring, `${label}: agujero del llavero`);
         if (ring) {
           const hole = cyl(ring.x, ring.y, ring.r - 0.2, -1, T + 5), halo = cyl(ring.x, ring.y, ring.r + 0.9, -1, T + 5);
+          const ch = [cyl(ring.x, ring.y, ring.r + 0.35, -1, 0.2), cyl(ring.x, ring.y, ring.r + 0.35, T - 0.2, T + 0.05)];
           ok(overlap(sol.body, hole) < 1e-3, `${label}: el agujero del llavero atraviesa la pieza`);
+          ok(ring.r === 2.5 && ring.chamfer === 0.6 && ch.every((c) => overlap(sol.body, c) < 1e-3), `${label}: argolla Ø${f2(2 * ring.r)} mm con chaflán abajo y arriba`);
           if (sol.topArt) ok(overlap(sol.topArt, halo) < 1e-3, `${label}: el logo no toca el agujero del llavero`);
-          hole.delete(); halo.delete();
+          hole.delete(); halo.delete(); ch.forEach((c) => c.delete());
         }
         const minLogo = short ? 12 : extras ? 20 : 25;
         ok(!!sol.topArt && I.art.top.w >= minLogo, `${label}: logo arriba de ${f2(I.art.top?.w)} mm de ancho`);
@@ -214,6 +251,7 @@ for (const variant of ['standard', 'short']) {
           ok(I.nfc?.covered && !I.nfc.mark, `${label}: el chip queda bajo el logo (se toca el logo)`);
           checkOpener(label, sol);
         }
+        checkPrint(label, sol);
       } finally {
         sol.dispose();
       }
@@ -250,9 +288,20 @@ for (const [label, cfg, tMin] of [
     const caught = [[1, 0, 0], [-1, 0, 0], [0, 1, 0], [0, -1, 0], [0, 0, 1], [0, 0, -1]].filter((t) => { const l = sol.leg.translate(t), v = overlap(sol.body, l); l.delete(); return v > 1e-3; }).length;
     ok(I.hinge.captured && I.hinge.retention >= 1 && caught === 6, `${label}: bisagra cautiva, la pata no se sale (choca al moverla 1 mm en ${caught}/6 direcciones; pasador ${f2(I.hinge.retention)} mm adentro)`);
     checkHinge(label, sol, fixed);
+    checkNotch(label, sol, fixed);
     checkPhone(label, cfg, sol, fixed);
   } finally {
     if (fixed !== sol.body) fixed.delete();
+    sol.dispose();
+  }
+}
+// a key-ring hole too big for a narrow shape shrinks (≥ Ø4) instead of vanishing; the panel shows what was asked
+{
+  for (const [label, cfg, d] of [['argolla Ø6 en estrella de 30 mm', { width: 30, shape: 'star', ring: { diameter: 6 } }, 5.5], ['argolla Ø8 en flor de 30 mm', { width: 30, shape: 'flower', ring: { diameter: 8 } }, 5.5]]) {
+    const sol = solid(cfg), rg = sol.info.ring, hole = rg && cyl(rg.x, rg.y, rg.r - 0.2, -1, sol.mech.T + 5), warn = sol.warnings.filter((w) => !w.includes('trazos'));
+    ok(rg && 2 * rg.r === d && rg.asked === sol.cfg.ring.diameter / 2 && warn.length === 0 && overlap(sol.body, hole) < 1e-3,
+      `${label}: argolla de Ø${f2(2 * rg?.r)} mm (pedida Ø${f2(2 * rg?.asked)}), atraviesa la pieza, sin avisos${warn.length ? ` (${warn.join(' | ')})` : ''}`);
+    hole?.delete();
     sol.dispose();
   }
 }
@@ -315,7 +364,7 @@ console.log('Chip NFC (bandeja tipo SIM, pausa, lugar, señal y alargue):');
   checkNfc('pausa arriba', topP);
   topP.dispose();
   const top = solid({ nfc: nfc({ where: 'top' }) }), tn = top.info.nfc, rg = top.info.ring;
-  const rw = cyl(rg.x, rg.y, rg.r + 1.5, 0.1, top.mech.T - 0.1), rh = cyl(rg.x, rg.y, rg.r + 0.01, -1, top.mech.T + 1), ringWall = rw.subtract(rh);
+  const rw = cyl(rg.x, rg.y, rg.r + 1.5, 0.1, top.mech.T - 0.1), rh = cyl(rg.x, rg.y, rg.r + rg.chamfer + 0.01, -1, top.mech.T + 1), ringWall = rw.subtract(rh);
   ok(tn?.where === 'top' && tn.y >= nt.y && overlap(top.body, ringWall) > 0.99 * ringWall.volume(), `bandeja arriba: sube a y ${f2(tn?.y)} mm (en la barra ${f2(nt.y)}) sin cortar el aro del llavero`);
   rw.delete(); rh.delete(); ringWall.delete();
   checkNfc('bandeja arriba', top);
@@ -590,6 +639,25 @@ console.log('Piezas exportadas:');
   const zip = unzipSync(threeMF(ex.parts, 'Soporte', { pauses: ex.pauses, assemblies: ex.assemblies }));
   const model = strFromU8(zip['3D/3dmodel.model']);
   ok(ex.parts.length === 7 && ex.parts.every((p) => model.includes(`name="${p.name}"`)) && !model.includes('Chip NFC') && !zip['Metadata/custom_gcode_per_layer.xml'], '3MF con las 7 piezas por nombre, sin el chip ni pausas');
+  // supports off on every object, and every face looking down above the bed painted as a support blocker (none on
+  // the bed or facing up), so even with supports turned back on Bambu Studio leaves the slits and the slot empty
+  const msc = strFromU8(zip['Metadata/model_settings.config']);
+  let miss = 0, wrong = 0, painted = 0, bodyPainted = 0;
+  for (const [, name, vs, ts] of model.matchAll(/<object id="\d+" type="model" name="([^"]+)" pid="1" pindex="\d+">\n<mesh>\n<vertices>\n([\s\S]*?)\n<\/vertices>\n<triangles>\n([\s\S]*?)\n<\/triangles>/g)) {
+    const P = [...vs.matchAll(/x="([^"]+)" y="([^"]+)" z="([^"]+)"/g)].map((m) => [+m[1], +m[2], +m[3]]);
+    for (const t of ts.matchAll(/v1="(\d+)" v2="(\d+)" v3="(\d+)"( paint_supports="8")?/g)) {
+      const [a, b, c] = [t[1], t[2], t[3]].map((i) => P[+i]);
+      const u = b.map((v, i) => v - a[i]), w = c.map((v, i) => v - a[i]);
+      const nz = u[0] * w[1] - u[1] * w[0], L = Math.hypot(u[1] * w[2] - u[2] * w[1], u[2] * w[0] - u[0] * w[2], nz);
+      const zs = [a[2], b[2], c[2]], down = nz / L < -0.72 && Math.min(...zs) > 0.05;
+      if (t[4]) { painted++; if (name === 'Cuerpo') bodyPainted++; }
+      if (L < 2e-3) continue;   // slivers (≪ 0.001 mm²) can flip when the file rounds them to 0.1 µm
+      if (down && !t[4]) miss++;
+      if (t[4] && (Math.max(...zs) < 0.05 || nz >= 0)) wrong++;
+    }
+  }
+  ok((msc.match(/<metadata key="enable_support" value="0"\/>/g) || []).length === ex.assemblies.length && bodyPainted > 0 && miss === 0 && wrong === 0,
+    `3MF: soportes apagados en los ${ex.assemblies.length} objetos, ${painted} caras hacia abajo pintadas como bloqueo (${miss} sin pintar, ${wrong} de más)`);
   // the pause mount instead: one object and the pause to drop the chip in
   const rp = buildPhoneStand({ ...EXTRAS, nfc: { enabled: true, mount: 'pause' } }, { logoImage, font });
   const ep = phoneStandExport(rp);

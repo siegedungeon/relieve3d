@@ -124,8 +124,8 @@ export class PhoneStandStudio {
         <button class="btn" data-a="photo" title="PNG de la vista actual con fondo claro, para mostrarle el diseño al cliente">📸 Foto</button>
       </div>
       <div class="spacer"></div>
-      <button class="btn" data-a="stl" title="Un solo STL con todas las piezas (la bandeja NFC al lado): un color, sin la pausa del NFC">⬇ STL</button>
-      <button class="btn primary" data-a="3mf" title="3MF con una pieza por color del logo, la bandeja NFC como objeto aparte o la pausa para meter el chip (Bambu Studio / OrcaSlicer)">⬇ Exportar 3MF</button>
+      <button class="btn" data-a="stl" title="Un solo STL con todas las piezas (la bandeja NFC al lado): un color, sin la pausa del NFC. En el laminador apaga los soportes">⬇ STL</button>
+      <button class="btn primary" data-a="3mf" title="3MF con una pieza por color del logo, la bandeja NFC como objeto aparte o la pausa para meter el chip, y los soportes apagados (Bambu Studio / OrcaSlicer)">⬇ Exportar 3MF</button>
     </header>
     <main class="layout studio-layout hb-layout ps-layout">
       <aside class="panel left">
@@ -231,7 +231,7 @@ export class PhoneStandStudio {
           <h3>✅ Resultado</h3>
           <div class="hb-warn" data-r="warn"></div>
           <div class="hb-list small" data-r="list"></div>
-          <div class="ps-tip muted small">🖨️ PLA · capas de 0,2 mm · <b>sin soportes</b> · imprímelo tal como sale: el cuerpo acostado y la pata parada en su ranura; la bisagra sale armada. Al terminar, mueve la pata con cuidado hacia adelante y hacia atrás para soltarla y dóblala hasta que haga clic.<span data-show="nfcTray"> 📶 La bandeja sale al lado: pon el chip en su hueco y deslízala por la ranura del lado hasta que haga clic; para sacarla, hálala con la uña desde la muesca.</span><span data-show="nfcPause"> 📶 En la pausa mete el chip y dale continuar.</span></div>
+          <div class="ps-tip muted small">🖨️ PLA · capas de 0,2 mm · <b>sin soportes</b> (el 3MF ya los apaga y bloquea; con STL apágalos tú: la ranura del abre latas y la del NFC se imprimen como puente) · imprímelo tal como sale: el cuerpo acostado y la pata parada en su ranura; la bisagra sale armada. Al terminar, mueve la pata con cuidado hacia adelante y hacia atrás para soltarla y dóblala hasta que haga clic. Para abrirla, mete la uña en la muesca del frente, debajo de la punta de la pata.<span data-show="nfcTray"> 📶 La bandeja sale al lado: pon el chip en su hueco y deslízala por la ranura del lado hasta que haga clic; para sacarla, hálala con la uña desde la muesca.</span><span data-show="nfcPause"> 📶 En la pausa mete el chip y dale continuar.</span></div>
         </section>
       </aside>
     </main>
@@ -546,7 +546,7 @@ export class PhoneStandStudio {
     const i = res.info;
     this.$('warn').innerHTML = res.warnings.length
       ? res.warnings.map((w) => `<div class="hb-w">⚠ ${esc(w)}</div>`).join('')
-      : '<div class="hb-ok">✓ Listo para imprimir: sin soportes y con la bisagra armada.</div>';
+      : '<div class="hb-ok">✓ Listo para imprimir: sin soportes (el 3MF los apaga) y con la bisagra armada.</div>';
     const sw = (color) => `<span class="sw" style="background:${esc(color)}"></span>`;
     const row = (k, v) => `<div class="hb-pc"><span>${k}</span><span class="muted">${v}</span></div>`;
     const name = (list, id) => list.find((s) => s.id === id)?.name || id;
@@ -565,7 +565,10 @@ export class PhoneStandStudio {
     h += row('Estabilidad', `vertical ${ok(i.stability.portrait)} · horizontal ${ok(i.stability.landscape)}${i.phone.landscape ? ' · úsalo horizontal' : ''}`);
     h += row('Bisagra', `conos Ø${f1(i.hinge.pinDiameter)} mm · holgura ${f1(i.hinge.clearance)} mm`);
     h += row('Cierre', i.latch ? `clic de ${f1(i.latch.interference)} mm (no se abre en el bolsillo)` : 'sin clic');
-    if (i.ring) h += row('Argolla', `agujero Ø${f1(2 * i.ring.r)} mm`);
+    h += row('Muesca para abrir', `${f1(i.notch.width)} mm al frente · ${f1(i.notch.under)} mm bajo la punta de la pata para la uña`);
+    if (i.ring) h += row('Argolla', `agujero Ø${f1(2 * i.ring.r)} mm con chaflán, arriba en la forma${i.ring.r < i.ring.asked - 1e-9 ? ` (Ø${f1(2 * i.ring.asked)} no cabe en esta forma)` : ''}`);
+    const br = { opener: 'abre latas', tray: 'ranura NFC', pocket: 'tapa del chip' };
+    h += row('Soportes', `ninguno${i.print.bridges.length ? ` · puentes: ${i.print.bridges.map((b) => `${br[b.kind]} ${f1(b.span)} mm`).join(', ')}` : ''}`);
     const made = { relief: 'en relieve', flat: 'a ras', engrave: 'grabada' }[i.art.mode];
     if (i.nfc) {
       const n = i.nfc;
@@ -818,13 +821,13 @@ export class PhoneStandStudio {
     try {
       // the stand with its colour pieces as one object, the NFC tray (beside it on the plate) as another
       const ex = phoneStandExport(res);
-      const parts = ex.parts.map(({ name: n, color, filamentIndex, geometry }) => ({ name: n, color, filamentIndex, geometry }));
+      const parts = ex.parts.map(({ name: n, color, filamentIndex, geometry, blockSupports }) => ({ name: n, color, filamentIndex, geometry, blockSupports }));
       const assemblies = ex.assemblies.map((a, k) => (k ? a : { ...a, name }));
       const data = threeMF(parts, name, { assemblies, pauses: ex.pauses });
       const p = await window.api.saveFile({ defaultPath: fileBase(name) + '.3mf', filters: [{ name: '3MF', extensions: ['3mf'] }], data });
       const nf = res.filaments.length;
       if (p) {
-        this.cb.toast(`✓ 3MF guardado · ${nf} filamento${nf > 1 ? 's' : ''}${assemblies.length > 1 ? ' · la bandeja NFC va como objeto aparte' : ''}`
+        this.cb.toast(`✓ 3MF guardado · ${nf} filamento${nf > 1 ? 's' : ''} · soportes apagados${assemblies.length > 1 ? ' · la bandeja NFC va como objeto aparte' : ''}`
           + `${ex.pauses.length ? ` · pausa para el chip NFC a Z = ${f1(ex.pauses[0].z)} mm` : ''}`);
       }
       return p;
@@ -842,7 +845,7 @@ export class PhoneStandStudio {
       const data = stlBinary(res.parts.filter((p) => !p.preview).map((p) => p.geometry));
       const p = await window.api.saveFile({ defaultPath: fileBase(name) + '.stl', filters: [{ name: 'STL', extensions: ['stl'] }], data });
       const tray = res.parts.some((q) => q.apart);
-      if (p) this.cb.toast(`✓ STL guardado (un solo color${tray ? '; la bandeja NFC va al lado del soporte' : ''}${res.pauses.length ? `; agrega a mano la pausa del chip NFC a Z = ${f1(res.pauses[0].z)} mm` : ''})`);
+      if (p) this.cb.toast(`✓ STL guardado (un solo color${tray ? '; la bandeja NFC va al lado del soporte' : ''}${res.pauses.length ? `; agrega a mano la pausa del chip NFC a Z = ${f1(res.pauses[0].z)} mm` : ''}; apaga los soportes en el laminador)`);
       return p;
     } catch (err) {
       console.error(err);

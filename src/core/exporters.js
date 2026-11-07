@@ -53,7 +53,8 @@ export function stlBinary(geoms) {
 const esc = (s) => String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/"/g, '&quot;');
 const f = (v) => (Math.abs(v) < 1e-9 ? '0' : v.toFixed(4).replace(/\.?0+$/, ''));
 
-// Optional assemblies retain independently editable objects on a batch plate.
+// Optional assemblies retain independently editable objects on a batch plate; assembly.settings = per-object slicer
+// settings ({ enable_support: '0' } …), part.blockSupports paints its downward faces as support blockers.
 // opts.pauses: [{ z, msg }] → Bambu Studio "pause print" at that layer height (e.g. to insert an NFC chip or magnets)
 export function threeMF(parts, modelName = 'Relieve3D', opts = {}) {
   const assemblies = opts.assemblies || [{ name: modelName, parts: parts.map((_, i) => i) }];
@@ -85,7 +86,16 @@ export function threeMF(parts, modelName = 'Relieve3D', opts = {}) {
     for (let i = 0; i < pos.count; i++) vs.push(`<vertex x="${f(pos.getX(i))}" y="${f(pos.getY(i))}" z="${f(pos.getZ(i))}"/>`);
     out.push(vs.join('\n'), '\n</vertices>\n<triangles>\n');
     const ts = [];
-    triangles(g, (a, b, c) => { if (a !== b && b !== c && a !== c) ts.push(`<triangle v1="${a}" v2="${b}" v3="${c}"/>`); });
+    // blockSupports: faces looking down (> 30° past vertical) above the bed are painted as support blockers
+    // (Bambu Studio / Orca "paint_supports": "8" = whole triangle, blocker); other slicers ignore the attribute
+    const paint = (a, b, c) => {
+      if (!p.blockSupports) return '';
+      const A = [pos.getX(a), pos.getY(a), pos.getZ(a)], B = [pos.getX(b), pos.getY(b), pos.getZ(b)], C = [pos.getX(c), pos.getY(c), pos.getZ(c)];
+      const u = B.map((v, i) => v - A[i]), w = C.map((v, i) => v - A[i]);
+      const nz = u[0] * w[1] - u[1] * w[0], L = Math.hypot(u[1] * w[2] - u[2] * w[1], u[2] * w[0] - u[0] * w[2], nz);
+      return L > 1e-12 && nz < -0.5 * L && Math.min(A[2], B[2], C[2]) > 0.05 ? ' paint_supports="8"' : '';
+    };
+    triangles(g, (a, b, c) => { if (a !== b && b !== c && a !== c) ts.push(`<triangle v1="${a}" v2="${b}" v3="${c}"${paint(a, b, c)}/>`); });
     out.push(ts.join('\n'), '\n</triangles>\n</mesh>\n</object>\n');
     ids.push(id++);
     g.dispose();
@@ -97,7 +107,8 @@ export function threeMF(parts, modelName = 'Relieve3D', opts = {}) {
     a.parts.forEach(i => out.push(`<component objectid="${ids[i]}"/>\n`));
     out.push('</components>\n</object>\n');
     build.push(`<item objectid="${asm}" transform="1 0 0 0 1 0 0 0 1 ${f(shift[0])} ${f(shift[1])} 0" printable="1"/>\n`);
-    cfg.push(`<object id="${asm}"><metadata key="name" value="${esc(a.name)}"/><metadata key="extruder" value="1"/>\n`);
+    const extra = Object.entries(a.settings || {}).map(([k, v]) => `<metadata key="${esc(k)}" value="${esc(v)}"/>`).join('');
+    cfg.push(`<object id="${asm}"><metadata key="name" value="${esc(a.name)}"/><metadata key="extruder" value="1"/>${extra}\n`);
     a.parts.forEach(i => {
       const p = parts[i];
       cfg.push(`<part id="${ids[i]}" subtype="normal_part"><metadata key="name" value="${esc(p.name)}"/><metadata key="extruder" value="${p.filamentIndex + 1}"/></part>\n`);

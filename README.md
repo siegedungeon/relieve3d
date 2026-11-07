@@ -291,21 +291,23 @@ Llavero que se abre y sostiene el celular. Tiene una **pata en bisagra** que se 
     - Si nada lo tapa, lleva encima la **señal 📶** (sin contacto) para saber dónde tocar. Se hace igual que el logo y en el color de acento.
     - Si el chip no cabe, la forma de arriba **se alarga sola** y *Resultado* dice cuánto.
   - **🥫 Abre latas**: ranura en el borde derecho o izquierdo, girada si el borde es curvo. Mete la pestaña de la lata y haz palanca. Si no hay un borde libre, la forma también se alarga sola.
-  - **🔑 Agujero para la argolla**, con diámetro editable.
+  - **🔑 Agujero para la argolla** arriba en la forma, Ø5 mm por defecto (editable de 3 a 8), con **chaflán de 0,6 mm** en las dos caras para verlo y meter la argolla con facilidad. Si el diámetro pedido no cabe en una forma angosta, queda el más grande que quepa (mínimo Ø4) y *Resultado* lo dice.
+- **Muesca para abrir**: un rebaje redondo en el borde de adelante, justo bajo la punta de la pata cerrada (unos 13 mm de ancho y 3,3 mm libres debajo). Mete la uña o la yema ahí y levanta la pata, sin pelear con el clic.
 - **Medidas**: ancho (30–46 mm) y holgura de la bisagra. En *Avanzado*: clic de cierre (0–0,6 mm; 0 = sin clic), radio del pasador y pared de la argolla. Un valor fuera de rango se ajusta al salir del campo.
 - **Resultado** muestra:
   - medidas cerrado y al imprimir, peso y filamentos (con sus colores);
   - ángulo y grosor máximo del celular, y estabilidad (vertical y horizontal);
-  - bisagra, clic, NFC (dónde tocar, por qué lado entra la bandeja o a qué altura va la pausa), abre latas y acabado;
+  - bisagra, clic, muesca para abrir, argolla, NFC (dónde tocar, por qué lado entra la bandeja o a qué altura va la pausa), abre latas y acabado;
+  - soportes: ninguno, y los puentes que hace la impresora (ranura del abre latas, ranura de la bandeja o tapa del bolsillo NFC);
   - piezas del 3MF y avisos.
 - **Vistas**: *Como se imprime* (la bandeja NFC al lado), *Abierto con celular* (con un celular de referencia), *Cerrado (llavero)* y *Vista de arriba*; en estas tres, la bandeja se ve metida en su ranura. El deslizador *Mover la pata* y **▶ Animar** muestran el giro de la bisagra.
 - **Exportar**:
-  - **3MF** para Bambu Studio y OrcaSlicer: un filamento por color, el soporte y la bandeja NFC como **objetos separados** en la placa, y la pausa solo en el modo *Sellado con pausa*;
-  - **STL** único: un solo color, con la bandeja al lado; la pausa, si la usas, debes agregarla a mano en el laminador;
+  - **3MF** para Bambu Studio y OrcaSlicer: un filamento por color, el soporte y la bandeja NFC como **objetos separados** en la placa, y la pausa solo en el modo *Sellado con pausa*. Cada objeto lleva los **soportes apagados** y las caras que miran hacia abajo vienen **pintadas como bloqueo de soportes**, así que aunque el perfil tenga soportes activados no se llenan la ranura del abre latas ni la de la bandeja NFC;
+  - **STL** único: un solo color, con la bandeja al lado; desactiva los soportes en el laminador (el STL no los puede llevar) y, si usas la pausa, agrégala a mano;
   - **📸 Foto**: PNG para enviar al cliente;
   - **💾 Guardar proyecto** `.r3p`: medidas, colores del logo, logo y silueta. Se reabre con **📂 Abrir** o arrastrándolo a la ventana. Abre proyectos de versiones anteriores: los de la 1.17 conservan su forma, logo, texto y extras, y la bisagra se rehace con los valores por defecto; el acabado «incrustado» de la 1.19 pasa a *Liso multicolor*.
 
-**Impresión**: PLA, capas de 0,2 mm, sin soportes, tal como sale. Al terminar, mueve la pata con cuidado hacia adelante y hacia atrás para soltarla, y dóblala hasta que haga clic. Para el NFC con bandeja: pon el chip en su hueco y desliza la bandeja por la ranura hasta el clic. Imprime primero una pieza de prueba y ajusta a tu impresora:
+**Impresión**: PLA, capas de 0,2 mm, **sin soportes**, tal como sale: las ranuras del abre latas y de la bandeja NFC tienen techo plano que la impresora cruza como puente (16 y ~29 mm); un soporte ahí no se puede sacar y rompe la pieza. Al terminar, mueve la pata con cuidado hacia adelante y hacia atrás para soltarla, y dóblala hasta que haga clic. Para abrirla, levanta la punta desde la muesca del frente. Para el NFC con bandeja: pon el chip en su hueco y desliza la bandeja por la ranura hasta el clic. Imprime primero una pieza de prueba y ajusta a tu impresora:
 - *Holgura de la bisagra*: 0,3 mm por defecto. Si la pata sale pegada, súbela a 0,4; si queda floja, bájala a 0,25. La misma holgura (entre 0,25 y 0,45) se usa para la bandeja NFC.
 - *Clic de cierre*: 0,3 mm por defecto. Si cuesta cerrarla, bájalo; si se abre sola, súbelo (hasta 0,6).
 - *Logos pequeños*: usa *Liso multicolor* a 0,2 mm y, si tu boquilla es de 0,4 mm, deja el trazo mínimo en 0,5 o más.
