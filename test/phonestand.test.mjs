@@ -25,7 +25,7 @@ const png = PNG.sync.read(fs.readFileSync(new URL('./logo.png', import.meta.url)
 const logoImage = { data: png.data, width: png.width, height: png.height };
 const { Manifold } = await preparePhoneStand();
 const solid = (cfg, extra = {}) => phoneStandSolids(cfg, { logoImage, font, ...extra });
-const EXTRAS = { nfc: { enabled: true }, opener: { enabled: true }, text: { enabled: true, value: 'Pabonitas' } };
+const EXTRAS = { nfc: { enabled: true, mount: 'tray' }, opener: { enabled: true }, text: { enabled: true, value: 'Pabonitas' } };
 
 // exported mesh: every edge shared by exactly 2 triangles in opposite directions, positive volume
 function watertight(geometry) {
@@ -121,6 +121,10 @@ function checkNfc(label, sol) {
     const pocket = cyl(n.x, n.y, n.r - 0.2, n.z0 + 0.05, n.z1 - 0.05);
     ok(overlap(sol.body, pocket) < 1e-3, `${label}: bolsillo vacío`);
     pocket.delete();
+    const outer = cyl(n.x, n.y, n.r + 1, n.z0 + 0.05, n.z1 - 0.05), inner = cyl(n.x, n.y, n.r + 0.05, n.z0, n.z1);
+    const wall = outer.subtract(inner), floor = cyl(n.x, n.y, n.r - 0.2, n.z0 - 0.4, n.z0 - 0.05);
+    ok(overlap(sol.body, wall) > 0.99 * wall.volume() && overlap(sol.body, floor) > 0.99 * floor.volume(), `${label}: piso y pared completos alrededor del bolsillo, sin salida lateral`);
+    for (const m of [outer, inner, wall, floor]) m.delete();
     const cb = sol.chip?.boundingBox();
     ok(!!sol.chip && overlap(sol.body, sol.chip) < 1e-3 && cb.min[2] >= n.z0 - 1e-6 && cb.max[2] <= n.z1 + 1e-6, `${label}: chip de vista previa dentro del bolsillo`);
     return;
@@ -309,8 +313,15 @@ for (const [label, cfg, tMin] of [
 // ------------------------------------------------------------------ NFC: tray or pause pocket, place, tap sign, growing shape, chip too big
 console.log('Chip NFC (bandeja tipo SIM, pausa, lugar, señal y alargue):');
 {
-  const nfc = (o = {}) => ({ enabled: true, ...o });
-  // SIM-style tray (default): its slot opens on the side away from the can opener, or the one asked for
+  for (const cfg of [{}, { size: 'large', variant: 'short' }, { logo: { mode: 'engrave', depth: 2 } }]) {
+    const sol = solid({ ...cfg, nfc: { enabled: true }, opener: { enabled: true } });
+    ok(sol.info.nfc?.mount === 'pause' && !sol.tray && sol.info.parts.tray === 0, 'NFC predeterminado: bolsillo sellado sin bandeja');
+    checkNfc('NFC predeterminado', sol);
+    checkPrint('NFC predeterminado', sol);
+    sol.dispose();
+  }
+  const nfc = (o = {}) => ({ enabled: true, mount: 'tray', ...o });
+  // Optional SIM-style tray: its slot opens on the side away from the can opener, or the one asked for
   for (const [label, cfg, side] of [
     ['bandeja sola', { nfc: nfc() }, 'right'],
     ['bandeja + abre latas a la derecha', { nfc: nfc(), opener: { enabled: true } }, 'left'],
@@ -659,11 +670,18 @@ console.log('Piezas exportadas:');
   ok((msc.match(/<metadata key="enable_support" value="0"\/>/g) || []).length === ex.assemblies.length && bodyPainted > 0 && miss === 0 && wrong === 0,
     `3MF: soportes apagados en los ${ex.assemblies.length} objetos, ${painted} caras hacia abajo pintadas como bloqueo (${miss} sin pintar, ${wrong} de más)`);
   // the pause mount instead: one object and the pause to drop the chip in
-  const rp = buildPhoneStand({ ...EXTRAS, nfc: { enabled: true, mount: 'pause' } }, { logoImage, font });
+  const rp = buildPhoneStand({ ...EXTRAS, nfc: { enabled: true } }, { logoImage, font });
   const ep = phoneStandExport(rp);
   const zp = unzipSync(threeMF(ep.parts, 'Soporte', { pauses: ep.pauses, assemblies: ep.assemblies }));
   const gcode = strFromU8(zp['Metadata/custom_gcode_per_layer.xml'] || new Uint8Array());
   ok(ep.assemblies.length === 1 && !rp.parts.some((p) => p.apart) && gcode.includes(`top_z="${rp.info.nfc.z1}"`) && gcode.includes(NFC_PAUSE_MSG), `modo pausa: 3MF de un objeto con la pausa del NFC en z ${rp.info.nfc.z1}`);
+  const mp = strFromU8(zp['3D/3dmodel.model']), cp = strFromU8(zp['Metadata/model_settings.config']);
+  ok(/<metadata name="Application">BambuStudio-/.test(mp) && /<plate_info id="1"/.test(gcode) && /<plate>/.test(cp)
+    && !zp['Metadata/project_settings.config'] && !/Bandeja NFC|Chip NFC/.test(mp),
+    '3MF sellado: pausa nativa en la placa 1, sin bandeja ni chip impreso, sin sustituir el perfil de la impresora');
+  const shift = mp.match(/<item objectid="\d+" transform="([^"]+)"/)[1].split(' ').map(Number).slice(9);
+  ok(ep.parts.every((p) => p.geometry.boundingBox.min.x + shift[0] >= 9.99 && p.geometry.boundingBox.min.y + shift[1] >= 9.99),
+    '3MF con pausa: modelo dentro de la placa, no fuera de la cama al importarlo como proyecto');
   // the logo's white printed with the body's filament: 4 colours, fits an AMS
   const lum = (h) => [1, 3, 5].reduce((t, i) => t + parseInt(h.slice(i, i + 2), 16), 0);
   const white = r.info.logo.reduce((a, e) => (lum(e.key) > lum(a.key) ? e : a)).key;
@@ -696,7 +714,7 @@ console.log('Mecanismo, ajustes y proyecto:');
     nfc: { mount: 'x', side: 'up' }, text: { color: 'blue', height: 9 },
     logo: { colors: 9, tolerance: 1, minLine: 5, flatDepth: 0.75, layers: { '#ABCDEF': { color: 'red', height: 9, on: false }, nope: { on: false }, '#123456': 5 } },
   });
-  ok(nn.nfc.mount === 'tray' && nn.nfc.side === 'auto' && normalizePhoneStand({ nfc: { mount: 'pause', side: 'left' } }).nfc.side === 'left', 'NFC: bandeja por defecto, lado automático');
+  ok(nn.nfc.mount === 'pause' && nn.nfc.side === 'auto' && normalizePhoneStand({ nfc: { mount: 'tray', side: 'left' } }).nfc.side === 'left', 'NFC: pausa por defecto, bandeja explícita conservada');
   ok(nn.logo.colors === 6 && nn.logo.tolerance === 5 && nn.logo.minLine === 1.2 && nn.logo.flatDepth === 0.8 && normalizePhoneStand({ logo: { flatDepth: 0 } }).logo.flatDepth === 0.2, 'colores, tolerancia, trazo mínimo y profundidad lisa (capas enteras de 0,2 mm) válidos');
   ok(JSON.stringify(nn.logo.layers) === JSON.stringify({ '#abcdef': { color: '#abcdef', height: 3, on: false } }), `capas del logo válidas (${JSON.stringify(nn.logo.layers)})`);
   ok(nn.text.color === '' && nn.text.height === 3 && normalizePhoneStand({ text: { color: '#1E90FF' } }).text.color === '#1e90ff', 'color y altura del texto válidos');
@@ -721,7 +739,9 @@ console.log('Mecanismo, ajustes y proyecto:');
   const old = readPhoneStandProject({ app: PHONESTAND_PROJECT_APP, version: 1, cfg: v1 });
   ok(old.cfg.width === D.width && old.cfg.logo.where === 'bar' && old.cfg.shape === 'mouse', 'abre proyectos de la 1.17 (v1) ya migrados');
   const v2 = readPhoneStandProject({ app: PHONESTAND_PROJECT_APP, version: 2, cfg: { shape: 'flower', logo: { mode: 'inlay', depth: 0.8 }, nfc: { enabled: true } } });
-  ok(v2.cfg.shape === 'flower' && v2.cfg.logo.mode === 'flat' && v2.cfg.logo.flatDepth === 0.8 && v2.cfg.nfc.mount === 'tray', 'abre proyectos de la 1.19 (v2): incrustado → liso, NFC en bandeja');
+  ok(v2.cfg.shape === 'flower' && v2.cfg.logo.mode === 'flat' && v2.cfg.logo.flatDepth === 0.8 && v2.cfg.nfc.mount === 'pause', 'abre proyectos de la 1.19 (v2): incrustado → liso, NFC sellado');
+  const savedTray = readPhoneStandProject(phoneStandProject({ nfc: { enabled: true, mount: 'tray' } }));
+  ok(savedTray.cfg.nfc.mount === 'tray', 'un proyecto que eligió bandeja conserva su diseño al reabrirse');
   const throws = (x) => { try { readPhoneStandProject(x); return false; } catch { return true; } };
   ok(throws('{') && throws({ app: 'Otro', cfg: {} }) && throws({ ...JSON.parse(txt), version: 4 }), 'rechaza archivos ajenos o de otra versión');
 }

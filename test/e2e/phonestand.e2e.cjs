@@ -151,6 +151,14 @@ module.exports = async ({ win, run, shot, wait }) => {
   ok(await run(`['nfc','opener','text'].every(k=>!document.querySelector('#phonestand [data-show="'+k+'"]').hidden)`), 'their options appear');
   await setVal('text.value', 'Pabonitas');
   await idle();
+  const sealed = await info();
+  ok(sealed.nfc?.mount === 'pause' && sealed.pauses.length === 1 && sealed.pieces.tray === 0 && !sealed.parts.some((p) => p.apart)
+    && /sin bandeja ni ranura lateral/.test(await row('Pausa NFC'))
+    && await run(`${q('[data-k="nfc.mount"]')}.value === 'pause' && ${q('[data-show="nfcTray"]')}.hidden && !${q('[data-show="nfcPause"]')}.hidden`),
+    'turning on NFC defaults to a sealed pocket and print pause, no extra part or side slot');
+  await S('ps_04_default_sealed_nfc');
+  // Keep the optional replaceable-tray flow covered for existing projects.
+  await setVal('nfc.mount', 'tray'); await idle();
   const i2 = await info();
   log('mouse + extras', JSON.stringify({ grow: i2.grow, growFor: i2.growFor, nfc: i2.nfc, opener: i2.opener, top: i2.art.top, bar: i2.art.bar, pauses: i2.pauses, filaments: i2.filaments, warnings: i2.warnings }));
   ok(i2.shape === 'mouse' && !!i2.art.top?.logo && !!i2.art.bar?.text && i2.parts.some((p) => p.name === 'Texto (barra)'), 'logo on the head, «Pabonitas» on the bar behind the hinge');
@@ -426,8 +434,8 @@ module.exports = async ({ win, run, shot, wait }) => {
 
   // 10. reset keeps the logo; dropping the .r3p brings the whole design back
   await click('[data-a="reset"]'); await idle();
-  const rs = await P(`({shape: ps.cfg.shape, nfc: ps.cfg.nfc.enabled, width: ps.cfg.width, clearance: ps.cfg.clearance, field: ps.root.querySelector('[data-k=width]').value, logo: !!ps.logoImg, art: !!ps.res.info.art.top?.logo})`);
-  ok(rs.shape === 'heart' && !rs.nfc && rs.width === 36 && rs.field === '36' && rs.clearance === 0.3 && rs.logo && rs.art, 'reset: default measurements, logo kept');
+  const rs = await P(`({shape: ps.cfg.shape, nfc: ps.cfg.nfc.enabled, mount: ps.cfg.nfc.mount, width: ps.cfg.width, clearance: ps.cfg.clearance, field: ps.root.querySelector('[data-k=width]').value, logo: !!ps.logoImg, art: !!ps.res.info.art.top?.logo})`);
+  ok(rs.shape === 'heart' && !rs.nfc && rs.mount === 'pause' && rs.width === 36 && rs.field === '36' && rs.clearance === 0.3 && rs.logo && rs.art, 'reset: default measurements and sealed NFC mode, logo kept');
   if (files.r3p) await dropFile(files.r3p, 'Pabonitas raton.r3p', 'application/json');
   ok(await until(`ps.cfg.shape === 'mouse' && !!ps.res && ps.res.cfg.shape === 'mouse' && !ps.building`), 'dropped .r3p reopens the design');
   const re = await info();

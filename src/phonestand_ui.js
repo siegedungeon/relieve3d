@@ -124,8 +124,8 @@ export class PhoneStandStudio {
         <button class="btn" data-a="photo" title="PNG de la vista actual con fondo claro, para mostrarle el diseño al cliente">📸 Foto</button>
       </div>
       <div class="spacer"></div>
-      <button class="btn" data-a="stl" title="Un solo STL con todas las piezas (la bandeja NFC al lado): un color, sin la pausa del NFC. En el laminador apaga los soportes">⬇ STL</button>
-      <button class="btn primary" data-a="3mf" title="3MF con una pieza por color del logo, la bandeja NFC como objeto aparte o la pausa para meter el chip, y los soportes apagados (Bambu Studio / OrcaSlicer)">⬇ Exportar 3MF</button>
+      <button class="btn" data-a="stl" title="Un solo STL, sin la pausa del NFC: agrégala a mano en el laminador. Para llevar la pausa usa 3MF. Apaga los soportes">⬇ STL</button>
+      <button class="btn primary" data-a="3mf" title="3MF con una pieza por color del logo, pausa para insertar el NFC antes de cerrar su bolsillo y soportes apagados (Bambu Studio / OrcaSlicer). Si eliges bandeja, sale como objeto aparte">⬇ Exportar 3MF</button>
     </header>
     <main class="layout studio-layout hb-layout ps-layout">
       <aside class="panel left">
@@ -200,9 +200,9 @@ export class PhoneStandStudio {
       <aside class="panel right">
         <section class="card">
           <h3>✨ Extras</h3>
-          ${chk('📶 Chip NFC', 'nfc.enabled', 'Sticker NFC redondo dentro del llavero. Bandeja tipo SIM: se imprime aparte, pones el chip y la deslizas por la ranura del lado hasta que hace clic. Con pausa: la impresora para, metes el chip y queda sellado. En la vista se ve en dorado a través del cuerpo')}
+          ${chk('📶 Chip NFC', 'nfc.enabled', 'Por defecto queda sellado dentro del llavero: la impresora pausa con el bolsillo abierto, colocas el chip y continúas para taparlo. Sin bandeja ni ranura lateral. En la vista se ve en dorado a través del cuerpo')}
           <div data-show="nfc">
-            ${sel('Cómo va el chip', 'nfc.mount', [['tray', 'Bandeja tipo SIM (entra de lado)'], ['pause', 'Sellado con pausa de impresión']], 'Bandeja: sin pausa, el chip se puede cambiar; la bandeja sale al lado del soporte en el mismo plato. Pausa: bolsillo cerrado, la impresión para para que metas el chip y lo tapa')}
+            ${sel('Cómo va el chip', 'nfc.mount', [['pause', 'Sellado con pausa (recomendado)'], ['tray', 'Bandeja tipo SIM (opcional)']], 'Pausa: solo un bolsillo interno, sin pieza adicional ni abertura lateral; el 3MF incluye la pausa antes de la tapa. Bandeja: alternativa si necesitas cambiar el chip después')}
             <div data-show="nfcTray">${sel('Ranura por el lado', 'nfc.side', [['auto', 'Automático (lejos del abre latas)'], ['right', 'Derecho'], ['left', 'Izquierdo']], 'Por dónde entra la bandeja. Automático: el lado contrario al abre latas')}</div>
             ${num('Diámetro del chip (mm)', 'nfc.diameter', 'Los stickers NFC redondos (NTAG213/215) miden 25 mm: deja 0,5 mm de juego. Si no cabe, la forma de arriba se alarga sola')}
             ${num('Grosor del chip (mm)', 'nfc.depth', 'Se redondea a capas de 0,2 mm')}
@@ -231,7 +231,7 @@ export class PhoneStandStudio {
           <h3>✅ Resultado</h3>
           <div class="hb-warn" data-r="warn"></div>
           <div class="hb-list small" data-r="list"></div>
-          <div class="ps-tip muted small">🖨️ PLA · capas de 0,2 mm · <b>sin soportes</b> (el 3MF ya los apaga y bloquea; con STL apágalos tú: la ranura del abre latas y la del NFC se imprimen como puente) · imprímelo tal como sale: el cuerpo acostado y la pata parada en su ranura; la bisagra sale armada. Al terminar, mueve la pata con cuidado hacia adelante y hacia atrás para soltarla y dóblala hasta que haga clic. Para abrirla, mete la uña en la muesca del frente, debajo de la punta de la pata.<span data-show="nfcTray"> 📶 La bandeja sale al lado: pon el chip en su hueco y deslízala por la ranura del lado hasta que haga clic; para sacarla, hálala con la uña desde la muesca.</span><span data-show="nfcPause"> 📶 En la pausa mete el chip y dale continuar.</span></div>
+          <div class="ps-tip muted small">🖨️ PLA · capas de 0,2 mm · <b>sin soportes</b> (el 3MF ya los apaga y bloquea; con STL apágalos tú) · imprímelo tal como sale: el cuerpo acostado y la pata parada en su ranura; la bisagra sale armada. Al terminar, mueve la pata con cuidado hacia adelante y hacia atrás para soltarla y dóblala hasta que haga clic. Para abrirla, mete la uña en la muesca del frente, debajo de la punta de la pata.<span data-show="nfcTray"> 📶 La bandeja sale al lado: pon el chip en su hueco y deslízala por la ranura del lado hasta que haga clic; para sacarla, hálala con la uña desde la muesca.</span><span data-show="nfcPause"> 📶 Exporta en <b>3MF</b>: la pausa deja el bolsillo abierto. Coloca el chip plano, sin que sobresalga, y continúa para sellarlo. No hay bandeja ni ranura lateral; una vez tapado no se puede cambiar el chip. Al abrir el 3MF en Bambu Studio, conserva la configuración y comprueba la pausa en la vista previa; no lo importes solo como geometría.</span></div>
         </section>
       </aside>
     </main>
@@ -575,7 +575,7 @@ export class PhoneStandStudio {
       const where = n.covered ? `debajo del ${n.under}: toca el ${n.under} con el celular` : n.where === 'bar' ? 'cerca de la bisagra' : 'en la forma de arriba';
       h += row('Chip NFC 📶', `Ø${f1(2 * n.r)} mm · ${where}${n.mark ? ` · señal 📶 ${made} encima: toca la señal con el celular` : ''}`);
       if (n.mount === 'tray') h += row('Bandeja NFC 📶', `entra por el lado ${n.side === 'left' ? 'izquierdo' : 'derecho'} hasta el clic · se imprime aparte, sin pausa`);
-      else h += row('Pausa NFC', `a Z = ${f1(n.z1)} mm: mete el chip y continúa`);
+      else h += row('Pausa NFC', `a Z = ${f1(n.z1)} mm: mete el chip y continúa para sellarlo · sin bandeja ni ranura lateral`);
     }
     if (i.opener) h += row('Abre latas', `lado ${i.opener.side === 'left' ? 'izquierdo' : 'derecho'}${i.opener.angle ? ` · girado ${i.opener.angle}°` : ''}`);
     for (const w of ['top', 'bar']) {

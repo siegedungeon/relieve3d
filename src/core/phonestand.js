@@ -80,10 +80,10 @@ export const DEFAULT_PHONESTAND = () => ({
   pin: 3.5,          // hinge cone radius (auto-limited by the thickness)
   latch: 0.3,        // snap interference that keeps the leg closed (0 = no snap)
   ring: { enabled: true, diameter: 5, wall: 2.5 },
-  // mount: 'tray' (SIM-card style tray in a side slot: no pause, the chip can be changed) | 'pause' (sealed pocket,
-  // print pause to drop the chip in); side: where the tray's slot opens ('auto' = away from the can opener);
+  // mount: 'pause' (sealed pocket, print pause to drop the chip in) | 'tray' (optional replaceable chip in a side
+  // slot); side: where the tray's slot opens ('auto' = away from the can opener);
   // where: 'auto' | 'top' | 'bar'; mark: 📶 tap sign over the chip, made like the logo
-  nfc: { enabled: false, mount: 'tray', side: 'auto', diameter: 25.5, depth: 1, where: 'auto', mark: true },
+  nfc: { enabled: false, mount: 'pause', side: 'auto', diameter: 25.5, depth: 1, where: 'auto', mark: true },
   opener: { enabled: false, side: 'right' },
   // logo/text: where = 'top' (decorative shape) | 'bar' (bar behind the hinge; on the short variant it joins 'top');
   // mode applies to both: relief (on top, each colour layer at its height), flat (flush multicolour inlay
@@ -142,7 +142,7 @@ export function normalizePhoneStand(cfgIn = {}) {
   c.ring.diameter = num(c.ring.diameter, D.ring.diameter, 3, 8);
   c.ring.wall = num(c.ring.wall, D.ring.wall, 1.6, 5);
   c.nfc.enabled = !!c.nfc.enabled;
-  c.nfc.mount = c.nfc.mount === 'pause' ? 'pause' : 'tray';
+  c.nfc.mount = c.nfc.mount === 'tray' ? 'tray' : 'pause';
   c.nfc.side = ['left', 'right'].includes(c.nfc.side) ? c.nfc.side : 'auto';
   c.nfc.diameter = num(c.nfc.diameter, D.nfc.diameter, 10, 40);
   c.nfc.depth = num(c.nfc.depth, D.nfc.depth, 0.4, 2);
