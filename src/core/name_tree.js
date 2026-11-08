@@ -25,9 +25,13 @@ const K_MIN = 0.85, K_LO = 0.5, K_MAX = 1.1, MIN_CAP = 5, MIN_TOPPER = 12, STABL
 // The topper keeps the reference proportion (≈⅓ of the tree width) even when many names fill the triangle, and the
 // top name stays wide enough to carry it; every name keeps letters of at least CAP_FRAC of the width.
 const TOP_MIN = 0.28, TOP_MAX = 0.38, TOP_WORD = 0.6, CAP_FRAC = 0.06;
+// Thin strokes grow to the minimum stroke, which narrows every white gap. Letters are spaced apart so the gaps between
+// them keep at least gapFor(stroke) once printed, and a name never shrinks below the size at which its counters
+// (the holes of A, R, O, the slots deeper than SLOT·cap of E, M, N… and the passages of G, S) would close or pinch
+// shut to less than that gap.
+// ROW, DSTEP and DMAX are font units at size 100 (cap ≈ 70); GRID widths are scanned near the narrowest tree.
+const GAP_MIN = 0.8, gapFor = s => Math.max(GAP_MIN, 0.65 * s), SLOT = 0.19, ROW = 0.5, DSTEP = 0.25, DMAX = 128, GRID = 33;
 const FLANK = 50, KEY_TIP = 1, KEY_MIN = 0.8, KEY_GOOD = 2.5, KEY_MAX = 6;
-const TOO_SMALL = 'Los nombres o encajes quedarían demasiado pequeños. Aumenta el alto/ancho máximo o reduce la cantidad/longitud de los nombres.';
-const tooSmall = c => new Error(c.order === 'manual' ? `${TOO_SMALL} También puedes usar el orden automático (largos abajo).` : TOO_SMALL);
 const TOPPERS = { star: 'Estrella', heart: 'Corazón', circle: 'Círculo', custom: 'Remate personalizado' };
 
 let engine, loading;
@@ -98,15 +102,20 @@ function scope() {
 const boundsSize = b => b.max.map((v, i) => v - b.min[i]);
 const rectangle = (CS, own, x0, y0, x1, y1) => own(own(CS.square([x1 - x0, y1 - y0])).translate([x0, y0]));
 const root = (f, lo, hi) => {
-  for (let i = 0; i < 60; i++) { const mid = (lo + hi) / 2; if (f(mid) < 0) lo = mid; else hi = mid; }
+  for (let i = 0; i < 50; i++) { const mid = (lo + hi) / 2; if (f(mid) < 0) lo = mid; else hi = mid; }
   return lo;
 };
+// Glyph outlines at size 100 in their kerned positions; spaces leave no glyph.
+function glyphSections(font, text, CS, own) {
+  return layoutText(font, text, 100).map(g => ({ ch: g.ch, cs: own(new CS(
+    g.contours.map(c => flatten(c, 0.04).map(([x, y]) => [x, -y])), 'EvenOdd')) }))
+    .filter(g => !g.cs.isEmpty() && g.cs.area() > 1e-6);
+}
 function inkSection(font, text, CS, own) {
-  const glyphs = layoutText(font, text, 100).map(g => own(new CS(
-    g.contours.map(c => flatten(c, 0.04).map(([x, y]) => [x, -y])), 'EvenOdd')));
+  const glyphs = glyphSections(font, text, CS, own).map(g => g.cs);
   return glyphs.length ? own(CS.union(glyphs)) : null;
 }
-const metricsCache = new WeakMap();
+const metricsCache = new WeakMap(), spacingCache = new WeakMap(), apertureCache = new WeakMap();
 function fontMetrics(font, CS, own) {
   if (!metricsCache.has(font)) {
     const measure = ch => font.charToGlyphIndex(ch) ? inkSection(font, ch, CS, own) : null;
@@ -117,6 +126,121 @@ function fontMetrics(font, CS, own) {
   }
   return metricsCache.get(font);
 }
+// Leftmost and rightmost outline point in each closed row [y0 + j·ROW, y0 + (j + 1)·ROW]. Inside a band a polygon is
+// extreme at one of its vertices or where an edge crosses the band border, so these extents are exact.
+function rowExtents(cs, y0, rows) {
+  const L = new Float64Array(rows).fill(Infinity), R = new Float64Array(rows).fill(-Infinity);
+  const put = (j, x) => { if (j >= 0 && j < rows) { L[j] = Math.min(L[j], x); R[j] = Math.max(R[j], x); } };
+  for (const ring of cs.toPolygons()) ring.forEach((a, i) => {
+    const b = ring[(i + 1) % ring.length], u = (a[1] - y0) / ROW, v = (b[1] - y0) / ROW, j = Math.floor(u);
+    put(j, a[0]);
+    if (j === u) put(j - 1, a[0]);
+    for (let k = Math.floor(Math.min(u, v)) + 1; k < Math.max(u, v); k++) {
+      const x = a[0] + (b[0] - a[0]) * (k - u) / (v - u);
+      put(k - 1, x); put(k, x);
+    }
+  });
+  return { L, R };
+}
+// Letter spacing: glyph i moves right by i·τ. table[k] is the τ that keeps every glyph at least D = k·DSTEP away from
+// its next two neighbours. Rows are compared with their vertical distance, so kerned pairs that only overlap at
+// different heights (L·T, A·V) open just enough.
+function trackingTable(sections, index) {
+  if (sections.length < 2) return null;
+  let y0 = Infinity, y1 = -Infinity;
+  for (const s of sections) { const b = s.bounds(); y0 = Math.min(y0, b.min[1]); y1 = Math.max(y1, b.max[1]); }
+  const rows = Math.ceil((y1 - y0) / ROW) + 1, ext = sections.map(s => rowExtents(s, y0, rows));
+  const table = new Float64Array(Math.round(DMAX / DSTEP) + 1);
+  let far = 0;
+  for (let a = 0; a < sections.length; a++) for (let b = a + 1; b < Math.min(a + 3, sections.length); b++) {
+    const A = ext[a].R, B = ext[b].L, m = index[b] - index[a], records = [], envelope = [];
+    for (let d = 1 - rows; d < rows; d++) {
+      let gap = -Infinity;
+      for (let j = Math.max(0, -d); j < Math.min(rows, rows - d); j++) gap = Math.max(gap, A[j + d] - B[j]);
+      if (gap > -Infinity) records.push({ dy: Math.max(0, Math.abs(d) - 1) * ROW, gap });
+    }
+    records.sort((p, q) => p.dy - q.dy || q.gap - p.gap);
+    for (const r of records) if (!envelope.length || r.gap > envelope.at(-1).gap) envelope.push(r);
+    if (!envelope.length) continue;
+    far = Math.max(far, envelope.at(-1).gap);
+    table.forEach((t, k) => {
+      const D = k * DSTEP;
+      let need = 0;
+      for (const r of envelope) { if (r.dy >= D) break; need = Math.max(need, r.gap + Math.sqrt(D * D - r.dy * r.dy)); }
+      table[k] = Math.max(t, need / m);
+    });
+  }
+  return { table, far };
+}
+const tracking = (t, D) => !t ? 0 : D > DMAX ? t.far + D : t.table[Math.ceil(D / DSTEP - 1e-9)];
+function inradius(cs) {
+  let lo = 0, hi = Math.min(...boundsSize(cs.bounds())) / 2;
+  for (let i = 0; i < 14; i++) {
+    const m = (lo + hi) / 2, inner = cs.offset(-m, 'Round', 2, 16), open = !inner.isEmpty() && inner.area() > 1e-6;
+    inner.delete();
+    if (open) lo = m; else hi = m;
+  }
+  return lo;
+}
+const inside = (rings, [x, y]) => {
+  let hit = false;
+  for (const ring of rings) for (let i = 0, j = ring.length - 1; i < ring.length; j = i++) {
+    const [xi, yi] = ring[i], [xj, yj] = ring[j];
+    if ((yi > y) !== (yj > y) && x < xi + (xj - xi) * (y - yi) / (yj - yi)) hit = !hit;
+  }
+  return hit;
+};
+// Smallest growth of the strokes that seals a pocket of white: part of an open white cut off from the outside (the
+// slit and the inner bar of G, the mouths of S, a, e) or a counter pinched in two. Only pockets still a quarter as wide
+// as their white count; the tip of a tapering slit just fills in. Scanned upwards because sealed pockets later vanish.
+function sealRadius(cs, hull, mouth, deep, whites, limit) {
+  const sealed = r => {
+    const grown = cs.offset(r, 'Round', 2, 16), rest = hull.subtract(grown), parts = rest.decompose();
+    let hit = false;
+    for (const w of whites) w.pieces = 0;
+    for (const part of parts) {
+      const v = part.toPolygons()[0]?.[0], lip = part.intersect(mouth), open = lip.area() > 0.025;
+      lip.delete();
+      const home = !hit && v && !open && whites.find(w => inside(w.rings, v));
+      if (!home) continue;
+      const core = part.offset(-Math.max(1, 0.25 * home.ρ), 'Round', 2, 16), wide = !core.isEmpty() && core.area() > 1e-6;
+      core.delete();
+      if (!wide) continue;
+      if (!home.open) hit = ++home.pieces > 1;
+      else { const d = part.intersect(deep); hit = d.area() > 1e-6; d.delete(); }
+    }
+    for (const x of [grown, rest, ...parts]) x.delete();
+    return hit;
+  };
+  let lo = 0, hi = Infinity;
+  for (let k = 1; k <= 8 && hi === Infinity; k++) { const r = limit * k / 8; if (sealed(r)) hi = r; else lo = r; }
+  if (hi === Infinity) return Infinity;
+  for (let i = 0; i < 8; i++) { const m = (lo + hi) / 2; if (sealed(m)) hi = m; else lo = m; }
+  return lo;
+}
+// Radius of the narrowest white that makes a glyph readable: its closed counters (A, O, R…), its open slots deeper
+// than SLOT (E, M, N, U…) and the passages that keep them open (G, S). Shallow notches (waist of B, sides of Y, tail
+// of Q) only round off when strokes thicken, and specks under one font unit are outline noise.
+function apertureRadius(font, ch, cs, capH, CS, own) {
+  let cache = apertureCache.get(font);
+  if (!cache) apertureCache.set(font, cache = new Map());
+  const key = [cs.area(), ...boundsSize(cs.bounds())].map(v => v.toFixed(2)).join('|') + ch;
+  if (!cache.has(key)) {
+    const hull = own(cs.hull()), mouth = own(hull.subtract(own(hull.offset(-0.05, 'Miter', 2))));
+    const deep = own(hull.offset(-SLOT * capH, 'Miter', 2)), whites = [];
+    let r = Infinity;
+    for (const white of own(hull.subtract(cs)).decompose().map(own)) {
+      if (white.area() < 1e-3) continue;
+      const open = own(white.intersect(mouth)).area() > 0.025;
+      if (open && own(white.intersect(deep)).area() < 1e-6) continue;
+      const ρ = inradius(white);
+      if (open || ρ >= 1) { r = Math.min(r, ρ); whites.push({ rings: white.toPolygons(), ρ, open }); }
+    }
+    if (r < Infinity) r = Math.min(r, sealRadius(cs, hull, mouth, deep, whites, r));
+    cache.set(key, r);
+  }
+  return cache.get(key);
+}
 // Capitals are split at the cap height: marks above it (accents, tildes) become windows in a flat top band,
 // so every piece keeps a flat top for the next one and no accent floats loose.
 function rawWord(font, text, cased, metrics, CS, own) {
@@ -124,43 +248,81 @@ function rawWord(font, text, cased, metrics, CS, own) {
     throw new Error(`La fuente no tiene el carácter «${ch}» de «${text}». Elige otra fuente o cambia ese carácter.`);
   }
   const empty = () => new Error(`«${text}» no contiene letras imprimibles.`);
-  const rect = (x0, y0, x1, y1) => rectangle(CS, own, x0, y0, x1, y1);
-  const ink = inkSection(font, text, CS, own);
-  if (!ink || ink.isEmpty()) throw empty();
-  const { capH, stem } = metrics, cut = 1.03 * capH;
-  const body = cased ? own(ink.intersect(rect(-BIG, -BIG, BIG, cut))) : ink;
-  if (body.isEmpty() || body.area() < 1e-6) throw empty();
-  let marks = cased ? own(ink.subtract(rect(-BIG, -BIG, BIG, cut))) : null;
-  if (marks && (marks.isEmpty() || marks.area() < 1e-4)) marks = null;
-  const b = body.bounds(), full = [b.min[0], b.max[0]], top = cased ? capH : b.max[1];
-  const span = (y0, y1) => {
-    const s = own(body.intersect(rect(-BIG, y0, BIG, y1)));
+  const { capH, stem } = metrics, cut = 1.03 * capH, band = cased ? rectangle(CS, own, -BIG, -BIG, BIG, cut) : null;
+  const glyphs = [];
+  for (const { ch, cs } of glyphSections(font, text, CS, own)) {
+    let body = band ? own(cs.intersect(band)) : cs, marks = band ? own(cs.subtract(band)) : null;
+    if (body.isEmpty() || body.area() < 1e-6) body = null;
+    if (marks && (marks.isEmpty() || marks.area() < 1e-4)) marks = null;
+    if (body || marks) glyphs.push({ ch, body, marks, i: glyphs.length });
+  }
+  const bodies = glyphs.filter(g => g.body), marked = glyphs.filter(g => g.marks);
+  if (!bodies.length) throw empty();
+  const maxY = Math.max(...bodies.map(g => g.body.bounds().max[1])), top = cased ? capH : maxY;
+  const span = (cs, y0, y1) => {
+    const s = own(cs.intersect(rectangle(CS, own, -BIG, y0, BIG, y1)));
     if (s.isEmpty() || s.area() < 1e-6) return null;
     const sb = s.bounds();
     return [sb.min[0], sb.max[0]];
   };
-  const mb = marks?.bounds();
-  return {
-    text, body, marks, accents: marks ? marks.decompose().map(own).length : 0, capH, stem, cased,
-    cx: (full[0] + full[1]) / 2, x0: full[0], x1: full[1], maxY: b.max[1], top,
-    foot: span(-0.03 * capH, 0.1 * capH) || full, head: span(top - 0.1 * capH, cased ? cut : top + 1) || full,
-    mark: mb && { x0: mb.min[0], x1: mb.max[0], y0: mb.min[1], y1: mb.max[1] },
-    aspect: (full[1] - full[0]) / capH,
-  };
+  for (const g of bodies) {
+    const b = g.body.bounds();
+    Object.assign(g, { x: [b.min[0], b.max[0]], foot: span(g.body, -0.03 * capH, 0.1 * capH),
+      head: span(g.body, top - 0.1 * capH, cased ? cut : top + 1) });
+  }
+  for (const g of marked) { const b = g.marks.bounds(); g.m = [b.min[0], b.max[0]]; }
+  const marks = marked.length ? own(CS.union(marked.map(g => g.marks))) : null, mb = marks?.bounds();
+  const reachOf = (list, key) => Float64Array.from(list.filter(g => g[key]).flatMap(g => [...g[key], g.i]));
+  let cache = spacingCache.get(font);
+  if (!cache) spacingCache.set(font, cache = new Map());
+  const key = `${cased ? 1 : 0}${text}`;
+  if (!cache.has(key) && cache.size > 300) cache.clear();
+  if (!cache.has(key)) cache.set(key, {
+    track: trackingTable(bodies.map(g => g.body), bodies.map(g => g.i)),
+    markTrack: trackingTable(marked.map(g => g.marks), marked.map(g => g.i)),
+    counter: Math.min(...bodies.map(g => apertureRadius(font, g.ch, g.body, capH, CS, own))),
+  });
+  const w = { text, glyphs, capH, stem, cased, maxY, top, ...cache.get(key),
+    reach: { x: reachOf(bodies, 'x'), m: reachOf(marked, 'm'), foot: reachOf(bodies, 'foot'), head: reachOf(bodies, 'head') },
+    accents: marks ? marks.decompose().map(own).length : 0, mark: mb && { y0: mb.min[1], y1: mb.max[1] } };
+  const e = extent(w, 0);
+  return Object.assign(w, { x0: e.x0, x1: e.x1, cx: e.cx, aspect: (e.x1 - e.x0) / capH });
 }
-// Vertical layout of one word band for scale σ; δ thickens thin strokes up to the minimum stroke.
-function wordDims(w, σ, s, rails) {
-  const δ = clamp((s - 0.75 * w.stem * σ) / 2, 0, s / 2);
-  let half = σ * (w.x1 - w.x0) / 2 + δ;
+// [min, max] of the x intervals stored as (lo, hi, glyph index) once glyph i moves right by i·τ; null if none.
+function reach(list, τ) {
+  let lo = Infinity, hi = -Infinity;
+  for (let j = 0; j < list.length; j += 3) {
+    const t = list[j + 2] * τ;
+    lo = Math.min(lo, list[j] + t); hi = Math.max(hi, list[j + 1] + t);
+  }
+  return lo <= hi ? [lo, hi] : null;
+}
+// Horizontal extents of a word whose glyphs are spaced by τ (font units).
+function extent(w, τ) {
+  const [x0, x1] = reach(w.reach.x, τ), m = reach(w.reach.m, τ);
+  return { x0, x1, cx: (x0 + x1) / 2, m0: m?.[0], m1: m?.[1],
+    foot: reach(w.reach.foot, τ) || [x0, x1], head: reach(w.reach.head, τ) || [x0, x1] };
+}
+const thicken = (w, σ, s) => clamp((s - 0.75 * w.stem * σ) / 2, 0, s / 2);
+// Smallest cap height at which the word's narrowest white stays g wide once its strokes thicken: σ·counter − δ ≥ g/2.
+const legibleCap = (w, s, g) => w.capH * Math.max(g / (2 * w.counter), (g + s) / (2 * w.counter + 0.75 * w.stem));
+// Vertical layout of one word band for scale σ; δ thickens thin strokes up to the minimum stroke and τ spaces the
+// letters so the white between them stays g wide (and s of solid band between accent windows).
+function wordDims(w, σ, s, rails, g) {
+  σ = Math.max(σ, 1e-6);
+  const δ = thicken(w, σ, s), τ = Math.max(tracking(w.track, (g + 2 * δ) / σ), tracking(w.markTrack, (s + 2 * δ) / σ));
+  const [x0, x1] = reach(w.reach.x, τ);
+  let half = σ * (x1 - x0) / 2 + δ;
   const yb = rails.rb - OV + δ, yc = yb + σ * w.top + δ - OV;
   let height = yc + rails.rt, lift = 0;
   if (w.mark) {
-    half = Math.max(half, σ * (w.cx - w.mark.x0) + δ + s, σ * (w.mark.x1 - w.cx) + δ + s);
+    const [m0, m1] = reach(w.reach.m, τ), cx = (x0 + x1) / 2;
+    half = Math.max(half, σ * (cx - m0) + δ + s, σ * (m1 - cx) + δ + s);
     const floor = Math.max(yc, yb + σ * w.maxY + δ) + s;
     lift = Math.max(0, floor - (yb + σ * w.mark.y0 - δ));
     height = Math.max(height, yb + σ * w.mark.y1 + δ + lift + Math.max(rails.rt, s));
   }
-  return { δ, yb, yc, height, lift, width: 2 * half, cap: σ * w.capH };
+  return { δ, τ, yb, yc, height, lift, width: 2 * half, cap: σ * w.capH };
 }
 function topperShape(c, CS, own) {
   let cs;
@@ -188,10 +350,12 @@ function topperShape(c, CS, own) {
   // wy: height fraction of the widest point (star arm tips), which rests on the triangle edges.
   return { cs, b, w, h, wy: clamp(((left[1] + right[1]) / 2 - b.min[1]) / h, 0.15, 0.85) };
 }
-// Reference rule: every band is as wide as the triangle at its top, width = k·(apex − top).
-function layoutTree(c, words, trunk, topper, W, k) {
-  const s = c.minStroke, rails = { rb: Math.max(s + 1, 0.012 * W), rt: Math.max(s, 0.0065 * W) };
-  const dims = (w, σ) => wordDims(w, σ, s, rails), span = w => w.x1 - w.x0;
+// Reference rule: every band is as wide as the triangle at its top, width = k·(apex − top). Every name also keeps its
+// legible size; a loose layout (λ < 1, only used to explain failures) asks for that share of it and ignores CAP_FRAC.
+function layoutTree(c, words, trunk, topper, W, k, λ = null) {
+  const s = c.minStroke, g = gapFor(s), rails = { rb: Math.max(s + 1, 0.012 * W), rt: Math.max(s, 0.0065 * W) };
+  const dims = (w, σ) => wordDims(w, σ, s, rails, g), span = w => w.x1 - w.x0;
+  const floor = w => (λ ?? 1) * Math.max(MIN_CAP, w.legible), frac = λ === null ? CAP_FRAC * W : 0;
   let trunkPlan;
   if (trunk) {
     const σw = root(σ => dims(trunk, σ).width - 0.6 * W, 0, 0.6 * W / span(trunk) + 1);
@@ -211,40 +375,131 @@ function layoutTree(c, words, trunk, topper, W, k) {
     y += levels.at(-1).height;
   }
   const shapeH = tw => Math.max(0, tw - s) / topper.w * topper.h + s, rem = apex - y;
-  const g = tw => tw - k * (rem - rails.rb - (topper.wy - 0.08) * shapeH(tw));
-  const fit = g(0) < 0 ? root(g, 0, k * rem + 1) : 0, tw = clamp(fit, TOP_MIN * W, TOP_MAX * W), h = shapeH(tw);
+  const gap = tw => tw - k * (rem - rails.rb - (topper.wy - 0.08) * shapeH(tw));
+  const fit = gap(0) < 0 ? root(gap, 0, k * rem + 1) : 0, tw = clamp(fit, TOP_MIN * W, TOP_MAX * W), h = shapeH(tw);
   const top = { width: tw, fit, height: h, cut: 0.08 * h, bottom: y, band: rails.rb - 0.08 * h + h };
-  const ok = levels.every(l => l.cap >= Math.max(MIN_CAP, CAP_FRAC * W)) && trunkPlan.cap >= MIN_CAP && tw >= MIN_TOPPER
-    && levels.at(-1).width >= TOP_WORD * tw;
+  const ok = levels.every((l, i) => l.cap >= Math.max(floor(words[i]), frac))
+    && (!trunk || trunkPlan.cap >= floor(trunk)) && tw >= MIN_TOPPER && levels.at(-1).width >= TOP_WORD * tw;
   return { ok, W, k, rails, apex, trunk: trunkPlan, levels, top, height: y + top.band };
 }
-// Use the full width when possible, then the tallest slope in [K_MIN, K_MAX] that respects the maximum height
-// (steeper, down to K_LO, only when the proportion rules demand it).
-function planTree(c, words, trunk, topper) {
-  const at = (W, k) => layoutTree(c, words, trunk, topper, W, k), tall = p => p.height > c.maxHeight + 1e-6;
+const widths = (lo, hi) => hi - lo < 1e-9 ? [lo] : Array.from({ length: GRID }, (_, i) => lo + (hi - lo) * i / (GRID - 1));
+// shortest(W): the flattest feasible tree of width W (largest slope k). Layouts never depend on the maximum size, so
+// the same planner answers any size. narrowest(): the smallest width that still fits every rule.
+function planner(c, words, trunk, topper, λ = null) {
+  const at = (W, k) => layoutTree(c, words, trunk, topper, W, k, λ), memo = new Map();
   const largestK = W => {
     if (at(W, K_MAX).ok) return K_MAX;
     if (!at(W, K_LO).ok) return null;
     let lo = K_LO, hi = K_MAX;
-    for (let i = 0; i < 30; i++) { const mid = (lo + hi) / 2; if (at(W, mid).ok) lo = mid; else hi = mid; }
+    for (let i = 0; i < 20; i++) { const mid = (lo + hi) / 2; if (at(W, mid).ok) lo = mid; else hi = mid; }
     return lo;
   };
-  let W = c.maxWidth, kv = largestK(W);
-  if (kv === null) throw tooSmall(c);
-  if (tall(at(W, kv))) {
-    let lo = Math.min(20, W), hi = W;
-    for (let i = 0; i < 40; i++) {
-      const mid = (lo + hi) / 2, km = largestK(mid);
-      if (km === null || !tall(at(mid, km))) lo = mid; else hi = mid;
+  const shortest = W => {
+    if (!memo.has(W)) { const k = largestK(W); memo.set(W, k === null ? null : at(W, k)); }
+    return memo.get(W);
+  };
+  let narrow;
+  const narrowest = () => {
+    if (narrow === undefined) {
+      if (!shortest(500)) narrow = null;
+      else if (shortest(20)) narrow = 20;
+      else {
+        let lo = 20, hi = 500;
+        for (let i = 0; i < 20; i++) { const mid = (lo + hi) / 2; if (shortest(mid)) hi = mid; else lo = mid; }
+        narrow = hi;
+      }
     }
-    W = lo; kv = largestK(W);
-    if (kv === null || tall(at(W, kv))) throw tooSmall(c);
+    return narrow;
+  };
+  return { at, shortest, narrowest };
+}
+// Use the full width when possible, then the tallest slope in [K_MIN, K_MAX] that respects the maximum height
+// (steeper, down to K_LO, only when the proportion rules demand it).
+function searchPlan(c, P) {
+  const tall = p => p.height > c.maxHeight + 1e-6;
+  let W = c.maxWidth, p = P.shortest(W);
+  if (p && tall(p)) {
+    let lo = Math.min(20, W), hi = W;
+    for (let i = 0; i < 30; i++) {
+      const mid = (lo + hi) / 2, q = P.shortest(mid);
+      if (!q || !tall(q)) lo = mid; else hi = mid;
+    }
+    W = lo; p = P.shortest(W);
   }
-  const low = Math.min(K_MIN, kv);
-  if (!tall(at(W, low))) return at(W, low);
-  let lo = low, hi = kv;
-  for (let i = 0; i < 30; i++) { const mid = (lo + hi) / 2; if (tall(at(W, mid))) lo = mid; else hi = mid; }
-  return at(W, hi);
+  if (!p || tall(p)) {
+    // Close to the narrowest width the slope must steepen and the tree grows taller again, so scan the widths.
+    const Wmin = P.narrowest();
+    if (Wmin === null || Wmin > c.maxWidth) return null;
+    const grid = widths(Wmin, c.maxWidth), i = grid.findLastIndex(x => { const q = P.shortest(x); return q && !tall(q); });
+    if (i < 0) return null;
+    let lo = grid[i], hi = grid[i + 1] ?? lo;
+    for (let j = 0; j < 24 && hi > lo; j++) {
+      const mid = (lo + hi) / 2, q = P.shortest(mid);
+      if (q && !tall(q)) lo = mid; else hi = mid;
+    }
+    W = lo; p = P.shortest(W);
+  }
+  const low = Math.min(K_MIN, p.k), flat = P.at(W, low);
+  if (!tall(flat)) return flat;
+  let lo = low, hi = p.k;
+  for (let i = 0; i < 24; i++) { const mid = (lo + hi) / 2; if (tall(P.at(W, mid))) lo = mid; else hi = mid; }
+  return P.at(W, hi);
+}
+// The smallest maximum size (only ever larger than the current one) that fits every rule, or null past the limits.
+function smallestFit(c, P) {
+  const Wmin = P.narrowest();
+  if (Wmin === null) return null;
+  const maxWidth = Math.max(c.maxWidth, Math.ceil(Wmin));
+  const height = Math.min(...widths(Wmin, maxWidth).map(W => P.shortest(W)?.height ?? Infinity));
+  const maxHeight = Math.max(c.maxHeight, Math.ceil(height - 1e-6));
+  return maxWidth <= 500 && maxHeight <= 600 ? { maxWidth, maxHeight } : null;
+}
+const byLength = (a, b) => b.aspect - a.aspect || a.index - b.index;
+// Explains which name would become unreadable and offers the changes that fix it (error.suggestions).
+function tooSmall(c, words, trunk, topper, P) {
+  const size = f => f.maxWidth > c.maxWidth ? `${f.maxWidth} × ${f.maxHeight} mm` : `${f.maxHeight} mm de alto`;
+  const fit = smallestFit(c, P), options = [], suggestions = [];
+  if (fit) {
+    options.push(fit.maxWidth > c.maxWidth ? `sube el ancho máximo a ${fit.maxWidth} mm y el alto máximo a ${fit.maxHeight} mm`
+      : `sube el alto máximo a ${fit.maxHeight} mm`);
+    suggestions.push({ label: `Usar ${size(fit)}`, changes: { ...fit } });
+  }
+  const sorted = [...words].sort(byLength);
+  if (c.order === 'manual' && sorted.some((w, i) => w !== words[i])) {
+    const A = planner(c, sorted, trunk, topper);
+    if (searchPlan(c, A)) {
+      options.push('usa el orden automático (largos abajo), que sí cabe en este tamaño');
+      suggestions.push({ label: 'Usar orden automático', changes: { order: 'auto' } });
+    } else {
+      const auto = smallestFit(c, A);
+      if (auto && (!fit || auto.maxWidth * auto.maxHeight < fit.maxWidth * fit.maxHeight)) {
+        options.push(`usa el orden automático (largos abajo) con ${size(auto)}`);
+        suggestions.push({ label: `Orden automático con ${size(auto)}`, changes: { order: 'auto', ...auto } });
+      }
+    }
+  }
+  // How short the names fall: the largest share λ of their legible size that fits (proportions aside) and its tightest name.
+  const fits = λ => searchPlan(c, planner(c, words, trunk, topper, λ));
+  let worst = null;
+  if (!fits(1)) {
+    let lo = 0, hi = 1, best = fits(0);
+    for (let i = 0; best && i < 6; i++) { const λ = (lo + hi) / 2, p = fits(λ); if (p) { lo = λ; best = p; } else hi = λ; }
+    if (best) for (const [w, cap] of [...words.map((w, i) => [w, best.levels[i].cap]), ...(trunk ? [[trunk, best.trunk.cap]] : [])]) {
+      const need = Math.max(MIN_CAP, w.legible), r = cap / need;
+      if (!worst || r < worst.r) worst = { w, cap, need, r };
+    }
+  }
+  const why = !worst ? '' : `: «${worst.w.text}» ${worst.cap >= 1 ? `quedaría con letras de ${worst.cap.toFixed(1)} mm y ` : ''}`
+    + `con esta fuente necesita al menos ${worst.need.toFixed(1)} mm para que sus letras no se peguen ni se cierren sus huecos`;
+  const fix = options.length ? `Para arreglarlo: ${options.join('; ')}; o acorta o quita nombres.` : 'Acorta o quita nombres.';
+  const error = new Error(`Los nombres quedarían demasiado pequeños para leerse${why}. ${fix}`);
+  error.suggestions = suggestions;
+  return error;
+}
+function planTree(c, words, trunk, topper) {
+  const P = planner(c, words, trunk, topper), plan = searchPlan(c, P);
+  if (plan) return plan;
+  throw tooSmall(c, words, trunk, topper, P);
 }
 // Join stray islands (hyphens, lowercase dots) to the nearest outline, never through letter counters.
 function connectedSection(cs, stroke, CS, own) {
@@ -267,17 +522,18 @@ function connectedSection(cs, stroke, CS, own) {
 }
 function wordProfile(w, L, rails, nextFoot, s, CS, own, minFoot = 0) {
   const rect = (x0, y0, x1, y1) => rectangle(CS, own, x0, y0, x1, y1);
-  const y0 = L.bottom, X = x => L.σ * (x - w.cx);
+  const e = extent(w, L.τ), y0 = L.bottom, X = x => L.σ * (x - e.cx);
+  const spaced = key => own(CS.union(w.glyphs.filter(g => g[key]).map(g => own(g[key].translate([g.i * L.τ, 0])))));
   const place = (cs, dy = 0) => {
-    const placed = own(own(own(cs.translate([-w.cx, 0])).scale([L.σ, L.σ])).translate([0, y0 + L.yb + dy]));
+    const placed = own(own(own(cs.translate([-e.cx, 0])).scale([L.σ, L.σ])).translate([0, y0 + L.yb + dy]));
     return L.δ > 1e-4 ? own(placed.offset(L.δ, 'Round', 2, 32)) : placed;
   };
-  const foot = [Math.min(X(w.foot[0]) - L.δ, -minFoot / 2), Math.max(X(w.foot[1]) + L.δ, minFoot / 2)];
-  const head = [X(w.head[0]) - L.δ, X(w.head[1]) + L.δ];
+  const foot = [Math.min(X(e.foot[0]) - L.δ, -minFoot / 2), Math.max(X(e.foot[1]) + L.δ, minFoot / 2)];
+  const head = [X(e.head[0]) - L.δ, X(e.head[1]) + L.δ];
   const rail = nextFoot ? [Math.min(head[0], nextFoot[0]), Math.max(head[1], nextFoot[1])] : head;
-  const pieces = [place(w.body), rect(foot[0], y0, foot[1], y0 + rails.rb), rect(rail[0], y0 + L.yc, rail[1], y0 + L.yc + rails.rt)];
-  if (w.marks) {
-    const holes = place(w.marks, L.lift), hb = holes.bounds();
+  const pieces = [place(spaced('body')), rect(foot[0], y0, foot[1], y0 + rails.rb), rect(rail[0], y0 + L.yc, rail[1], y0 + L.yc + rails.rt)];
+  if (w.mark) {
+    const holes = place(spaced('marks'), L.lift), hb = holes.bounds();
     pieces.push(own(rect(Math.min(rail[0], hb.min[0] - s), y0 + L.yc, Math.max(rail[1], hb.max[0] + s), y0 + L.height).subtract(holes)));
   }
   const cs = own(own(CS.union(pieces)).intersect(rect(-BIG, y0, BIG, y0 + L.height)));
@@ -400,9 +656,11 @@ export function nameTreeSolids(input, { font } = {}) {
       ...rawWord(font, cased ? n.text.toLocaleUpperCase('es') : n.text, cased, metrics, CS, own), index, color: n.color,
     }));
     // Automatic order puts long names low, where the tree is wide, so every name keeps the largest letters.
-    if (c.order === 'auto') words.sort((a, b) => b.aspect - a.aspect || a.index - b.index);
+    if (c.order === 'auto') words.sort(byLength);
     const trunk = c.trunk === 'text' ? rawWord(font, cased ? c.trunkText.toLocaleUpperCase('es') : c.trunkText, cased, metrics, CS, own) : null;
-    const topper = topperShape(c, CS, own), plan = planTree(c, words, trunk, topper), s = c.minStroke, rails = plan.rails;
+    const s = c.minStroke, gap = gapFor(s);
+    for (const w of trunk ? [...words, trunk] : words) w.legible = legibleCap(w, s, gap);
+    const topper = topperShape(c, CS, own), plan = planTree(c, words, trunk, topper), rails = plan.rails;
     // Profiles are built from the top down so each top rail can carry the foot of the piece above it.
     const top = topperProfile(topper, plan.top, rails, s, CS, own), levels = [];
     let nextFoot = top.foot;
@@ -449,7 +707,7 @@ export function nameTreeSolids(input, { font } = {}) {
       width: maxX - minX, height: Math.max(...parts.map(p => p.bounds.max[1])), depth: c.bottomDepth,
       W: plan.W, k: plan.k, tilt: degrees(tilt), rails,
       trunk: { type: c.trunk, text: trunk?.text ?? '', cap: trunk ? plan.trunk.cap : 0, width: f1 - f0, height: plan.trunk.height },
-      levels: words.map((w, i) => ({ index: w.index, text: w.text, cap: plan.levels[i].cap, accents: w.accents,
+      levels: words.map((w, i) => ({ index: w.index, text: w.text, cap: plan.levels[i].cap, legible: w.legible, accents: w.accents,
         width: plan.levels[i].width, bottom: plan.levels[i].bottom, height: plan.levels[i].height })),
       top: { shape: c.shape, width: plan.top.width, height: plan.top.band, bottom: plan.top.bottom },
       stability: {

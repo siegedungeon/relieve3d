@@ -153,6 +153,23 @@ module.exports = async ({ win, run, shot, wait }) => {
   ok(await p(`t.ready() && t.cfg.names.map(n=>n.text).join()==="Abuela,Abuelo" && t.cfg.order==="manual" && t.cfg.font==="Bebas Neue" &&
     t.cfg.bottomDepth===30 && t.cfg.topDepth===12 && t.cfg.maxWidth===160 && localStorage.getItem('relieve3d.nameTree')===null &&
     !!localStorage.getItem('relieve3d.nameTree.v2')`), 'names typed in version 1.24 carry over to the new reference design');
+  // FAMILIA used to come out with 3 mm letters stuck together; now the warning names it and one click applies a size that reads.
+  await set('trunkText', 'Dios');
+  await names(['Parce', 'Samara', 'Sara', 'Gina', 'Alex', 'Familia']);
+  await run(`(()=>{const e=document.querySelector('#nameTree [data-k="maxHeight"]');e.value='130';e.dispatchEvent(new Event('change',{bubbles:true}));})()`);
+  await until(() => p('!!t.error && !t.activeBuilds && !t.timer'));
+  ok(await p(`!t.ready() && t.cfg.maxWidth===160 && t.cfg.order==="manual" && t.error.includes("«FAMILIA»") && !t.$("warnings").hidden &&
+    [...t.$("warnings").querySelectorAll('[data-a="suggest"]')].map(b=>b.textContent).join("|")==="Usar 195 mm de alto|Orden automático con 135 mm de alto" &&
+    document.querySelector('#nameTree [data-a="export"]').disabled`), 'a name too small to read is named in the warning with one-click fixes and cannot be exported');
+  ok(await p(`(()=>{const b=t.$("warnings").querySelector('[data-a="suggest"]').getBoundingClientRect(),w=t.$("warnings").getBoundingClientRect(),
+    a=t.$("warnings").closest(".panel").getBoundingClientRect();return b.height>0&&w.top>=a.top-1&&w.bottom<=a.bottom+1;})()`), 'the fixes are scrolled into view instead of hiding below the result panel');
+  await picture('05_too_small');
+  await run(`document.querySelector('#nameTree [data-a="suggest"][data-i="1"]').click()`);
+  await until(() => p('t.ready()'));
+  ok(await p(`t.cfg.order==="auto" && t.cfg.maxHeight===135 && document.querySelector('#nameTree [data-k="order"]').value==="auto" &&
+    document.querySelector('#nameTree [data-k="maxHeight"]').value==="135" && !t.$("warnings").querySelector('[data-a="suggest"]') &&
+    t.res.plan.height<=135.001 && t.res.plan.levels.every(l=>l.cap>=l.legible-0.01)`), 'the suggestion applies automatic order and height, and every name keeps its legible size');
+  await view('front'); await picture('06_suggestion_applied');
   ok(errors.length === 0, 'no renderer errors: ' + errors.join(' | '));
   fs.writeFileSync(path.join(out, 'result.json'), JSON.stringify({ folder, plates, parts: count, complete: true }, null, 2));
   console.log('[e2e] done');

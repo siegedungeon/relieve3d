@@ -31,7 +31,7 @@ export class NameTreeStudio {
     this.root = root; this.cb = cb; this.cfg = DEFAULT_NAME_TREE();
     try { this.cfg = rememberedTree(); } catch { /* Invalid old preferences never block the application. */ }
     this.fonts = new Map(); this.revision = 0; this.activeBuilds = 0; this.view = 'assembled'; this.plate = 0;
-    this.res = null; this.error = ''; this.busy = false;
+    this.res = null; this.error = ''; this.suggestions = []; this.busy = false;
     this.build();
   }
   build() {
@@ -117,9 +117,9 @@ export class NameTreeStudio {
       loadFont: family => ensureFont(family, 400, { file: NAME_TREE_FONTS[family] }),
     });
     this.root.addEventListener('click', e => {
-      const tab = e.target.closest('[data-view]'), action = e.target.closest('[data-a]')?.dataset.a;
+      const tab = e.target.closest('[data-view]'), button = e.target.closest('[data-a]');
       if (tab) { this.view = tab.dataset.view; this.render(); return; }
-      if (action) this.action(action).catch(error => this.cb.toast(error.message, true));
+      if (button) this.action(button.dataset.a, button).catch(error => this.cb.toast(error.message, true));
     });
     this.$('names').addEventListener('input', () => {
       const previous = Array.isArray(this.cfg.names) ? this.cfg.names : [];
@@ -185,7 +185,8 @@ export class NameTreeStudio {
   }
   schedule() {
     this.revision++; clearTimeout(this.timer);
-    this.error = '';
+    this.error = ''; this.suggestions = [];
+    for (const b of this.$('warnings').querySelectorAll('[data-a="suggest"]')) b.disabled = true;
     this.$('status').textContent = 'Actualizando árbol…';
     this.timer = setTimeout(() => { this.timer = null; this.rebuild(); }, 180);
     this.buttons();
@@ -198,9 +199,12 @@ export class NameTreeStudio {
       this.accept(result);
     } catch (error) {
       if (revision !== this.revision) return;
-      this.error = error.message;
+      this.error = error.message; this.suggestions = error.suggestions || [];
       this.$('status').textContent = 'Vista anterior · ' + error.message;
-      this.$('warnings').hidden = false; this.$('warnings').textContent = error.message;
+      this.$('warnings').hidden = false;
+      this.$('warnings').innerHTML = `<p>${esc(error.message)}</p>` + this.suggestions
+        .map((s, i) => `<button class="btn wide" data-a="suggest" data-i="${i}">${esc(s.label)}</button>`).join('');
+      if (this.suggestions.length) this.$('warnings').scrollIntoView({ block: 'nearest' });
     } finally { this.activeBuilds--; this.buttons(); }
   }
   accept(result) {
@@ -312,8 +316,13 @@ export class NameTreeStudio {
       return folder;
     } finally { dispose(snapshot); this.busy = false; this.buttons(); }
   }
-  async action(action) {
+  async action(action, el) {
     if (action === 'home') { this.cb.onBack(); return; }
+    if (action === 'suggest') {
+      const changes = this.suggestions?.[+el?.dataset.i]?.changes;
+      if (changes) { Object.assign(this.cfg, changes); this.sync(); this.schedule(); }
+      return;
+    }
     if (action === 'open') { this.$('fileProject').click(); return; }
     if (action === 'shape') { this.$('fileShape').click(); return; }
     if (action === 'reset') { this.cfg = DEFAULT_NAME_TREE(); this.sync(); this.schedule(); return; }

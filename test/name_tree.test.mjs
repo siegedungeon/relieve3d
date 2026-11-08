@@ -27,6 +27,18 @@ const mesh = solid => {
   for (let v = 0; v < m.numVert; v++) V.push([0, 1, 2].map(j => m.vertProperties[v * m.numProp + j]));
   return { V, T: m.triVerts };
 };
+// What is left of each white the plaque closes in (holes, slots and gaps between letters) once the printed walls take
+// 0.35 mm on each side: 0 means it fills up and 2 or more that it pinches shut, so the word stops reading.
+const holes = cs => {
+  const hull = cs.hull(), inset = hull.offset(-0.02, 'Miter', 2), white = hull.subtract(cs), whites = white.decompose();
+  try {
+    return whites.filter(w => w.area() > 1e-3 && take(w.subtract(inset), x => x.area() < 1e-6)).map(w => take(w.offset(-0.35, 'Round', 2, 32), e => {
+      const parts = e.decompose(), n = parts.filter(x => x.area() > 1e-6).length;
+      parts.forEach(x => x.delete());
+      return n;
+    }));
+  } finally { [hull, inset, white, ...whites].forEach(x => x.delete()); }
+};
 
 test('names, trunk text, depths and limits are validated', () => {
   assert.deepEqual(parseTreeNames('Ana\nMaría José;Ana').map(n => n.text), ['Ana', 'María José', 'Ana']);
@@ -140,6 +152,26 @@ test('many names keep the reference proportions and the automatic order puts lon
     assert.equal(levels.find(l => l.text === 'SEBASTIÁN').accents, 1);
   } finally { r.dispose(); }
   assert.throws(() => nameTreeSolids({ names: [...seven].sort((a, b) => a.length - b.length) }, { font }), /orden automático/);
+});
+
+test('crowded trees keep letters apart and their holes open, or name the word that would not read and offer working fixes', () => {
+  const crowded = { names: ['Parce', 'Samara', 'Sara', 'Gina', 'Alex', 'Familia'], trunkText: 'Dios', order: 'manual', maxWidth: 160, maxHeight: 130 };
+  let error;
+  try { nameTreeSolids(crowded, { font }).dispose(); } catch (e) { error = e; }
+  assert(error, 'FAMILIA at 3 mm would print with its letters stuck together and its holes closed');
+  assert.match(error.message, /«FAMILIA» quedaría con letras de [\d.]+ mm .*al menos [\d.]+ mm/);
+  assert.deepEqual(error.suggestions.map(s => s.label), ['Usar 195 mm de alto', 'Orden automático con 135 mm de alto']);
+  for (const { label, changes } of error.suggestions) {
+    const r = nameTreeSolids({ ...crowded, ...changes }, { font });
+    try {
+      assert(r.plan.levels.some(l => Math.abs(l.cap - l.legible) < 0.05), `${label}: some name sits right at its legible size`);
+      for (const p of r.parts.filter(p => p.role !== 'top')) {
+        const left = holes(p.profile);
+        if (p.name === 'FAMILIA') assert.equal(left.length, 13, `${label}: FAMILIA keeps the 13 whites of its letters`);
+        left.forEach((n, i) => assert.equal(n, 1, `${label}: white ${i} of ${p.name} stays open in print`));
+      }
+    } finally { r.dispose(); }
+  }
 });
 
 test('block trunk, toppers, lowercase and accents stay single solids; unusable designs fail explicitly', () => {
