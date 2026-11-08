@@ -7,13 +7,13 @@ import { promisify } from 'node:util';
 import { execFile } from 'node:child_process';
 import { parse } from '../node_modules/opentype.js/dist/opentype.mjs';
 import { unzipSync, strFromU8 } from 'fflate';
-import { prepareNameTree, buildNameTree, nameTreeFiles } from '../src/core/name_tree.js';
+import { NAME_TREE_FONTS, prepareNameTree, buildNameTree, nameTreeFiles } from '../src/core/name_tree.js';
 import profiles from '../src/main/bambu_profile.cjs';
 
 const run = promisify(execFile), root = path.dirname(fileURLToPath(import.meta.url));
 const out = path.join(root, 'out', 'name-tree-bambu');
 const executable = path.join(process.env.ProgramFiles || 'C:\\Program Files', 'Bambu Studio', 'bambu-studio.exe');
-const bytes = await fs.readFile(new URL('../src/fonts/Montserrat-Black.ttf', import.meta.url));
+const bytes = await fs.readFile(new URL('../src/fonts/' + NAME_TREE_FONTS['Bebas Neue'], import.meta.url));
 const font = parse(bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength));
 const profile = await profiles.getBambuNameTreeProfile();
 await prepareNameTree(); await fs.mkdir(out, { recursive: true });
@@ -21,8 +21,10 @@ const report = { cases: [], passed: false };
 for (const count of [2, 7]) {
   const dir = path.join(out, String(count));
   await fs.mkdir(dir, { recursive: true });
+  // Automatic order on 7 names produces guides rising from the lower piece and hanging from the upper one.
   const tree = buildNameTree({ names: ['Valentina', 'Sebastián', 'Mateo', 'Camila', 'Lucía', 'José', 'Ana'].slice(0, count),
-    shape: count === 2 ? 'heart' : 'star', maxWidth: 180, maxHeight: 240 }, { font });
+    order: count === 2 ? 'manual' : 'auto', shape: count === 2 ? 'heart' : 'star', maxWidth: 180, maxHeight: 240 }, { font });
+  assert(tree.joints.some(j => j.keys.some(k => k.dir === -1)) || count === 2, 'both guide directions are sliced');
   let batch;
   try { batch = nameTreeFiles(tree, { profile }); }
   finally { tree.parts.forEach(p => p.geometry.dispose()); }

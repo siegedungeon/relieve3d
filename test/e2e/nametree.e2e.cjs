@@ -33,7 +33,12 @@ module.exports = async ({ win, run, shot, wait }) => {
   win.setSize(1600, 1000); win.show(); win.focus();
   await run(`window.__r3d.showHome(); document.querySelector('#homeGrid3d [data-mod="nametree"]').click()`);
   await until(() => p('t.ready()'));
-  ok(await p('!t.root.hidden && document.getElementById("home").hidden && t.res.parts.length===5'), 'home card opens the independent tree module with a complete default model');
+  ok(await p('!t.root.hidden && document.getElementById("home").hidden && t.res.parts.length===6'), 'home card opens the independent tree module with a complete default model');
+  ok(await p(`t.cfg.order==="manual" && t.res.parts.filter(p=>p.role==="name").map(p=>p.name).join()==="DIEGO,MILDRED,VIOLETTA,CELESTE" &&
+    t.res.plan.trunk.text===String(new Date().getFullYear()) && t.res.joints.every(j=>j.keys.length>0) &&
+    t.res.plan.stability.frontBack>=8 && Math.abs(t.res.plan.stability.center[2])<0.01 &&
+    t.res.parts.every(p=>Math.abs(p.bounds.min[2]+p.bounds.max[2])<0.01) && t.$("summary").textContent.includes("adelante/atrás")`),
+  'default follows the reference: list from bottom to top, year trunk, hidden guides and a symmetric depth that stands upright');
   await view('front'); await picture('01_default_front');
   const list = ['Valentina', 'Sebastián', 'Mateo', 'Camila', 'Lucía', 'José', 'Ana'];
   for (const count of [2, 3, 7]) {
@@ -42,11 +47,24 @@ module.exports = async ({ win, run, shot, wait }) => {
       t.res.plan.width<=t.cfg.maxWidth+0.001 && t.res.plan.height<=t.cfg.maxHeight+0.001`),
     `${count} names recalculate their sizes, trunk, topper and every interlock`);
   }
-  for (const [key, value] of [['maxWidth', 200], ['maxHeight', 260], ['bottomDepth', 14], ['topDepth', 4], ['clearance', '0,25']]) await set(key, value);
-  ok(await p('t.res.cfg.bottomDepth===14 && t.res.cfg.topDepth===4 && t.res.cfg.clearance===0.25'), 'dimensions and independent depth taper use the actual edited values');
+  for (const [key, value] of [['maxWidth', 200], ['maxHeight', 260], ['bottomDepth', 24], ['topDepth', 8], ['clearance', '0,25']]) await set(key, value);
+  ok(await p('t.res.cfg.bottomDepth===24 && t.res.cfg.topDepth===8 && t.res.cfg.clearance===0.25'), 'dimensions and independent depth taper use the actual edited values');
+  ok(await p('!t.$("warnings").hidden && t.$("warnings").textContent.includes("Poca estabilidad hacia delante/atrás")'), 'a thin base under a tall tree warns that it could tip over');
+  const suggested = await p('t.res.plan.stability.suggestedBottomDepth');
+  await set('bottomDepth', suggested);
+  ok(await p(`t.res.cfg.bottomDepth===${suggested} && t.res.plan.stability.frontBack>=8 && t.$("warnings").hidden`), 'the suggested bottom depth makes the tree stable');
+  await set('order', 'auto');
+  ok(await p('t.res.parts.filter(p=>p.role==="name").map(p=>p.sourceIndex).some((v,i)=>v!==i)'), 'automatic order moves the longest names down');
   await set('order', 'manual');
   ok(await p('t.res.parts.filter(p=>p.role==="name").map(p=>p.sourceIndex).every((v,i)=>v===i)'), 'manual order follows the list from trunk to topper');
   await set('order', 'auto');
+  await set('trunk', 'block');
+  ok(await p(`t.res.plan.trunk.type==="block" && t.res.plan.trunk.text==="" && t.res.parts[0].role==="trunk" &&
+    document.querySelector('#nameTree [data-k="trunkText"]').disabled`), 'a plain trunk has no text and disables its text field');
+  await set('trunk', 'text');
+  await set('trunkText', 'Familia');
+  ok(await p(`t.res.plan.trunk.type==="text" && t.res.plan.trunk.text==="FAMILIA" &&
+    !document.querySelector('#nameTree [data-k="trunkText"]').disabled`), 'the trunk carries the text typed by the user');
   for (const shape of ['heart', 'circle', 'star']) {
     await set('shape', shape);
     ok(await p(`t.res.cfg.shape===${JSON.stringify(shape)} && t.res.parts.at(-1).role==="top"`), `${shape} topper is a real separate encajable piece`);
@@ -59,17 +77,18 @@ module.exports = async ({ win, run, shot, wait }) => {
     ok(await p(`t.view===${JSON.stringify(tab)} && t.viewer.meshes.size>0`), `${tab} view shows the corresponding assembled/print geometry`);
     if (['front', 'side', 'plates'].includes(tab)) await picture('02_' + tab);
   }
-  for (const theme of ['light', 'dark']) {
+  const startTheme = await run('document.documentElement.dataset.theme');
+  for (const theme of ['light', 'dark', startTheme]) {
     await run(`(()=>{const e=document.getElementById('themeSelect');e.value='${theme}';e.dispatchEvent(new Event('change'));})()`);
     ok(await p(`t.root.getBoundingClientRect().top>=34 &&
       [...t.root.querySelectorAll('.panel')].every(e=>e.scrollWidth<=e.clientWidth+1)`), `${theme} theme retains readable panels without horizontal clipping`);
   }
   const before = await p('JSON.stringify(t.res.plan)');
-  await run(`(()=>{const e=document.querySelector('#nameTree [data-k="topDepth"]');e.value='15';e.dispatchEvent(new Event('change',{bubbles:true}));})()`);
+  await run(`(()=>{const e=document.querySelector('#nameTree [data-k="topDepth"]');e.value='60';e.dispatchEvent(new Event('change',{bubbles:true}));})()`);
   await until(() => p('!!t.error && !t.activeBuilds'));
-  ok(await p(`!t.ready() && document.querySelector('#nameTree [data-a="export"]').disabled &&
+  ok(await p(`!t.ready() && document.querySelector('#nameTree [data-a="export"]').disabled && t.error.includes("no puede superar") &&
     JSON.stringify(t.res.plan)===${JSON.stringify(before)}`), 'invalid dimensions keep the last preview but block stale exports with a useful error');
-  await set('topDepth', 4);
+  await set('topDepth', 8);
   const svg = '<svg xmlns="http://www.w3.org/2000/svg" width="100" height="100"><path fill="black" d="M50 90 L10 45 Q-5 10 25 10 Q45 10 50 30 Q55 10 75 10 Q105 10 90 45Z"/></svg>';
   await run(`(()=>{const e=document.querySelector('#nameTree [data-r="fileShape"]'),dt=new DataTransfer();dt.items.add(new File([${JSON.stringify(svg)}],'mi-remate.svg',{type:'image/svg+xml'}));e.files=dt.files;e.dispatchEvent(new Event('change'));})()`);
   await until(() => p('t.cfg.shape==="custom" && t.ready()'));
@@ -84,10 +103,10 @@ module.exports = async ({ win, run, shot, wait }) => {
   await click('photo'); await click('assembly');
   await until(() => Promise.resolve(fs.readdirSync(exp).some(n => n.endsWith('.png')) && fs.readdirSync(exp).some(n => n.endsWith('.3mf'))));
   await click('reset'); await idle();
-  ok(await p('t.cfg.names.length===3 && t.cfg.shape==="star"'), 'reset restores the example');
+  ok(await p('t.cfg.names.length===4 && t.cfg.shape==="star" && t.cfg.order==="manual" && t.cfg.trunk==="text"'), 'reset restores the reference example');
   await run(`(async()=>{window.__r3d.showHome();await window.__r3d.openProjectFile(new File([${JSON.stringify(project)}],${JSON.stringify(file)}));})()`);
-  ok(await p('!t.root.hidden && document.getElementById("home").hidden && t.cfg.names.length===7 && t.cfg.shape==="custom" && t.cfg.names[0].color==="#1249ab"'),
-    'global project opening restores names, custom outline, colors, dimensions and module');
+  ok(await p('!t.root.hidden && document.getElementById("home").hidden && t.cfg.names.length===7 && t.cfg.shape==="custom" && t.cfg.names[0].color==="#1249ab" && t.cfg.trunkText==="Familia"'),
+    'global project opening restores names, custom outline, colors, trunk text, dimensions and module');
   const saved = await p('JSON.stringify(t.cfg)');
   ok(await p(`(async()=>{try{await t.openProject({app:'Relieve3D-ArbolNombres',version:99,cfg:{}});return false;}catch{return JSON.stringify(t.cfg)===${JSON.stringify(saved)}&&t.ready();}})()`),
     'invalid project does not overwrite the current design');
@@ -123,8 +142,17 @@ module.exports = async ({ win, run, shot, wait }) => {
   await new Promise(resolve => { win.webContents.once('did-finish-load', resolve); win.reload(); });
   await wait(700);
   await run(`window.__r3d.enterModule('nametree')`); await idle();
-  ok(await p('t.cfg.maxWidth===140 && t.cfg.names.length===7 && t.cfg.shape==="custom"'), 'reloading the app restores the last valid tree without a project import');
+  ok(await p('t.cfg.maxWidth===140 && t.cfg.names.length===7 && t.cfg.shape==="custom" && t.cfg.trunkText==="Familia"'), 'reloading the app restores the last valid tree without a project import');
   await view('assembled'); await picture('04_final');
+  // Version 1.24 remembered its own design; only the names typed there carry over to the reference design.
+  await run(`(()=>{localStorage.removeItem('relieve3d.nameTree.v2');localStorage.setItem('relieve3d.nameTree',JSON.stringify({app:'Relieve3D-ArbolNombres',version:1,
+    cfg:{name:'Mi árbol',names:[{text:'Abuela'},{text:'Abuelo'}],order:'manual',font:'Montserrat Black',bottomDepth:18,topDepth:5,maxWidth:180}}));return true;})()`);
+  await new Promise(resolve => { win.webContents.once('did-finish-load', resolve); win.reload(); });
+  await wait(700);
+  await run(`window.__r3d.enterModule('nametree')`); await idle();
+  ok(await p(`t.ready() && t.cfg.names.map(n=>n.text).join()==="Abuela,Abuelo" && t.cfg.order==="manual" && t.cfg.font==="Bebas Neue" &&
+    t.cfg.bottomDepth===30 && t.cfg.topDepth===12 && t.cfg.maxWidth===160 && localStorage.getItem('relieve3d.nameTree')===null &&
+    !!localStorage.getItem('relieve3d.nameTree.v2')`), 'names typed in version 1.24 carry over to the new reference design');
   ok(errors.length === 0, 'no renderer errors: ' + errors.join(' | '));
   fs.writeFileSync(path.join(out, 'result.json'), JSON.stringify({ folder, plates, parts: count, complete: true }, null, 2));
   console.log('[e2e] done');

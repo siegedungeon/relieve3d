@@ -15,12 +15,21 @@ const esc = s => String(s).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;',
 const wait = ms => new Promise(resolve => setTimeout(resolve, ms));
 const dispose = res => res?.parts.forEach(p => p.geometry.dispose());
 const basename = s => 'Arbol_' + String(s).replace(/[<>:"/\\|?*\x00-\x1f]/g, '_').replace(/[ .]+$/, '').slice(0, 60);
-const storageKey = 'relieve3d.nameTree';
+const storageKey = 'relieve3d.nameTree.v2', legacyKey = 'relieve3d.nameTree';
+// Version 1.24 remembered a different design (flat back, its own example). Only names the user typed carry over.
+function rememberedTree() {
+  const saved = localStorage.getItem(storageKey), legacy = localStorage.getItem(legacyKey), d = DEFAULT_NAME_TREE();
+  if (saved) return readNameTreeProject(saved);
+  if (!legacy) return d;
+  const old = readNameTreeProject(legacy);
+  return old.names.map(n => n.text).join('\n') === 'Sofía\nMateo\nValentina' ? d
+    : normalizeNameTree({ ...d, name: old.name, names: old.names, order: old.order, colors: old.colors });
+}
 
 export class NameTreeStudio {
   constructor(root, cb) {
     this.root = root; this.cb = cb; this.cfg = DEFAULT_NAME_TREE();
-    try { const saved = localStorage.getItem(storageKey); if (saved) this.cfg = readNameTreeProject(saved); } catch { /* Invalid old preferences never block the application. */ }
+    try { this.cfg = rememberedTree(); } catch { /* Invalid old preferences never block the application. */ }
     this.fonts = new Map(); this.revision = 0; this.activeBuilds = 0; this.view = 'assembled'; this.plate = 0;
     this.res = null; this.error = ''; this.busy = false;
     this.build();
@@ -47,17 +56,19 @@ export class NameTreeStudio {
             <label for="treeNames" class="muted small">Uno por renglón; admite nombres compuestos y repetidos.</label>
             <textarea id="treeNames" data-r="names" rows="7" spellcheck="false"></textarea>
             <label class="row">Orden<select data-k="order"><option value="auto">Automático: largos abajo</option><option value="manual">Mi listado: de abajo arriba</option></select></label>
+            <label class="row">Tronco<select data-k="trunk"><option value="text">Con texto</option><option value="block">Liso</option></select></label>
+            <label class="row" title="Por ejemplo el año o el apellido; hasta 16 caracteres.">Texto del tronco<input type="text" data-k="trunkText" maxlength="16" spellcheck="false" /></label>
             <label class="row">Fuente<select data-k="font">${Object.keys(NAME_TREE_FONTS).map(f => `<option>${esc(f)}</option>`).join('')}</select></label>
             <label class="row">Mayúsculas<input type="checkbox" data-k="uppercase" /></label>
-            <div class="muted small">Cada nombre se escala sin estirar las letras. Barras finas unen las letras y los acentos para que cada palabra sea una sola pieza.</div>
+            <div class="muted small">Cada nombre se escala sin estirar las letras, entre dos barras finas como en el modelo de referencia. Los acentos quedan calados en la barra superior: cada palabra es una sola pieza.</div>
           </section>
           <section class="card">
             <h3>Medidas máximas del conjunto</h3>
             ${number('Alto máximo (mm)', 'maxHeight', 'Incluye tronco, nombres y remate. El árbol puede quedar más bajo para respetar el ancho y la forma.')}
             ${number('Ancho máximo (mm)', 'maxWidth')}
-            ${number('Grosor inferior (mm)', 'bottomDepth')}
-            ${number('Grosor superior (mm)', 'topDepth', 'Igual al inferior = espesor uniforme. Menor = inclinación continua y suave de la cara frontal.')}
-            <p class="muted small">Una sola espalda plana. Sin palabras inclinadas hacia delante o atrás. Los grosores son independientes del alto y ancho.</p>
+            ${number('Grosor inferior (mm)', 'bottomDepth', 'Grosor en la base. Más grosor = más estable.')}
+            ${number('Grosor superior (mm)', 'topDepth', 'Igual al inferior = espesor uniforme. Menor = el árbol se afina hacia arriba por igual delante y detrás.')}
+            <p class="muted small">El grosor se reparte por igual delante y detrás: el árbol queda vertical, sin inclinarse. Sin palabras inclinadas. Los grosores son independientes del alto y ancho.</p>
           </section>
           <section class="card">
             <h3>Remate de la cima</h3>
@@ -87,7 +98,7 @@ export class NameTreeStudio {
             ${number('Trazo / unión mín. (mm)', 'minStroke', 'Engrosa trazos, une acentos y refuerza barras. Recomendado: 1,2 mm para boquilla de 0,4.')}
             ${number('Placa: ancho (mm)', 'bedWidth')}${number('Placa: largo (mm)', 'bedHeight')}
             <p class="muted small">Piezas acostadas, espalda sobre la cama, sin soportes. Una placa por color: no requiere AMS.</p>
-            <p class="muted small">Monta deslizando cada encaje por el grosor, de delante hacia atrás, hasta alinear las espaldas. No lo fuerces verticalmente.</p>
+            <p class="muted small">Guías ocultas dentro del grosor: no se ven por delante ni por detrás. Monta bajando cada pieza en vertical sobre la anterior, con las caras alineadas.</p>
           </section>
           <section class="card" data-r="summary"></section>
           <section class="card warn" data-r="warnings" hidden></section>
@@ -121,6 +132,7 @@ export class NameTreeStudio {
       if (key) {
         if (key === 'shape' && el.value === 'custom' && !this.cfg.custom) { el.value = this.cfg.shape; this.$('fileShape').click(); return; }
         this.cfg[key] = el.type === 'checkbox' ? el.checked : el.value;
+        if (key === 'trunk') this.root.querySelector('[data-k="trunkText"]').disabled = el.value === 'block';
         this.schedule();
       } else if (el.dataset.color) { this.cfg.colors[el.dataset.color] = el.value; this.schedule(); }
       else if (el.dataset.nameColor !== undefined) { this.cfg.names[+el.dataset.nameColor].color = el.value; this.schedule(); }
@@ -143,6 +155,7 @@ export class NameTreeStudio {
       else el.value = this.cfg[el.dataset.k];
     }
     for (const el of this.root.querySelectorAll('[data-color]')) el.value = this.cfg.colors[el.dataset.color];
+    this.root.querySelector('[data-k="trunkText"]').disabled = this.cfg.trunk === 'block';
     this.picker.sync();
   }
   async font(family) {
@@ -192,7 +205,7 @@ export class NameTreeStudio {
   }
   accept(result) {
     dispose(this.res); this.res = result; this.cfg = normalizeNameTree(result.cfg); this.error = ''; this.plate = 0;
-    try { localStorage.setItem(storageKey, nameTreeProject(this.cfg)); } catch { this.cb.toast('No se pudo recordar el árbol. Guárdalo como proyecto.', true); }
+    try { localStorage.setItem(storageKey, nameTreeProject(this.cfg)); localStorage.removeItem(legacyKey); } catch { this.cb.toast('No se pudo recordar el árbol. Guárdalo como proyecto.', true); }
     this.renderInfo(); this.render();
   }
   async whenIdle() {
@@ -210,6 +223,7 @@ export class NameTreeStudio {
     try { this.plates = packNameTree(r); } catch (error) { warnings.push(error.message); }
     this.$('plate').innerHTML = this.plates.map((plate, i) => `<option value="${i}">${i + 1} · ${plate.color} · ${plate.placements.length} pieza(s)</option>`).join('');
     this.$('summary').innerHTML = `<h3>Resultado</h3><div>${r.parts.length} piezas encajables</div><div>${this.plates.length} placas · ${r.filaments.length} colores</div>
+      <div>Estabilidad: ${p.stability.frontBack.toFixed(1)}° adelante/atrás · ${p.stability.sideways.toFixed(1)}° de lado</div>
       <p class="muted small">El alto incluye el tronco y la figura. Se respeta el límite más restrictivo sin deformar las letras.</p>`;
     this.$('warnings').hidden = !warnings.length;
     this.$('warnings').textContent = warnings.join(' ');
@@ -226,7 +240,7 @@ export class NameTreeStudio {
       const part = r.parts[placement.index];
       const geometry = plateMode ? placedTreeGeometry(part, placement) : part.geometry.clone().rotateX(Math.PI / 2);
       if (plateMode) geometry.translate(-r.cfg.bedWidth / 2, -r.cfg.bedHeight / 2, 0);
-      else if (this.view === 'exploded') geometry.translate(0, 0, placement.index * 9);
+      else if (this.view === 'exploded') geometry.translate(0, 0, placement.index * Math.max(12, 0.06 * r.plan.height));
       const m = v.addPiece('p' + placement.index, geometry); m.material.color.set(part.color);
     }
     this.fit();
