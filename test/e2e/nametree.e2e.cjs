@@ -1,5 +1,6 @@
 const fs = require('node:fs');
 const path = require('node:path');
+const crypto = require('node:crypto');
 const assert = require('node:assert/strict');
 const { pathToFileURL } = require('node:url');
 const { unzipSync, strFromU8 } = require('fflate');
@@ -170,6 +171,60 @@ module.exports = async ({ win, run, shot, wait }) => {
     document.querySelector('#nameTree [data-k="maxHeight"]').value==="135" && !t.$("warnings").querySelector('[data-a="suggest"]') &&
     t.res.plan.height<=135.001 && t.res.plan.levels.every(l=>l.cap>=l.legible-0.01)`), 'the suggestion applies automatic order and height, and every name keeps its legible size');
   await view('front'); await picture('06_suggestion_applied');
+  // A tree printed with version 1.25.1 comes back byte for byte; one misspelled name is then corrected without touching
+  // the measures, the guides or the other pieces, and the user picks the face that takes the texture of the bed.
+  const golden = JSON.parse(fs.readFileSync(path.resolve(__dirname, '..', 'fixtures', 'name_tree_v1.25.1.json'), 'utf8'));
+  const sha = file => crypto.createHash('sha256').update(fs.readFileSync(file)).digest('hex');
+  const control = selector => `document.querySelector('#nameTree ${selector}')`;
+  const pick = index => run(`(()=>{const s=${control('[data-r="fixIndex"]')};s.value='${index}';s.dispatchEvent(new Event('change',{bubbles:true}));return true;})()`);
+  const type = text => run(`(()=>{const e=${control('[data-r="fixText"]')};e.value=${JSON.stringify(text)};e.dispatchEvent(new Event('input',{bubbles:true}));return true;})()`);
+  const locked = ['order', 'trunk', 'trunkText', 'font', 'uppercase', 'maxHeight', 'maxWidth', 'bottomDepth', 'topDepth', 'shape', 'clearance', 'minStroke'];
+  await p(`t.openProject(${JSON.stringify(golden.project)})`); await idle();
+  ok(await p(`t.res.parts.length===6 && !t.cfg.fixes.length && ${control('[data-k="bedFace"]')}.value==="back" && t.$("faceHint").textContent.includes("espalda")`),
+    'a printed tree opens with its back against the bed, as before');
+  const printedFolder = await p('t.exportAll()');
+  ok(fs.readdirSync(printedFolder).filter(n => n.endsWith('.stl')).length === 6 &&
+    Object.entries(golden.stl).every(([name, hash]) => sha(path.join(printedFolder, name)) === hash), 'every piece of a tree printed with version 1.25.1 comes out byte for byte the same');
+  await set('bedFace', 'front');
+  ok(await p('t.res.parts.every(p=>p.face==="front") && t.$("faceHint").textContent.includes("cara que se lee")'), 'the readable face can lie on the textured bed');
+  await pick(0); await click('fix');
+  ok(await p(`!t.cfg.fixes.length && !t.timer && document.getElementById('toast').textContent.includes('así es como ya está impreso')`),
+    'a correction that repeats the printed name is refused with an explanation');
+  await pick(1);
+  ok(await p('t.$("fixText").value==="Valeria"'), 'choosing a printed name fills in how it was printed');
+  await type('Valery');
+  await run(`${control('[data-r="fixText"]')}.dispatchEvent(new KeyboardEvent('keydown',{key:'Enter',bubbles:true}))`); await idle();
+  ok(await p(`t.cfg.fixes.length===1 && t.cfg.fixes[0].index===1 && t.cfg.fixes[0].text==="Valery" && t.res.plan.fixes.length===1 &&
+    t.res.plan.fixes[0].part===2 && t.res.plan.fixes[0].from==="VALERIA" && t.res.plan.fixes[0].to==="VALERY" &&
+    t.res.parts.filter(p=>p.corrected).map(p=>p.name).join()==="VALERY" && t.plates.length===1 && t.plates[0].placements.map(q=>q.index).join()==="2"`),
+  'Enter corrects that piece only, and only it goes to the plate');
+  ok(await p(`${JSON.stringify(locked)}.every(k=>${control('[data-k="\'+k+\'"]')}.disabled) && document.getElementById('treeNames').disabled &&
+    ${control('[data-a="shape"]')}.disabled && t.picker.button.disabled && !${control('[data-k="bedFace"]')}.disabled && !${control('[data-color="first"]')}.disabled &&
+    ${control('[data-a="export"]')}.textContent==="⬇ Solo pieza corregida" && t.$("fixList").textContent.includes("Pieza 3: «Valeria» → «Valery»") &&
+    t.$("summary").textContent.includes("pieza 3 «VALERY» (antes «VALERIA»)") && t.$("warnings").textContent.includes("«VALERY»")`),
+  'while correcting, every measure of the printed tree is locked and the panel says which piece to print');
+  await pick(3); await type('Lucía');
+  await run(`(()=>{const e=${control('[data-color="top"]')};e.value='#d4af37';e.dispatchEvent(new Event('change',{bubbles:true}));return true;})()`); await idle();
+  ok(await p('t.$("fixText").value==="Lucía" && t.$("fixIndex").value==="3" && t.cfg.fixes.length===1 && t.res.cfg.colors.top==="#d4af37"'),
+    'a rebuild keeps the corrected name the user is still typing');
+  await pick(1);
+  ok(await p('t.$("fixText").value==="Valery"'), 'a corrected name shows its correction');
+  await view('front'); await picture('07_correccion');
+  await view('plates'); await picture('08_correccion_placa');
+  const fixFolder = await p('t.exportAll()'), fixFiles = fs.readdirSync(fixFolder);
+  const montaje = fs.readFileSync(path.join(fixFolder, 'Montaje.txt'), 'utf8'), fixProject = JSON.parse(fs.readFileSync(path.join(fixFolder, 'Proyecto.r3t'), 'utf8')).cfg;
+  const fixPlates = fixFiles.filter(n => /^Placa_.*\.3mf$/.test(n)), fixModel = read3MF(fs.readFileSync(path.join(fixFolder, fixPlates[0])));
+  ok(path.basename(fixFolder).startsWith('Arbol_Árbol de referencia_correccion_') && fixFiles.filter(n => n.endsWith('.stl')).join() === 'Pieza_03_corregida.stl' &&
+    fixPlates.length === 1 && fixModel.parts.length === 1 && Math.abs(Math.min(...fixModel.parts[0].V.filter((_, i) => i % 3 === 2))) < 0.001 &&
+    fixFiles.includes('Vista_armada_NO_IMPRIMIR.3mf') && montaje.includes('CORRECCIÓN') && montaje.includes('Pieza 3: «VALERIA» → «VALERY»') &&
+    montaje.includes('el frente (la cara que se lee) sobre la cama') && fixProject.bedFace === 'front' &&
+    JSON.stringify(fixProject.fixes) === '[{"index":1,"text":"Valery"}]' && JSON.stringify(fixProject.names) === JSON.stringify(golden.project.cfg.names),
+  'the correction exports only its piece, a plate with it lying on the bed, the instructions and the project that reopens it');
+  await run(`${control('[data-a="unfix"][data-i="1"]')}.click()`); await idle();
+  ok(await p(`!t.cfg.fixes.length && !t.res.plan.fixes.length && !document.getElementById('treeNames').disabled && !t.picker.button.disabled &&
+    ${JSON.stringify(locked)}.every(k=>!${control('[data-k="\'+k+\'"]')}.disabled) && ${control('[data-a="export"]')}.textContent==="⬇ Placas por color" &&
+    !t.$("summary").textContent.includes("Imprime solo") && t.plates.reduce((n,q)=>n+q.placements.length,0)===6`),
+  'removing the correction unlocks the tree and exports it complete again');
   ok(errors.length === 0, 'no renderer errors: ' + errors.join(' | '));
   fs.writeFileSync(path.join(out, 'result.json'), JSON.stringify({ folder, plates, parts: count, complete: true }, null, 2));
   console.log('[e2e] done');

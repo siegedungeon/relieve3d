@@ -62,6 +62,14 @@ export class NameTreeStudio {
             <label class="row">Mayúsculas<input type="checkbox" data-k="uppercase" /></label>
             <div class="muted small">Cada nombre se escala sin estirar las letras, entre dos barras finas como en el modelo de referencia. Los acentos quedan calados en la barra superior: cada palabra es una sola pieza.</div>
           </section>
+          <section class="card nt-fix">
+            <h3>Corregir un nombre ya impreso</h3>
+            <p class="muted small">Abre el Proyecto.r3t del árbol impreso, elige el nombre con el error y escribe cómo debe quedar. Solo se rehace esa pieza, con la misma altura, grosor y guías: encaja en las piezas que ya tienes.</p>
+            <label class="row">Nombre<select data-r="fixIndex"></select></label>
+            <label class="row">Debe decir<input type="text" data-r="fixText" maxlength="32" spellcheck="false" /></label>
+            <button class="btn wide" data-a="fix">Aplicar corrección</button>
+            <div data-r="fixList" class="nt-fixes"></div>
+          </section>
           <section class="card">
             <h3>Medidas máximas del conjunto</h3>
             ${number('Alto máximo (mm)', 'maxHeight', 'Incluye tronco, nombres y remate. El árbol puede quedar más bajo para respetar el ancho y la forma.')}
@@ -97,7 +105,8 @@ export class NameTreeStudio {
             ${number('Holgura por lado (mm)', 'clearance', '0,2 mm por lado. Si queda apretado, aumenta; si queda flojo, reduce. Prueba primero una pareja.')}
             ${number('Trazo / unión mín. (mm)', 'minStroke', 'Engrosa trazos, une acentos y refuerza barras. Recomendado: 1,2 mm para boquilla de 0,4.')}
             ${number('Placa: ancho (mm)', 'bedWidth')}${number('Placa: largo (mm)', 'bedHeight')}
-            <p class="muted small">Piezas acostadas, espalda sobre la cama, sin soportes. Una placa por color: no requiere AMS.</p>
+            <label class="row" title="La cara que toca la placa se lleva su acabado (por ejemplo, la textura de una placa PEI texturizada).">Cara sobre la placa<select data-k="bedFace"><option value="back">Espalda</option><option value="front">Frente (se lee)</option></select></label>
+            <p class="muted small" data-r="faceHint"></p>
             <p class="muted small">Guías ocultas dentro del grosor: no se ven por delante ni por detrás. Monta bajando cada pieza en vertical sobre la anterior, con las caras alineadas.</p>
           </section>
           <section class="card" data-r="summary"></section>
@@ -133,11 +142,17 @@ export class NameTreeStudio {
         if (key === 'shape' && el.value === 'custom' && !this.cfg.custom) { el.value = this.cfg.shape; this.$('fileShape').click(); return; }
         this.cfg[key] = el.type === 'checkbox' ? el.checked : el.value;
         if (key === 'trunk') this.root.querySelector('[data-k="trunkText"]').disabled = el.value === 'block';
+        if (key === 'bedFace') this.syncFixes(false);
         this.schedule();
       } else if (el.dataset.color) { this.cfg.colors[el.dataset.color] = el.value; this.schedule(); }
       else if (el.dataset.nameColor !== undefined) { this.cfg.names[+el.dataset.nameColor].color = el.value; this.schedule(); }
     });
     this.$('plate').onchange = () => { this.plate = +this.$('plate').value; this.render(); };
+    this.$('fixIndex').onchange = () => this.fillFix();
+    this.$('fixText').addEventListener('input', () => { this.fixDirty = true; });
+    this.$('fixText').addEventListener('keydown', e => {
+      if (e.key === 'Enter') { e.preventDefault(); this.action('fix').catch(error => this.cb.toast(error.message, true)); }
+    });
     this.$('fileProject').onchange = e => {
       const f = e.target.files[0]; e.target.value = '';
       if (f) f.text().then(text => this.openProject(text)).catch(error => this.cb.toast(error.message, true));
@@ -156,7 +171,36 @@ export class NameTreeStudio {
     }
     for (const el of this.root.querySelectorAll('[data-color]')) el.value = this.cfg.colors[el.dataset.color];
     this.root.querySelector('[data-k="trunkText"]').disabled = this.cfg.trunk === 'block';
+    this.syncFixes();
     this.picker.sync();
+  }
+  fixTextFor(index) {
+    return this.cfg.fixes.find(f => f.index === index)?.text ?? this.cfg.names[index]?.text ?? '';
+  }
+  fillFix() { this.$('fixText').value = this.fixTextFor(+this.$('fixIndex').value); this.fixDirty = false; }
+  // A correction keeps everything that shapes the printed pieces: names, order, font, sizes, clearance and stroke.
+  // A finished rebuild (refill = false) keeps what the user is typing as the corrected name.
+  syncFixes(refill = true) {
+    const c = this.cfg, fixing = c.fixes.length > 0, select = this.$('fixIndex'), keep = +select.value || 0;
+    select.innerHTML = c.names.map((n, i) => {
+      const fix = c.fixes.find(f => f.index === i);
+      return `<option value="${i}">${esc(n.text)}${fix ? ` → ${esc(fix.text)}` : ''}</option>`;
+    }).join('');
+    select.value = String(Math.min(keep, c.names.length - 1));
+    if (refill || !this.fixDirty) this.fillFix();
+    const pieces = new Map((this.res?.plan.fixes || []).map(f => [f.index, f.part + 1]));
+    this.$('fixList').innerHTML = c.fixes.map(f => `<div class="nt-fixrow"><span>${pieces.has(f.index) ? `Pieza ${pieces.get(f.index)}: ` : ''}«${esc(c.names[f.index].text)}» → «${esc(f.text)}»</span>
+      <button class="btn mini" data-a="unfix" data-i="${f.index}">Quitar</button></div>`).join('')
+      + (fixing ? '<p class="muted small">Mientras haya correcciones, los nombres y las medidas quedan bloqueados para no cambiar las piezas ya impresas. Se exporta solo lo corregido. Para un acabado igual, pon sobre la placa la misma cara que en las demás piezas (hasta la versión 1.25 siempre fue la espalda).</p>' : '');
+    this.$('names').disabled = fixing;
+    for (const key of ['order', 'trunk', 'trunkText', 'font', 'uppercase', 'maxHeight', 'maxWidth', 'bottomDepth', 'topDepth', 'shape', 'clearance', 'minStroke']) {
+      this.root.querySelector(`[data-k="${key}"]`).disabled = fixing || (key === 'trunkText' && c.trunk === 'block');
+    }
+    this.root.querySelector('[data-a="shape"]').disabled = fixing;
+    this.root.querySelector('[data-a="export"]').textContent = fixing ? `⬇ Solo ${c.fixes.length > 1 ? 'piezas corregidas' : 'pieza corregida'}` : '⬇ Placas por color';
+    this.$('faceHint').textContent = c.bedFace === 'front'
+      ? 'Piezas boca abajo, con el frente sobre la cama y sin soportes: la textura de la placa queda en la cara que se lee. Una placa por color: no requiere AMS.'
+      : 'Piezas acostadas, espalda sobre la cama, sin soportes: la textura de la placa queda atrás. Una placa por color: no requiere AMS.';
   }
   async font(family) {
     if (!this.fonts.has(family)) this.fonts.set(family, fetch('fonts/' + NAME_TREE_FONTS[family])
@@ -199,7 +243,7 @@ export class NameTreeStudio {
       this.accept(result);
     } catch (error) {
       if (revision !== this.revision) return;
-      this.error = error.message; this.suggestions = error.suggestions || [];
+      this.error = error.message; this.suggestions = this.cfg.fixes.length ? [] : error.suggestions || [];
       this.$('status').textContent = 'Vista anterior · ' + error.message;
       this.$('warnings').hidden = false;
       this.$('warnings').innerHTML = `<p>${esc(error.message)}</p>` + this.suggestions
@@ -218,15 +262,18 @@ export class NameTreeStudio {
     return true;
   }
   renderInfo() {
-    const r = this.res, c = this.cfg, p = r.plan;
+    const r = this.res, c = this.cfg, p = r.plan, fixed = p.fixes;
     this.picker.sync();
-    this.$('status').textContent = `${c.names.length} nombres · ${p.width.toFixed(1)} × ${p.height.toFixed(1)} mm · grosor ${c.bottomDepth} → ${c.topDepth} mm`;
+    this.syncFixes(false);
+    this.$('status').textContent = `${c.names.length} nombres · ${p.width.toFixed(1)} × ${p.height.toFixed(1)} mm · grosor ${c.bottomDepth} → ${c.topDepth} mm`
+      + (fixed.length ? ` · corrección: ${fixed.length === 1 ? '1 pieza' : `${fixed.length} piezas`}` : '');
     this.$('parts').innerHTML = r.parts.filter(part => part.role === 'name').map(part => `<label class="nt-part">${esc(part.name)}
       <input type="color" data-name-color="${part.sourceIndex}" value="${part.color}" aria-label="Color de ${esc(part.name)}" /></label>`).join('');
     this.plates = []; const warnings = [...r.warnings];
     try { this.plates = packNameTree(r); } catch (error) { warnings.push(error.message); }
     this.$('plate').innerHTML = this.plates.map((plate, i) => `<option value="${i}">${i + 1} · ${plate.color} · ${plate.placements.length} pieza(s)</option>`).join('');
     this.$('summary').innerHTML = `<h3>Resultado</h3><div>${r.parts.length} piezas encajables</div><div>${this.plates.length} placas · ${r.filaments.length} colores</div>
+      ${fixed.length ? `<div data-r="fixSummary"><b>Imprime solo:</b> ${fixed.map(f => `pieza ${f.part + 1} «${esc(f.to)}» (antes «${esc(f.from)}»)`).join(', ')}</div>` : ''}
       <div>Estabilidad: ${p.stability.frontBack.toFixed(1)}° adelante/atrás · ${p.stability.sideways.toFixed(1)}° de lado</div>
       <p class="muted small">El alto incluye el tronco y la figura. Se respeta el límite más restrictivo sin deformar las letras.</p>`;
     this.$('warnings').hidden = !warnings.length;
@@ -309,10 +356,12 @@ export class NameTreeStudio {
     this.busy = true; this.buttons();
     try {
       const profile = snapshot.cfg.bedWidth === 256 && snapshot.cfg.bedHeight === 256 ? await window.api.nameTreeProfile?.() : undefined;
-      const batch = nameTreeFiles(snapshot, { profile });
-      const folder = await window.api.saveFilesToFolder({ files: batch.files, folderName: basename(snapshot.cfg.name),
+      const batch = nameTreeFiles(snapshot, { profile }), fixed = snapshot.plan.fixes;
+      const folder = await window.api.saveFilesToFolder({ files: batch.files, folderName: basename(snapshot.cfg.name) + (fixed.length ? '_correccion' : ''),
         ...(profile ? { bambuPlates: batch.plateFiles } : {}) });
-      if (folder) this.cb.toast(`${batch.plates.length} placas por color, STL, montaje y proyecto guardados en: ${folder}`);
+      if (folder) this.cb.toast(fixed.length
+        ? `${fixed.map(f => `Pieza ${f.part + 1} corregida («${f.to}»)`).join(', ')}, su placa, montaje y proyecto guardados en: ${folder}`
+        : `${batch.plates.length} placas por color, STL, montaje y proyecto guardados en: ${folder}`);
       return folder;
     } finally { dispose(snapshot); this.busy = false; this.buttons(); }
   }
@@ -327,6 +376,14 @@ export class NameTreeStudio {
     if (action === 'shape') { this.$('fileShape').click(); return; }
     if (action === 'reset') { this.cfg = DEFAULT_NAME_TREE(); this.sync(); this.schedule(); return; }
     if (action === 'fit') { this.fit(); return; }
+    if (action === 'fix') {
+      const index = +this.$('fixIndex').value, had = this.cfg.fixes.some(f => f.index === index);
+      const { fixes } = normalizeNameTree({ ...this.cfg, fixes: [...this.cfg.fixes.filter(f => f.index !== index), { index, text: this.$('fixText').value }] });
+      if (!had && !fixes.some(f => f.index === index)) { this.cb.toast('Escribe cómo debe quedar el nombre: así es como ya está impreso.', true); return; }
+      this.cfg.fixes = fixes; this.sync(); this.schedule();
+      return;
+    }
+    if (action === 'unfix') { this.cfg.fixes = this.cfg.fixes.filter(f => f.index !== +el?.dataset.i); this.sync(); this.schedule(); return; }
     if (action === 'save') return this.saveProject();
     if (action === 'export') return this.exportAll();
     await this.whenIdle();

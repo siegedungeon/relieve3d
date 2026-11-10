@@ -1,0 +1,57 @@
+{
+  "note": "Piezas exportadas por la versión 1.25.1. Un árbol ya impreso debe regenerarse idéntico byte a byte.",
+  "project": {
+    "app": "Relieve3D-ArbolNombres",
+    "version": 2,
+    "cfg": {
+      "name": "Árbol de referencia",
+      "names": [
+        {
+          "text": "Familia",
+          "color": ""
+        },
+        {
+          "text": "Valeria",
+          "color": ""
+        },
+        {
+          "text": "Santiago",
+          "color": ""
+        },
+        {
+          "text": "Lucas",
+          "color": ""
+        }
+      ],
+      "font": "Bebas Neue",
+      "uppercase": true,
+      "order": "manual",
+      "trunk": "text",
+      "trunkText": "Paz",
+      "shape": "star",
+      "custom": null,
+      "colors": {
+        "first": "#c12e1f",
+        "second": "#008b45",
+        "trunk": "#754629",
+        "top": "#fec600"
+      },
+      "maxWidth": 85,
+      "maxHeight": 130,
+      "bottomDepth": 25,
+      "topDepth": 12,
+      "minStroke": 1.2,
+      "clearance": 0.2,
+      "bedWidth": 256,
+      "bedHeight": 256
+    }
+  },
+  "stl": {
+    "Pieza_01.stl": "fed6663cdf2eb9d9e2787df5062a6c78ee1888f55bdf5c497184ee2a6e40068d",
+    "Pieza_02.stl": "779c544ee9c86d7244a964082b9c9e8b44a13f7131172720c82fae445691ceb1",
+    "Pieza_03.stl": "9e5611cf1cda85011a06aff2b0ca1a17b9ddf480a18f175f23ef8f6660b7d17a",
+    "Pieza_04.stl": "3a22339ab6ad7b7b3a4bdfe0d7d4b76dfc0268e0b5d3ad1fb1ebb6912d49a406",
+    "Pieza_05.stl": "5986bbbfbe8cda49a5b25b42f4699d9e54ade9e71dc90a386029fbdeacd9fcfb",
+    "Pieza_06.stl": "be6d8fb3e7631d60f00a8a1c145e2e7f963d3cb391cc51723cbe7167638491d4"
+  }
+}

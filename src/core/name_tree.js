@@ -17,7 +17,7 @@ export const DEFAULT_NAME_TREE = () => ({
   minStroke: 1.2, clearance: 0.2,
   shape: 'star', custom: null,
   colors: { first: '#c12e1f', second: '#008b45', trunk: '#754629', top: '#fec600' },
-  bedWidth: 256, bedHeight: 256,
+  bedWidth: 256, bedHeight: 256, bedFace: 'back', fixes: [],
 });
 // k = width gained per mm going down the tree (the reference model is ≈0.96); a narrow range keeps its proportions.
 // Only when many names would shrink the top below a legible size does the slope steepen, down to K_LO.
@@ -32,6 +32,9 @@ const TOP_MIN = 0.28, TOP_MAX = 0.38, TOP_WORD = 0.6, CAP_FRAC = 0.06;
 // ROW, DSTEP and DMAX are font units at size 100 (cap ≈ 70); GRID widths are scanned near the narrowest tree.
 const GAP_MIN = 0.8, gapFor = s => Math.max(GAP_MIN, 0.65 * s), SLOT = 0.19, ROW = 0.5, DSTEP = 0.25, DMAX = 128, GRID = 33;
 const FLANK = 50, KEY_TIP = 1, KEY_MIN = 0.8, KEY_GOOD = 2.5, KEY_MAX = 6;
+// A corrected name may open its letters by up to TRACK_MAX·cap per gap to keep the printed width, and shift up to
+// SHIFT_MAX mm so its letters cover the hidden grooves of the printed neighbours.
+const TRACK_MAX = 0.25, SHIFT_MAX = 2, SHIFT_STEP = 0.25, LOST_TOL = 0.25;
 const TOPPERS = { star: 'Estrella', heart: 'Corazón', circle: 'Círculo', custom: 'Remate personalizado' };
 
 let engine, loading;
@@ -58,6 +61,21 @@ export function parseTreeNames(value) {
     return { text, color: color(item?.color, '') };
   });
 }
+// Corrections of names already printed: the tree keeps the layout of the printed names and only those pieces change.
+function treeFixes(list, c) {
+  if (list === undefined || list === null) return [];
+  if (!Array.isArray(list) || list.length > 20) throw new Error('Las correcciones de nombres no son válidas.');
+  const cased = t => c.uppercase ? t.toLocaleUpperCase('es') : t, fixes = [], seen = new Set();
+  for (const fix of list) {
+    const index = Number(fix?.index), text = String(fix?.text ?? '').normalize('NFC').trim();
+    if (!Number.isInteger(index) || index < 0 || index >= c.names.length) throw new Error('La corrección apunta a un nombre que no está en el árbol.');
+    if (!text || [...text].length > 32 || /[\x00-\x1f\x7f]/.test(text)) throw new Error('El nombre corregido debe tener entre 1 y 32 caracteres visibles.');
+    if (seen.has(index)) throw new Error('Cada nombre admite una sola corrección.');
+    seen.add(index);
+    if (cased(text) !== cased(c.names[index].text)) fixes.push({ index, text });
+  }
+  return fixes.sort((a, b) => a.index - b.index);
+}
 export function normalizeNameTree(input = {}) {
   if (!input || typeof input !== 'object') throw new Error('Configuración del árbol no válida.');
   const d = DEFAULT_NAME_TREE(), c = {
@@ -67,9 +85,10 @@ export function normalizeNameTree(input = {}) {
     order: (input.order ?? d.order) === 'manual' ? 'manual' : 'auto',
     trunk: input.trunk ?? d.trunk,
     trunkText: String(input.trunkText ?? d.trunkText).normalize('NFC').trim(),
-    shape: input.shape ?? d.shape, custom: input.custom ?? null, colors: {},
+    shape: input.shape ?? d.shape, custom: input.custom ?? null, colors: {}, bedFace: input.bedFace ?? d.bedFace,
   };
   if (!['text', 'block'].includes(c.trunk)) throw new Error('Tronco no válido.');
+  if (!['back', 'front'].includes(c.bedFace)) throw new Error('Cara contra la cama no válida.');
   if ([...c.trunkText].length > 16 || /[\x00-\x1f\x7f]/.test(c.trunkText)) throw new Error('El texto del tronco admite hasta 16 caracteres visibles.');
   if (c.trunk === 'text' && !c.trunkText) throw new Error('Escribe el texto del tronco (por ejemplo, el año) o elige el tronco liso.');
   for (const [k, lo, hi, label] of [
@@ -91,6 +110,7 @@ export function normalizeNameTree(input = {}) {
     }
     c.custom = c.custom.map(r => r.map(p => [...p]));
   }
+  c.fixes = treeFixes(input.fixes, c);
   return c;
 }
 function scope() {
@@ -306,23 +326,29 @@ function extent(w, τ) {
 const thicken = (w, σ, s) => clamp((s - 0.75 * w.stem * σ) / 2, 0, s / 2);
 // Smallest cap height at which the word's narrowest white stays g wide once its strokes thicken: σ·counter − δ ≥ g/2.
 const legibleCap = (w, s, g) => w.capH * Math.max(g / (2 * w.counter), (g + s) / (2 * w.counter + 0.75 * w.stem));
+// Half width of a word band whose letters are spaced by τ, including its accent windows and the band around them.
+function wordHalf(w, σ, δ, τ, s) {
+  const [x0, x1] = reach(w.reach.x, τ);
+  let half = σ * (x1 - x0) / 2 + δ;
+  if (w.mark) {
+    const [m0, m1] = reach(w.reach.m, τ), cx = (x0 + x1) / 2;
+    half = Math.max(half, σ * (cx - m0) + δ + s, σ * (m1 - cx) + δ + s);
+  }
+  return half;
+}
 // Vertical layout of one word band for scale σ; δ thickens thin strokes up to the minimum stroke and τ spaces the
 // letters so the white between them stays g wide (and s of solid band between accent windows).
 function wordDims(w, σ, s, rails, g) {
   σ = Math.max(σ, 1e-6);
   const δ = thicken(w, σ, s), τ = Math.max(tracking(w.track, (g + 2 * δ) / σ), tracking(w.markTrack, (s + 2 * δ) / σ));
-  const [x0, x1] = reach(w.reach.x, τ);
-  let half = σ * (x1 - x0) / 2 + δ;
   const yb = rails.rb - OV + δ, yc = yb + σ * w.top + δ - OV;
   let height = yc + rails.rt, lift = 0;
   if (w.mark) {
-    const [m0, m1] = reach(w.reach.m, τ), cx = (x0 + x1) / 2;
-    half = Math.max(half, σ * (cx - m0) + δ + s, σ * (m1 - cx) + δ + s);
     const floor = Math.max(yc, yb + σ * w.maxY + δ) + s;
     lift = Math.max(0, floor - (yb + σ * w.mark.y0 - δ));
     height = Math.max(height, yb + σ * w.mark.y1 + δ + lift + Math.max(rails.rt, s));
   }
-  return { δ, τ, yb, yc, height, lift, width: 2 * half, cap: σ * w.capH };
+  return { δ, τ, yb, yc, height, lift, width: 2 * wordHalf(w, σ, δ, τ, s), cap: σ * w.capH };
 }
 function topperShape(c, CS, own) {
   let cs;
@@ -539,6 +565,70 @@ function wordProfile(w, L, rails, nextFoot, s, CS, own, minFoot = 0) {
   const cs = own(own(CS.union(pieces)).intersect(rect(-BIG, y0, BIG, y0 + L.height)));
   return { cs: connectedSection(cs, s, CS, own), foot };
 }
+// A corrected name takes the slot of a printed one: the same bottom and height and at most the same width, with rails
+// that carry the printed neighbours. Its letters keep their size when they fit (smaller only if they must, never below
+// legible), open up to TRACK_MAX to fill the old width, and narrow or shift until they hide the grooves of the keys the
+// printed pieces already have; a groove they still cannot hide gets a solid pad.
+function fixedProfile(w, L, slot, CS, own) {
+  const { rails, s, g, nextFoot, needs, support, from, top: yTop } = slot, y0 = L.bottom;
+  const rect = (x0, y0, x1, y1) => rectangle(CS, own, x0, y0, x1, y1), dims = σ => wordDims(w, σ, s, rails, g);
+  let σ = L.σ;
+  if (dims(σ).height > L.height + 1e-6) σ = root(v => dims(v).height - L.height, 0, σ);
+  if (dims(σ).width > L.width + 1e-6) σ = root(v => dims(v).width - L.width, 0, σ);
+  const d = dims(σ), legible = Math.max(MIN_CAP, w.legible);
+  if (d.cap < legible - 1e-6) {
+    throw new Error(`«${w.text}» no cabe legible en el lugar de «${from}»: sus letras quedarían de ${d.cap.toFixed(1)} mm y con esta fuente `
+      + `necesita al menos ${legible.toFixed(1)} mm. Con ese nombre hay que imprimir de nuevo el árbol completo.`);
+  }
+  const widthAt = τ => 2 * wordHalf(w, σ, d.δ, τ, s), τmax = d.τ + TRACK_MAX * w.capH;
+  const τfit = widthAt(d.τ) >= L.width ? d.τ : widthAt(τmax) <= L.width ? τmax : root(τ => widthAt(τ) - L.width, d.τ, τmax);
+  // Smaller letters are centred where the old ones were and the rails grow to fill the slot.
+  const middle = D => (D.yb - D.δ + D.yc + OV) / 2;
+  const dy = σ < L.σ ? clamp(middle(L) - middle(d), 0, Math.max(0, L.height - d.height)) : 0, yRail = y0 + dy + d.yc;
+  const below = needs.filter(n => n.side < 0), above = needs.filter(n => n.side > 0), deep = needs.filter(n => n.deep);
+  const span = (list, a, b) => [Math.min(a, ...list.map(n => n.x0)), Math.max(b, ...list.map(n => n.x1))];
+  const spaced = (key, τ) => own(CS.union(w.glyphs.filter(q => q[key]).map(q => own(q[key].translate([q.i * τ, 0])))));
+  const place = (cs, cx, lift = 0) => {
+    const placed = own(own(own(cs.translate([-cx, 0])).scale([σ, σ])).translate([0, y0 + d.yb + dy + lift]));
+    return d.δ > 1e-4 ? own(placed.offset(d.δ, 'Round', 2, 32)) : placed;
+  };
+  // Letters shifted by dx between a foot rail over every key below and a top rail under every key above.
+  const assemble = (v, dx, letters) => {
+    const at = cs => dx ? own(cs.translate([dx, 0])) : cs, X = x => σ * (x - v.e.cx) + dx;
+    const foot = span(below, X(v.e.foot[0]) - d.δ, X(v.e.foot[1]) + d.δ), head = [X(v.e.head[0]) - d.δ, X(v.e.head[1]) + d.δ];
+    const rail = span(above, Math.min(head[0], nextFoot[0]), Math.max(head[1], nextFoot[1]));
+    const pieces = [at(letters), rect(foot[0], y0, foot[1], y0 + rails.rb + dy), rect(rail[0], yRail, rail[1], v.holes ? yRail + rails.rt : yTop)];
+    if (v.holes) {
+      const windows = at(v.holes), hb = windows.bounds();
+      pieces.push(own(rect(Math.min(rail[0], hb.min[0] - s), yRail, Math.max(rail[1], hb.max[0] + s), yTop).subtract(windows)));
+    }
+    return { foot, cs: own(CS.union(pieces)) };
+  };
+  // Candidates come in order of preference (more tracking, then smaller shifts): a later one must hide visibly more
+  // of the grooves, since a pad shows exactly the part the letters leave uncovered.
+  const rank = (a, b) => (a.lost > 1e-4) - (b.lost > 1e-4) || (a.overhang > 0.05) - (b.overhang > 0.05)
+    || (Math.abs(a.lost - b.lost) > LOST_TOL ? a.lost - b.lost : 0) || (Math.abs(a.overhang - b.overhang) > 0.05 ? a.overhang - b.overhang : 0);
+  let best = null;
+  search: for (const f of deep.length ? [1, 0.75, 0.5, 0.25, 0] : [1]) {
+    const τ = d.τ + f * (τfit - d.τ), e = extent(w, τ), width = widthAt(τ);
+    const v = { τ, e, width, body: place(spaced('body', τ), e.cx), holes: w.mark ? place(spaced('marks', τ), e.cx, d.lift) : null };
+    const room = Math.min(SHIFT_MAX, Math.max(0, (L.width - width) / 2)), shifts = [0];
+    for (let k = 1; deep.length && k * SHIFT_STEP <= room + 1e-9; k++) shifts.push(k * SHIFT_STEP, -k * SHIFT_STEP);
+    // Only the letters around the grooves matter while searching.
+    const near = deep.length ? own(v.body.intersect(own(CS.union(deep.map(n => rect(n.x0 - room - 1, n.y0 - 1, n.x1 + room + 1, n.y1 + 1)))))) : v.body;
+    for (const dx of shifts) {
+      const { foot, cs } = assemble(v, dx, near), missing = deep.map(n => own(rect(n.x0, n.y0, n.x1, n.y1).subtract(cs)).area());
+      const lost = missing.reduce((a, b) => a + b, 0), overhang = support ? Math.max(0, support[0] - foot[0], foot[1] - support[1]) : 0;
+      const candidate = { v, dx, missing, lost, overhang, done: near === v.body ? { foot, cs } : null };
+      if (!best || rank(candidate, best) < 0) best = candidate;
+      if (lost <= 1e-4 && overhang <= 0.05) break search;
+    }
+  }
+  const { v, dx } = best, { foot, cs } = best.done ?? assemble(v, dx, v.body), pads = deep.filter((_, i) => best.missing[i] > 1e-4);
+  const solid = own(own(CS.union([cs, ...pads.map(n => rect(n.x0, n.y0, n.x1, n.y1))])).intersect(rect(-BIG, y0, BIG, yTop)));
+  return { cs: connectedSection(solid, s, CS, own), foot, cap: d.cap, width: v.width, shift: dx, track: σ * (v.τ - d.τ),
+    pads: pads.length, overhang: best.overhang };
+}
 function topperProfile(T, P, rails, s, CS, own) {
   const rect = (x0, y0, x1, y1) => rectangle(CS, own, x0, y0, x1, y1);
   const y0 = P.bottom, σ = (P.width - s) / T.w;
@@ -679,26 +769,59 @@ export function nameTreeSolids(input, { font } = {}) {
     ];
     const H = plan.height, tilt = Math.atan((c.bottomDepth - c.topDepth) / (2 * H));
     const depth = y => c.bottomDepth + (c.topDepth - c.bottomDepth) * clamp(y / H, 0, 1);
-    const bodies = profiles.map(p => own(own(p.extrude(1)).warp(v => { v[2] = (v[2] - 0.5) * depth(v[1]); })));
     const bottoms = [0, ...plan.levels.map(l => l.bottom), plan.top.bottom], joints = [];
     const caps = [trunk ? plan.trunk.cap : plan.trunk.height, ...plan.levels.map(l => l.cap), plan.top.height / 2];
     for (let i = 0; i + 1 < profiles.length; i++) {
       const y = bottoms[i + 1], limits = { up: 0.3 * caps[i + 1], down: 0.3 * caps[i] };
       const { keys, skin } = placeKeys(profiles[i], profiles[i + 1], y, c, depth, limits, tilt, [parts[i].name, parts[i + 1].name], CS, own);
+      joints.push({ lower: i, upper: i + 1, y, keys, clearance: c.clearance, skin });
+    }
+    // Corrections keep the layout and the keys of the printed tree: only the corrected names get new profiles, built
+    // from the top down so each one carries the (possibly corrected) foot of the piece above it.
+    const slots = new Map(words.map((w, i) => [w.index, i])), feet = [...levels.map(l => l.foot), top.foot];
+    const corrected = new Set(c.fixes.map(f => slots.get(f.index))), changed = new Map(), fixes = [];
+    // The rectangle of a piece that must stay solid around each key of a joint: a groove keeps 1.2 mm of wall around
+    // it (as placeKeys requires), a key of its own needs a 0.6 mm root.
+    const needsOf = (joint, side) => joint.keys.map(k => {
+      const groove = (k.dir === 1) === (side < 0), half = groove ? k.len / 2 + c.clearance + 1.2 : k.len / 2 + 0.3;
+      const tall = groove ? k.p + c.clearance + 0.8 : 0.6;
+      return { side, deep: groove, x0: k.x - half, x1: k.x + half, y0: side < 0 ? joint.y : joint.y - tall, y1: side < 0 ? joint.y + tall : joint.y };
+    });
+    for (const fix of [...c.fixes].sort((a, b) => slots.get(b.index) - slots.get(a.index))) {
+      const i = slots.get(fix.index), L = plan.levels[i], from = words[i].text;
+      const w = rawWord(font, cased ? fix.text.toLocaleUpperCase('es') : fix.text, cased, metrics, CS, own);
+      w.legible = legibleCap(w, s, gap);
+      // The printed foot may already stand out of the piece below (the trunk never carries it): only more counts.
+      const under = corrected.has(i - 1) ? null : xExtent(profiles[i], L.bottom - 0.3, L.bottom, CS, own);
+      const f = fixedProfile(w, L, { rails, s, g: gap, from, top: bottoms[i + 2], nextFoot: feet[i + 1],
+        needs: [...needsOf(joints[i], -1), ...needsOf(joints[i + 1], 1)],
+        support: under && [Math.min(under[0], feet[i][0]), Math.max(under[1], feet[i][1])] }, CS, own);
+      profiles[i + 1] = f.cs; feet[i] = f.foot;
+      parts[i + 1] = { ...parts[i + 1], name: w.text, corrected: true, replaces: from };
+      changed.set(i, { text: w.text, cap: f.cap, legible: w.legible, accents: w.accents, width: f.width, corrected: true, replaces: from });
+      const notes = [];
+      if (f.cap < 0.98 * L.cap) notes.push(`«${w.text}» queda con letras de ${f.cap.toFixed(1)} mm (antes ${L.cap.toFixed(1)} mm) para caber en el mismo espacio.`);
+      if (f.width < L.width - 0.5) notes.push(`«${w.text}» queda ${(L.width - f.width).toFixed(1)} mm más angosto que «${from}».`);
+      if (f.pads) notes.push(`Las letras de «${w.text}» no tapan ${f.pads === 1 ? 'una ranura' : `${f.pads} ranuras`} de las guías de las piezas ya impresas: ese tramo se rellenó con material sólido.`);
+      if (f.overhang > 0.05) notes.push(`La base de «${w.text}» sobresale ${f.overhang.toFixed(1)} mm de la pieza de abajo.`);
+      fixes.push({ index: fix.index, part: i + 1, from, to: w.text, height: L.height, cap: [L.cap, f.cap], width: [L.width, f.width],
+        shift: f.shift, track: f.track, pads: f.pads, overhang: f.overhang, notes });
+    }
+    const bodies = profiles.map(p => own(own(p.extrude(1)).warp(v => { v[2] = (v[2] - 0.5) * depth(v[1]); })));
+    for (const { lower: i, y, keys } of joints) {
       for (const [dir, male, female] of [[1, i, i + 1], [-1, i + 1, i]]) {
         const set = keys.filter(k => k.dir === dir);
         if (!set.length) continue;
         bodies[male] = own(Manifold.union([bodies[male], ...set.map(k => keyPrism(k, y, 0, CS, Manifold, own))]));
         bodies[female] = own(bodies[female].subtract(own(Manifold.union(set.map(k => keyPrism(k, y, c.clearance, CS, Manifold, own))))));
       }
-      joints.push({ lower: i, upper: i + 1, y, keys, clearance: c.clearance, skin });
     }
     parts.forEach((part, i) => {
       const solid = bodies[i];
       if (solid.status() !== 'NoError' || solid.volume() <= 0 || solid.decompose().map(own).length !== 1) {
         throw new Error(`«${part.name}» no forma una pieza sólida. Aumenta el tamaño o cambia la fuente/silueta.`);
       }
-      Object.assign(part, { profile: profiles[i], solid, bounds: solid.boundingBox(), tilt });
+      Object.assign(part, { profile: profiles[i], solid, bounds: solid.boundingBox(), tilt, face: c.bedFace });
       part.size = boundsSize(own(solid.rotate([-degrees(tilt), 0, 0])).boundingBox());
     });
     const g = centerOfMass(bodies), [f0, f1] = base.foot, lean = Math.abs(g[2]);
@@ -708,7 +831,8 @@ export function nameTreeSolids(input, { font } = {}) {
       W: plan.W, k: plan.k, tilt: degrees(tilt), rails,
       trunk: { type: c.trunk, text: trunk?.text ?? '', cap: trunk ? plan.trunk.cap : 0, width: f1 - f0, height: plan.trunk.height },
       levels: words.map((w, i) => ({ index: w.index, text: w.text, cap: plan.levels[i].cap, legible: w.legible, accents: w.accents,
-        width: plan.levels[i].width, bottom: plan.levels[i].bottom, height: plan.levels[i].height })),
+        width: plan.levels[i].width, bottom: plan.levels[i].bottom, height: plan.levels[i].height, ...changed.get(i) })),
+      fixes: fixes.sort((a, b) => a.part - b.part),
       top: { shape: c.shape, width: plan.top.width, height: plan.top.band, bottom: plan.top.bottom },
       stability: {
         center: g, frontBack: degrees(Math.atan2(c.bottomDepth / 2 - lean, g[1])),
@@ -739,14 +863,17 @@ export function buildNameTree(cfg, options) {
     const warnings = [], st = sol.plan.stability;
     if (st.frontBack < STABLE_DEG) warnings.push(`Poca estabilidad hacia delante/atrás (${st.frontBack.toFixed(1)}°): usa un grosor inferior de al menos ${st.suggestedBottomDepth} mm.`);
     if (st.sideways < STABLE_DEG) warnings.push(`Poca estabilidad lateral (${st.sideways.toFixed(1)}°): usa un tronco más ancho o un árbol más bajo.`);
+    warnings.push(...sol.plan.fixes.flatMap(f => f.notes));
     return { cfg: sol.cfg, plan: sol.plan, joints: sol.joints, parts, filaments, warnings };
   } finally { sol.dispose(); }
 }
+// A correction prints only its corrected pieces.
 export function packNameTree(result) {
   const { bedWidth, bedHeight } = result.cfg, margin = 6, gap = 4, plates = [];
-  const colors = [...new Set(result.parts.map(p => p.color))];
+  const fixing = result.parts.some(p => p.corrected), parts = result.parts.map((p, index) => ({ p, index })).filter(q => !fixing || q.p.corrected);
+  const colors = [...new Set(parts.map(q => q.p.color))];
   for (const color of colors) {
-    const group = result.parts.map((p, index) => ({ p, index })).filter(q => q.p.color === color)
+    const group = parts.filter(q => q.p.color === color)
       .sort((a, b) => b.p.size[0] * b.p.size[1] - a.p.size[0] * a.p.size[1]);
     let plate, x, y, row;
     const fresh = () => { plate = { color, placements: [] }; plates.push(plate); x = y = margin; row = 0; };
@@ -767,9 +894,12 @@ export function packNameTree(result) {
   }
   return plates;
 }
-// Print pose: the piece lies on its back face, which the taper tilts by `tilt` around X.
+// Print pose: the piece lies on its back face, which the taper tilts by `tilt` around X. Face down, it first turns half
+// a turn around Y (a rotation, not a mirror): the front takes the place of the back, which the symmetric taper makes
+// the same flat face.
 export function placedTreeGeometry(part, placement = { x: 0, y: 0, rotate: false }) {
   const g = part.geometry.clone();
+  if (part.face === 'front') g.scale(-1, 1, -1);
   if (part.tilt) g.rotateX(-part.tilt);
   if (placement.rotate) g.rotateZ(Math.PI / 2);
   g.computeBoundingBox();
@@ -799,13 +929,14 @@ export function nameTreeAssembly(result) {
   finally { parts.forEach(p => p.geometry.dispose()); }
 }
 export function nameTreeFiles(result, { profile } = {}) {
-  const plates = packNameTree(result), files = [
+  const plates = packNameTree(result), fixing = result.parts.some(p => p.corrected), files = [
     { name: 'Proyecto.r3t', data: nameTreeProject(result.cfg) },
     { name: 'Vista_armada_NO_IMPRIMIR.3mf', data: nameTreeAssembly(result) },
   ];
   result.parts.forEach((p, index) => {
+    if (fixing && !p.corrected) return;
     const g = placedTreeGeometry(p);
-    try { files.push({ name: `Pieza_${String(index + 1).padStart(2, '0')}.stl`, data: stlBinary([g]) }); }
+    try { files.push({ name: `Pieza_${String(index + 1).padStart(2, '0')}${p.corrected ? '_corregida' : ''}.stl`, data: stlBinary([g]) }); }
     finally { g.dispose(); }
   });
   const plateFiles = [];
@@ -819,18 +950,34 @@ export function nameTreeFiles(result, { profile } = {}) {
     } finally { parts.forEach(p => p.geometry.dispose()); }
   });
   const { plan, cfg } = result, st = plan.stability;
-  files.push({ name: 'Montaje.txt', data: [
+  const face = cfg.bedFace === 'front'
+    ? 'Cada pieza va boca abajo, con el frente (la cara que se lee) sobre la cama, sin soportes: la textura de la placa queda en el frente.'
+    : 'Cada pieza va acostada sobre su espalda, sin soportes: la textura de la placa queda en la espalda.';
+  const print = [`IMPRIMIR: Placa_*.3mf. ${face} Una placa = un color, sin AMS.`,
+    ...plates.map((p, i) => `Placa ${i + 1} (${p.color}): ${p.placements.map(q => `pieza ${q.index + 1}`).join(', ')}.`)];
+  files.push({ name: 'Montaje.txt', data: (fixing ? [
+    `${cfg.name} · CORRECCIÓN`,
+    plan.fixes.length > 1 ? 'Imprime solo las piezas corregidas y cámbialas por las que tienen el error: las demás piezas del árbol no cambian.'
+      : 'Imprime solo la pieza corregida y cámbiala por la que tiene el error: las demás piezas del árbol no cambian.',
+    'Para un acabado igual, pon sobre la placa la misma cara que en las demás piezas (hasta la versión 1.25 siempre fue la espalda).',
+    ...plan.fixes.flatMap(f => [
+      `Pieza ${f.part + 1}: «${f.from}» → «${f.to}». Misma altura (${f.height.toFixed(1)} mm), mismo grosor y mismas guías ocultas: encaja en las piezas ya impresas.`,
+      `  Ancho de la palabra: ${f.width[1].toFixed(1)} mm (antes ${f.width[0].toFixed(1)} mm). Letras: ${f.cap[1].toFixed(1)} mm (antes ${f.cap[0].toFixed(1)} mm).`,
+      ...f.notes.map(n => `  ${n}`),
+    ]),
+    '', ...print,
+    'Vista_armada_NO_IMPRIMIR.3mf muestra el árbol completo ya corregido, solo para comprobar el montaje.',
+    `Holgura por lado: ${cfg.clearance} mm, la misma de las piezas impresas. Para reajustar usa Proyecto.r3t.`,
+  ] : [
     cfg.name, `${plan.width.toFixed(1)} mm de ancho × ${plan.height.toFixed(1)} mm de alto.`,
     `Grosor: ${cfg.bottomDepth} mm abajo → ${cfg.topDepth} mm arriba, repartido por igual delante y detrás (${plan.tilt.toFixed(1)}° por cara): el árbol queda vertical.`,
     `Estabilidad: aguanta ${st.frontBack.toFixed(1)}° hacia delante o atrás y ${st.sideways.toFixed(1)}° de lado antes de volcar.`,
-    '', 'IMPRIMIR: Placa_*.3mf. Cada pieza va acostada sobre su espalda, sin soportes. Una placa = un color, sin AMS.',
-    'Vista_armada_NO_IMPRIMIR.3mf sirve solo para comprobar el montaje.',
-    ...plates.map((p, i) => `Placa ${i + 1} (${p.color}): ${p.placements.map(q => `pieza ${q.index + 1}`).join(', ')}.`),
+    '', print[0], 'Vista_armada_NO_IMPRIMIR.3mf sirve solo para comprobar el montaje.', ...print.slice(1),
     '', 'MONTAJE, desde abajo:', ...result.parts.map((p, i) => `${i + 1}. ${p.name}`),
     'Cada unión tiene guías ocultas dentro del grosor: no se ven por delante ni por detrás.',
     'Baja cada pieza en vertical sobre la anterior, con las caras alineadas, hasta que las barras queden a ras.',
     `Holgura por lado: ${cfg.clearance} mm. Comprueba primero una pareja: la tolerancia real depende de tu impresora y material.`,
     'Si queda flojo, reduce la holgura o fija con una gota de adhesivo apropiado. Para reajustar usa Proyecto.r3t.',
-  ].join('\r\n') });
+  ]).join('\r\n') });
   return { files, plateFiles, plates };
 }

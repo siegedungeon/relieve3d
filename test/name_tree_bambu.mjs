@@ -16,18 +16,26 @@ const executable = path.join(process.env.ProgramFiles || 'C:\\Program Files', 'B
 const bytes = await fs.readFile(new URL('../src/fonts/' + NAME_TREE_FONTS['Bebas Neue'], import.meta.url));
 const font = parse(bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength));
 const profile = await profiles.getBambuNameTreeProfile();
+const golden = JSON.parse(await fs.readFile(new URL('./fixtures/name_tree_v1.25.1.json', import.meta.url), 'utf8')).project.cfg;
 await prepareNameTree(); await fs.mkdir(out, { recursive: true });
 const report = { cases: [], passed: false };
-for (const count of [2, 7]) {
-  const dir = path.join(out, String(count));
+const list = ['Valentina', 'Sebastián', 'Mateo', 'Camila', 'Lucía', 'José', 'Ana'];
+// Automatic order on 7 names produces guides rising from the lower piece and hanging from the upper one; two names lie
+// face down, and a corrected piece of a printed tree is sliced alone, face down too.
+for (const [id, cfg] of [
+  ['2', { names: list.slice(0, 2), order: 'manual', shape: 'heart', maxWidth: 180, maxHeight: 240, bedFace: 'front' }],
+  ['7', { names: list, order: 'auto', shape: 'star', maxWidth: 180, maxHeight: 240 }],
+  ['correccion', { ...golden, bedFace: 'front', fixes: [{ index: 1, text: 'Valery' }, { index: 3, text: 'Lucía' }] }],
+]) {
+  const dir = path.join(out, id);
   await fs.mkdir(dir, { recursive: true });
-  // Automatic order on 7 names produces guides rising from the lower piece and hanging from the upper one.
-  const tree = buildNameTree({ names: ['Valentina', 'Sebastián', 'Mateo', 'Camila', 'Lucía', 'José', 'Ana'].slice(0, count),
-    order: count === 2 ? 'manual' : 'auto', shape: count === 2 ? 'heart' : 'star', maxWidth: 180, maxHeight: 240 }, { font });
-  assert(tree.joints.some(j => j.keys.some(k => k.dir === -1)) || count === 2, 'both guide directions are sliced');
+  const tree = buildNameTree(cfg, { font });
+  assert(id !== '7' || tree.joints.some(j => j.keys.some(k => k.dir === -1)), 'both guide directions are sliced');
   let batch;
   try { batch = nameTreeFiles(tree, { profile }); }
   finally { tree.parts.forEach(p => p.geometry.dispose()); }
+  assert(id !== 'correccion' || batch.files.filter(f => f.name.endsWith('.stl')).map(f => f.name).join() === 'Pieza_03_corregida.stl,Pieza_05_corregida.stl',
+    'a correction slices only its corrected pieces');
   for (const file of batch.files) await fs.writeFile(path.join(dir, file.name), file.data);
   await profiles.normalizePencilPlates(dir, batch.plateFiles);
   for (const plate of batch.plateFiles) {
@@ -37,7 +45,7 @@ for (const count of [2, 7]) {
       '--outputdir', target, path.join(dir, plate)], { windowsHide: true, timeout: 180000, maxBuffer: 16 * 1024 * 1024 });
     await fs.writeFile(path.join(target, 'slicer.log'), stdout + stderr);
     const result = JSON.parse(await fs.readFile(path.join(target, 'result.json'), 'utf8'));
-    assert.equal(result.return_code, 0, `${count} names / ${plate}: slicing succeeds`);
+    assert.equal(result.return_code, 0, `${id} / ${plate}: slicing succeeds`);
     const zip = unzipSync(await fs.readFile(path.join(target, 'sliced.3mf')));
     const gcode = strFromU8(zip['Metadata/plate_1.gcode']);
     await fs.writeFile(path.join(target, 'plate_1.gcode'), gcode);
@@ -46,8 +54,8 @@ for (const count of [2, 7]) {
     assert(!/^; FEATURE: Prime tower/m.test(gcode), 'no unnecessary purge tower for a monochrome plate');
     const sliced = result.sliced_plates[0], times = sliced.feature_type_times;
     assert.equal((times.Support || 0) + (times['Support interface'] || 0), 0);
-    report.cases.push({ count, plate, featureTimes: times, warnings: sliced.warning_message || null });
-    console.log(`${count} names / ${plate}: native slice OK, zero supports.`);
+    report.cases.push({ id, face: tree.cfg.bedFace, plate, featureTimes: times, warnings: sliced.warning_message || null });
+    console.log(`${id} / ${tree.cfg.bedFace} / ${plate}: native slice OK, zero supports.`);
   }
 }
 report.passed = true;

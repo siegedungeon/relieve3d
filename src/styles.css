@@ -336,6 +336,8 @@ textarea { width: 100%; font: inherit; font-size: 14px; padding: 6px 8px; border
 .nt-plate select { min-width: 0; flex: 1; }
 .nt-part { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-top: 6px; overflow-wrap: anywhere; }
 .nt-part input { flex-shrink: 0; width: 38px; height: 26px; border: 1px solid var(--border); padding: 2px; background: var(--panel); }
+.nt-fixrow { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-top: 6px; overflow-wrap: anywhere; }
+.nt-fixrow .btn { flex-shrink: 0; }
 .nt-layout .statusbar { height: auto; min-height: 28px; white-space: normal; overflow-wrap: anywhere; }
 
 /* Láminas para colorear */

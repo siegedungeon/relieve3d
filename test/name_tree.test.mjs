@@ -1,12 +1,13 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
+import { createHash } from 'node:crypto';
 import { parse } from '../node_modules/opentype.js/dist/opentype.mjs';
 import { unzipSync, strFromU8 } from 'fflate';
 import { read3MF } from '../src/core/threemf_read.js';
 import {
   DEFAULT_NAME_TREE, NAME_TREE_FONTS, normalizeNameTree, parseTreeNames, prepareNameTree, nameTreeSolids,
-  buildNameTree, packNameTree, nameTreeFiles, nameTreeProject, readNameTreeProject,
+  buildNameTree, packNameTree, nameTreeFiles, nameTreeProject, readNameTreeProject, placedTreeGeometry,
 } from '../src/core/name_tree.js';
 
 const loadFont = file => {
@@ -39,50 +40,12 @@ const holes = cs => {
     }));
   } finally { [hull, inset, white, ...whites].forEach(x => x.delete()); }
 };
-
-test('names, trunk text, depths and limits are validated', () => {
-  assert.deepEqual(parseTreeNames('Ana\nMaría José;Ana').map(n => n.text), ['Ana', 'María José', 'Ana']);
-  assert.throws(() => parseTreeNames('  \n'), /nombres/);
-  assert.throws(() => parseTreeNames(['A\u0000']), /caracteres/);
-  assert.throws(() => parseTreeNames(Array(21).fill('Ana')), /20/);
-  assert.throws(() => normalizeNameTree({ maxHeight: '' }), /Alto/);
-  assert.throws(() => normalizeNameTree({ bottomDepth: 10, topDepth: 12 }), /superior/);
-  assert.throws(() => normalizeNameTree({ bottomDepth: 6 }), /Grosor inferior/);
-  assert.throws(() => normalizeNameTree({ topDepth: 4 }), /Grosor superior/);
-  assert.throws(() => normalizeNameTree({ maxWidth: Infinity }), /Ancho/);
-  assert.throws(() => normalizeNameTree({ trunk: 'pino' }), /Tronco/);
-  assert.throws(() => normalizeNameTree({ trunkText: '   ' }), /tronco/);
-  assert.throws(() => normalizeNameTree({ trunkText: 'x'.repeat(17) }), /16/);
-  assert.equal(normalizeNameTree({ trunk: 'block', trunkText: '' }).trunk, 'block');
-  assert.throws(() => normalizeNameTree({ custom: [[[0, 0], [1, NaN], [1, 0]]] }), /silueta/);
-});
-
-test('the default tree follows the reference model: listed names bottom-up, narrowing bands and a proportional star', () => {
-  const r = nameTreeSolids(DEFAULT_NAME_TREE(), { font });
-  try {
-    assert.deepEqual(r.parts.map(p => p.name), ['Tronco', 'DIEGO', 'MILDRED', 'VIOLETTA', 'CELESTE', 'Estrella']);
-    assert(Math.abs(r.plan.width - 160) < 0.5 && Math.abs(r.plan.height - 240) < 0.5, 'uses the full maximum size');
-    r.plan.levels.slice(1).forEach((l, i) => assert(l.width < r.plan.levels[i].width && l.cap < r.plan.levels[i].cap));
-    assert(r.plan.top.width >= 0.28 * r.plan.W - 1e-6 && r.plan.top.width <= 0.38 * r.plan.W + 1e-6);
-    assert(r.plan.trunk.cap >= 0.15 * r.plan.W && r.plan.trunk.text === String(new Date().getFullYear()));
-  } finally { r.dispose(); }
-});
-
-for (const [label, cfg] of [
-  ['2 names', { names: ['Ana', 'Luis'] }],
-  ['3 names', { names: ['Papá', 'Mamá', 'Emilia'] }],
-  ['7 names in automatic order', { names: seven, order: 'auto' }],
-]) test(`${label}: an upright symmetric taper with hidden guides that print without supports`, () => {
-  const r = nameTreeSolids(cfg, { font }), c = r.cfg, slope = 2 * Math.tan(r.parts[0].tilt);
-  const depth = y => c.bottomDepth - slope * Math.max(0, y);
+// Every piece is one solid inside the symmetric taper; its grooves open only on a joint face and stay hidden, its keys
+// sit inside the next piece, it prints on its back without supports, and each piece goes on by lowering it vertically.
+const assertSoundTree = r => {
+  const c = r.cfg, slope = 2 * Math.tan(r.parts[0].tilt), depth = y => c.bottomDepth - slope * Math.max(0, y);
   const plains = r.parts.map(p => take(p.profile.extrude(1), e => e.warp(v => { v[2] = (v[2] - 0.5) * depth(v[1]); })));
   try {
-    assert.equal(r.parts.length, c.names.length + 2);
-    assert.equal(r.joints.length, c.names.length + 1);
-    assert(r.plan.width <= c.maxWidth + 1e-4 && r.plan.height <= c.maxHeight + 1e-4);
-    assert.deepEqual(r.plan.levels.map(l => l.index).sort(), c.names.map((_, i) => i));
-    assert(Math.abs(r.plan.stability.center[2]) < 0.01, 'the centre of mass stays on the mid-plane: the tree does not lean');
-    assert(r.plan.stability.frontBack >= 8, 'the default depths keep the tree standing');
     for (const [i, p] of r.parts.entries()) {
       assert.equal(p.solid.status(), 'NoError');
       assert.equal(islands(p.solid), 1, `${p.name} is one solid`);
@@ -138,7 +101,77 @@ for (const [label, cfg] of [
         assert(moved(upper, [0, lift, 0], t => overlap(lower, t)) < 1e-4, 'each piece goes on by lowering it vertically');
       }
     }
-  } finally { plains.forEach(m => m.delete()); r.dispose(); }
+  } finally { plains.forEach(m => m.delete()); }
+};
+// A tree exported by version 1.25.1 (names, sizes and the SHA-256 of each STL) that a client already printed.
+const golden = JSON.parse(fs.readFileSync(new URL('./fixtures/name_tree_v1.25.1.json', import.meta.url), 'utf8'));
+const printed = readNameTreeProject(golden.project);
+const sha = data => createHash('sha256').update(Buffer.from(data)).digest('hex');
+const pieceHashes = r => Object.fromEntries(nameTreeFiles({ ...r, parts: r.parts.map(p => ({ ...p, corrected: false })) }).files
+  .filter(f => /^Pieza_\d+\.stl$/.test(f.name)).map(f => [f.name, sha(f.data)]));
+// Print pose of an exported piece: what touches the bed, the x-centre of that footprint and the steepest face pointing
+// down above it.
+const pose = g => {
+  try {
+    const P = g.getAttribute('position'), I = g.getIndex(), n = I ? I.count : P.count, at = k => I ? I.getX(k) : k;
+    let z0 = Infinity, x0 = Infinity, x1 = -Infinity, vol = 0, bed = 0, bx = 0, steep = 1;
+    for (let k = 0; k < P.count; k++) { z0 = Math.min(z0, P.getZ(k)); x0 = Math.min(x0, P.getX(k)); x1 = Math.max(x1, P.getX(k)); }
+    for (let t = 0; t < n; t += 3) {
+      const [a, b, d] = [0, 1, 2].map(j => [P.getX(at(t + j)), P.getY(at(t + j)), P.getZ(at(t + j))]);
+      const u = b.map((v, k) => v - a[k]), w = d.map((v, k) => v - a[k]);
+      const nn = [u[1] * w[2] - u[2] * w[1], u[2] * w[0] - u[0] * w[2], u[0] * w[1] - u[1] * w[0]], len = Math.hypot(...nn);
+      vol += (a[0] * (b[1] * d[2] - b[2] * d[1]) - a[1] * (b[0] * d[2] - b[2] * d[0]) + a[2] * (b[0] * d[1] - b[1] * d[0])) / 6;
+      if (len < 2e-4) continue;
+      if (Math.max(a[2], b[2], d[2]) - z0 < 1e-3) { bed += len / 2; bx += len / 2 * (a[0] + b[0] + d[0]) / 3; }
+      else steep = Math.min(steep, nn[2] / len);
+    }
+    return { z0, vol, bed, cx: bx / bed - (x0 + x1) / 2, steep };
+  } finally { g.dispose(); }
+};
+
+test('names, trunk text, depths and limits are validated', () => {
+  assert.deepEqual(parseTreeNames('Ana\nMaría José;Ana').map(n => n.text), ['Ana', 'María José', 'Ana']);
+  assert.throws(() => parseTreeNames('  \n'), /nombres/);
+  assert.throws(() => parseTreeNames(['A\u0000']), /caracteres/);
+  assert.throws(() => parseTreeNames(Array(21).fill('Ana')), /20/);
+  assert.throws(() => normalizeNameTree({ maxHeight: '' }), /Alto/);
+  assert.throws(() => normalizeNameTree({ bottomDepth: 10, topDepth: 12 }), /superior/);
+  assert.throws(() => normalizeNameTree({ bottomDepth: 6 }), /Grosor inferior/);
+  assert.throws(() => normalizeNameTree({ topDepth: 4 }), /Grosor superior/);
+  assert.throws(() => normalizeNameTree({ maxWidth: Infinity }), /Ancho/);
+  assert.throws(() => normalizeNameTree({ trunk: 'pino' }), /Tronco/);
+  assert.throws(() => normalizeNameTree({ trunkText: '   ' }), /tronco/);
+  assert.throws(() => normalizeNameTree({ trunkText: 'x'.repeat(17) }), /16/);
+  assert.equal(normalizeNameTree({ trunk: 'block', trunkText: '' }).trunk, 'block');
+  assert.throws(() => normalizeNameTree({ custom: [[[0, 0], [1, NaN], [1, 0]]] }), /silueta/);
+});
+
+test('the default tree follows the reference model: listed names bottom-up, narrowing bands and a proportional star', () => {
+  const r = nameTreeSolids(DEFAULT_NAME_TREE(), { font });
+  try {
+    assert.deepEqual(r.parts.map(p => p.name), ['Tronco', 'DIEGO', 'MILDRED', 'VIOLETTA', 'CELESTE', 'Estrella']);
+    assert(Math.abs(r.plan.width - 160) < 0.5 && Math.abs(r.plan.height - 240) < 0.5, 'uses the full maximum size');
+    r.plan.levels.slice(1).forEach((l, i) => assert(l.width < r.plan.levels[i].width && l.cap < r.plan.levels[i].cap));
+    assert(r.plan.top.width >= 0.28 * r.plan.W - 1e-6 && r.plan.top.width <= 0.38 * r.plan.W + 1e-6);
+    assert(r.plan.trunk.cap >= 0.15 * r.plan.W && r.plan.trunk.text === String(new Date().getFullYear()));
+  } finally { r.dispose(); }
+});
+
+for (const [label, cfg] of [
+  ['2 names', { names: ['Ana', 'Luis'] }],
+  ['3 names', { names: ['Papá', 'Mamá', 'Emilia'] }],
+  ['7 names in automatic order', { names: seven, order: 'auto' }],
+]) test(`${label}: an upright symmetric taper with hidden guides that print without supports`, () => {
+  const r = nameTreeSolids(cfg, { font }), c = r.cfg;
+  try {
+    assert.equal(r.parts.length, c.names.length + 2);
+    assert.equal(r.joints.length, c.names.length + 1);
+    assert(r.plan.width <= c.maxWidth + 1e-4 && r.plan.height <= c.maxHeight + 1e-4);
+    assert.deepEqual(r.plan.levels.map(l => l.index).sort(), c.names.map((_, i) => i));
+    assert(Math.abs(r.plan.stability.center[2]) < 0.01, 'the centre of mass stays on the mid-plane: the tree does not lean');
+    assert(r.plan.stability.frontBack >= 8, 'the default depths keep the tree standing');
+    assertSoundTree(r);
+  } finally { r.dispose(); }
 });
 
 test('many names keep the reference proportions and the automatic order puts long names low', () => {
@@ -266,4 +299,90 @@ test('color plates hold every part on its back without supports and the export e
     assert(top <= r.cfg.maxHeight + 1e-4);
     assert.throws(() => packNameTree({ ...r, cfg: { ...r.cfg, bedWidth: 20, bedHeight: 20 } }), /no cabe/);
   } finally { release(r); }
+});
+
+test('a tree exported by version 1.25.1 regenerates byte for byte from its project', () => {
+  const r = buildNameTree(printed, { font });
+  try { assert.deepEqual(pieceHashes(r), golden.stl); } finally { release(r); }
+});
+
+test('correcting printed names remakes only those pieces, in the same slot and with hidden grooves for the printed keys', () => {
+  for (const { fixes, notes } of [
+    // Neighbours: the corrected VALERY carries the corrected foot of SANTYAGO.
+    { fixes: [{ index: 1, text: 'Valery' }, { index: 2, text: 'Santyago' }], notes: { VALERY: /más angosto.*ranuras/, SANTYAGO: /letras de 11\.5 mm/ } },
+    // On the trunk, which never carried the foot of the first name; an accent the printed slot had no room for.
+    { fixes: [{ index: 3, text: 'Lucía' }, { index: 0, text: 'Familias' }], notes: { FAMILIAS: /letras de/, 'LUCÍA': /letras de .*ranura/ } },
+  ]) {
+    const before = nameTreeSolids(printed, { font }), r = nameTreeSolids({ ...printed, fixes }, { font });
+    try {
+      const changed = r.parts.flatMap((p, i) => p.corrected ? [i] : []);
+      assert.deepEqual(changed, fixes.map(f => f.index + 1).sort());
+      assert.deepEqual(r.plan.fixes.map(f => f.part), changed);
+      for (const f of r.plan.fixes) {
+        const p = r.parts[f.part], o = before.parts[f.part], pb = p.profile.bounds(), ob = o.profile.bounds(), level = r.plan.levels[f.part - 1];
+        assert.deepEqual([o.name, p.name, p.replaces, level.text, level.corrected], [f.from, f.to, f.from, f.to, true]);
+        assert(Math.abs(pb.min[1] - ob.min[1]) < 1e-4 && Math.abs(pb.max[1] - ob.max[1]) < 1e-4, `${f.to}: the same height as ${f.from}`);
+        assert(Math.abs(p.bounds.min[2] - o.bounds.min[2]) < 1e-4 && Math.abs(p.bounds.max[2] - o.bounds.max[2]) < 1e-4, `${f.to}: the same thickness`);
+        assert(pb.min[0] >= -r.plan.width / 2 - 1e-4 && pb.max[0] <= r.plan.width / 2 + 1e-4, `${f.to}: inside the tree`);
+        assert(f.cap[1] >= Math.max(5, level.legible) - 1e-6 && f.cap[1] <= f.cap[0] + 1e-6, `${f.to}: legible and never larger`);
+        assert(f.width[1] <= f.width[0] + 1e-4 && f.overhang <= 0.05, `${f.to}: within the printed width and base`);
+        assert.match(f.notes.join(' '), notes[f.to]);
+      }
+      assertSoundTree(r);
+    } finally { before.dispose(); r.dispose(); }
+    const built = buildNameTree({ ...printed, fixes }, { font });
+    try {
+      const hashes = pieceHashes(built), pieces = Object.keys(golden.stl).sort();
+      for (const [i, name] of pieces.entries()) {
+        assert.equal(hashes[name] === golden.stl[name], !built.parts[i].corrected, `${name}: only corrected pieces change`);
+      }
+      assert(built.plan.fixes.every(f => f.notes.every(n => built.warnings.includes(n))), 'the notes reach the warnings');
+      const exported = nameTreeFiles(built), names = exported.files.map(f => f.name), file = name => exported.files.find(f => f.name === name).data;
+      const corrected = built.plan.fixes.map(f => f.part);
+      assert.deepEqual(names.filter(n => n.endsWith('.stl')), corrected.map(i => `Pieza_${String(i + 1).padStart(2, '0')}_corregida.stl`));
+      assert.deepEqual(exported.plates.flatMap(p => p.placements.map(q => q.index)).sort(), corrected);
+      assert.equal(read3MF(file('Vista_armada_NO_IMPRIMIR.3mf')).parts.length, built.parts.length, 'the assembly shows the whole corrected tree');
+      assert.deepEqual(readNameTreeProject(file('Proyecto.r3t')).fixes, normalizeNameTree({ ...printed, fixes }).fixes);
+      const montaje = file('Montaje.txt');
+      assert.match(montaje, /CORRECCIÓN/);
+      assert.match(montaje, /Imprime solo las piezas corregidas y cámbialas/, 'two corrections are named in plural');
+      assert.match(montaje, /Holgura por lado: 0\.2 mm, la misma de las piezas impresas/);
+      for (const f of built.plan.fixes) assert(montaje.includes(`Pieza ${f.part + 1}: «${f.from}» → «${f.to}». Misma altura`), f.to);
+    } finally { release(built); }
+  }
+  assert.throws(() => nameTreeSolids({ ...printed, fixes: [{ index: 3, text: 'Maximiliano Alejandro' }] }, { font }),
+    /«MAXIMILIANO ALEJANDRO» no cabe legible en el lugar de «LUCAS».*árbol completo/);
+});
+
+test('corrections and the bed face are validated and saved with the project', () => {
+  assert.deepEqual([printed.bedFace, printed.fixes], ['back', []], 'projects from 1.25.1 open as printed');
+  assert.throws(() => normalizeNameTree({ ...printed, bedFace: 'lado' }), /Cara contra la cama/);
+  assert.throws(() => normalizeNameTree({ ...printed, fixes: { index: 1 } }), /correcciones/);
+  assert.throws(() => normalizeNameTree({ ...printed, fixes: [{ index: 4, text: 'Ana' }] }), /no está en el árbol/);
+  assert.throws(() => normalizeNameTree({ ...printed, fixes: [{ index: 1, text: '  ' }] }), /entre 1 y 32/);
+  assert.throws(() => normalizeNameTree({ ...printed, fixes: [{ index: 1, text: 'valeria' }, { index: 1, text: 'Valery' }] }), /una sola/);
+  assert.deepEqual(normalizeNameTree({ ...printed, fixes: [{ index: 1, text: ' valeria ' }] }).fixes, [], 'the printed text is no correction');
+  const cfg = normalizeNameTree({ ...printed, bedFace: 'front', fixes: [{ index: 2, text: 'Santyago ' }, { index: 1, text: 'Valery' }] });
+  assert.deepEqual(cfg.fixes, [{ index: 1, text: 'Valery' }, { index: 2, text: 'Santyago' }]);
+  assert.deepEqual(readNameTreeProject(nameTreeProject(cfg)), cfg);
+});
+
+test('the readable face can go on the textured bed: each piece turns face down, flat and without supports', () => {
+  const back = buildNameTree(printed, { font }), front = buildNameTree({ ...printed, bedFace: 'front' }, { font });
+  try {
+    let asymmetric = 0;
+    for (const [i, p] of front.parts.entries()) {
+      const f = pose(placedTreeGeometry(p)), b = pose(placedTreeGeometry(back.parts[i]));
+      assert.equal(p.face, 'front');
+      assert(Math.abs(f.z0) < 1e-6 && f.vol > 0 && Math.abs(f.vol - b.vol) < 1e-3 * b.vol, `${p.name}: turned over, not mirrored`);
+      assert(Math.abs(f.bed - b.bed) < 0.01 * b.bed && f.steep >= -0.72, `${p.name}: as flat on the bed as on its back, without supports`);
+      // Face down, the bed sees the front of the word, so from above it reads mirrored.
+      assert(Math.abs(f.cx + b.cx) < 0.05, `${p.name}: the readable face is on the bed`);
+      if (Math.abs(b.cx) > 0.5) asymmetric++;
+    }
+    assert(asymmetric >= 2, 'the check can tell the faces apart');
+    const notes = nameTreeFiles(front).files.find(f => f.name === 'Montaje.txt').data;
+    assert.match(notes, /boca abajo, con el frente \(la cara que se lee\) sobre la cama/);
+    for (const phrase of [/guías ocultas/, /en vertical/]) assert.match(notes, phrase);
+  } finally { release(back); release(front); }
 });
