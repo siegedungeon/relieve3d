@@ -32,7 +32,7 @@
   --studio-checker-light: var(--checker-light);
 }
 body { padding-top: var(--theme-bar-height); }
-.home, .studio, .quote, .tk { top: var(--theme-bar-height); }
+.home, .studio, .quote, .tk, .ib { top: var(--theme-bar-height); }
 .laser-layout { height: calc(100vh - 100px - var(--theme-bar-height)); }
 .theme-bar {
   position: fixed; inset: 0 0 auto; height: var(--theme-bar-height); z-index: 60;
@@ -49,6 +49,15 @@ body { padding-top: var(--theme-bar-height); }
 :root[data-theme="dark"] {
   .home { background: linear-gradient(160deg, #1c2431, var(--bg)); }
   .quote, .tk { background: var(--bg); color: var(--text); }
+  .ib {
+    --ib-bg: var(--bg); --ib-panel: var(--panel); --ib-border: var(--border); --ib-text: var(--text);
+    --ib-muted: var(--muted); --ib-hover: var(--hover); --ib-selected: var(--selected);
+    --ib-brand: var(--brand-text); --ib-brand-soft: var(--brand-soft);
+    --ib-success: var(--success-text); --ib-success-bg: var(--success-bg);
+    --ib-warning: var(--warning-text); --ib-warning-bg: var(--warning-bg);
+    --ib-error: var(--error-text); --ib-error-bg: var(--error-bg);
+    --ib-info: #d7cdf0; --ib-info-bg: #343148;
+  }
   .btn:not(.primary), .seg-btn.active, .menu, .font-picker-trigger, .font-picker-option,
   .chip, .tab.active, .floating-tools, .dz-inner, .home-card, .tier, .elem-alt, .ps-shape,
   .q-header, .q-tabs, .q-card, .q-metrics > div, .q-table, .q-bars, .q-preview,

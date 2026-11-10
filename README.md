@@ -89,7 +89,7 @@ El texto 3D y el texto fuente del estudio 2D se generan directamente a la resolu
 
   Todo sale en curvas Bézier suaves (sin escalones, picos ni trazos finos, con control automático), acomodado en láminas y exportado como **SVG para CorelDRAW** (línea roja de 0,01 mm, página del tamaño de la lámina). Los proyectos se guardan como `.r3h` (incluyen el mockup).
 
-**Contenido y redes**: **Estudio TikTok · Pabonitas** prepara cada video de TikTok, desde el guion hasta la medición (ver abajo).
+**Contenido y redes**: **Mensajes · Pabonitas** reúne los chats de las redes en el escritorio y **Estudio TikTok · Pabonitas** prepara cada video de TikTok, desde el guion hasta la medición (ver abajo).
 
 ### Distribución para corte láser
 
@@ -365,6 +365,27 @@ Convierte un modelo pintado por colores (3MF de Bambu Studio/MakerWorld, objetos
 - **Limpieza de la malla** (todos los modos): la unión de los objetos y cascarones del modelo deja restos planos de volumen cero; antes de separar se quedan solo los sólidos y huecos de más de 0.5 mm³ y se juntan **sin operaciones booleanas**, conservando de qué objeto y triángulo viene cada cara (la pintura se mantiene). Antes esos restos se restaban y se multiplicaban: los rebajes de covers salían rotos y la separación terminaba en «memory access out of bounds» o cerraba la app.
 - **Si el motor 3D falla** con un modelo en un modo (sin memoria o `Aborted()`), se avisa y el motor se reinicia solo: se puede probar otro modo sin cerrar la app (antes, tras un fallo, todos los modos fallaban hasta reiniciarla).
 - Límites: las franjas que envuelven esferas no pueden salir en una sola pieza (quedarían trabadas); si una pieza de color tiene la base delante en todas las direcciones o la rodea, se avisa; si solo la roza en un borde (menos del 5 % de su silueta) o encaja ajustada, se avisa que puede necesitar presión; en pliegues ocultos muy cerrados puede perderse ~2 % del color, que se retoca con pintura.
+
+### Mensajes · Pabonitas
+
+En **Inicio → Contenido y redes → Mensajes · Pabonitas**, inicia sesión con la misma cuenta de la web. La aplicación muestra las conversaciones de WhatsApp, Messenger, Instagram y TikTok, sus no leídos y estados; permite responder, usar respuestas guardadas y stickers, adjuntar fotos o archivos y reintentar un envío fallido. En el chat puedes pegar el catálogo, los precios, una cotización emitida o un resumen calculado; las cotizaciones locales y las sincronizadas no se duplican. Las posibilidades y la ventana de respuesta dependen de cada red.
+
+La bandeja requiere que el servidor de pabonitas.co tenga desplegada la API de Mensajes y que un administrador conecte y autorice los canales en **Abrir en la web → Ajustes → Canales**. Instalar Relieve3D no despliega el servidor ni conecta las redes. Las respuestas, stickers y archivos rápidos se administran también en la web. El módulo de escritorio no aparece en la versión web de Relieve3D.
+
+Con **Recordarme**, la contraseña se cifra con el almacenamiento seguro de Windows; si el equipo no puede cifrarla, no se guarda. El token permanece en el proceso principal y se renueva automáticamente. Al cerrar sesión se borra la contraseña guardada. Con **Avisos de Windows** activado, la app comprueba mensajes nuevos aunque la bandeja esté cerrada y abre el chat al tocar el aviso. Los borradores se conservan al cambiar de conversación mientras la app está abierta.
+
+Regresiones: `npm run test:inbox` cubre reglas y cliente. El flujo real de Electron necesita además el backend de la bandeja en un **sandbox local desechable con proveedores simulados** y su usuario de prueba. Nunca lo apuntes a producción ni a una base con datos reales: la prueba crea canales, mensajes, archivos y cotizaciones, y programa fallos simulados.
+
+```powershell
+$env:R3D_INBOX_E2E_SERVER = "http://127.0.0.1:8156" # puerto del sandbox
+$env:R3D_INBOX_E2E_CONTROL = "C:\ruta\sandbox\.inbox-sandbox\fake-control.json"
+$env:R3D_INBOX_E2E_EMAIL = "<correo del usuario de pruebas>"
+$env:R3D_INBOX_E2E_PASSWORD = "<contraseña del usuario de pruebas>"
+node test\e2e\run.mjs inbox
+$env:E2E_THEME = "dark"; node test\e2e\run.mjs inbox
+```
+
+El sandbox se prepara con los scripts de `scripts\e2e` y `scripts\dev` del repositorio del backend web. El E2E usa un perfil y cotizaciones locales aislados, recorre las cuatro redes simuladas y comprueba el reinicio de la sesión. Busca `fake-requests.jsonl` junto al archivo de control; si el sandbox lo guarda en otra ruta, indícala con `R3D_INBOX_E2E_LOG`. `npm run test:e2e` solo lo incluye si se configura explícitamente `R3D_INBOX_E2E_SERVER`.
 
 ### Estudio TikTok · Pabonitas
 

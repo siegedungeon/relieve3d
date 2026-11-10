@@ -104,6 +104,10 @@ export const MODULES = [
     id: 'tiktok', group: 'social', icon: '🎬', title: 'Estudio TikTok · Pabonitas',
     desc: 'Plan del día, guiones con tus precios reales, prompts para IA y el kit paso a paso de cada video: qué grabar, dónde publicarlo, qué pegar y cómo medirlo.',
   },
+  {
+    id: 'inbox', group: 'social', icon: '💬', title: 'Mensajes · Pabonitas',
+    desc: 'WhatsApp, Messenger, Instagram y TikTok en una sola bandeja: respuestas guardadas, stickers, catálogo, precios, cotizaciones y calculadora.',
+  },
 ];
 
 export const MIC_PRESETS = {

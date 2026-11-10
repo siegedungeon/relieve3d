@@ -23,6 +23,7 @@ import { ColoringStudio } from './coloring_ui.js';
 import { QuoteStudio } from './quote_ui.js';
 import { TiktokStudio } from './tiktok_ui.js';
 import { LaserStudio } from './laser_ui.js';
+import { InboxStudio } from './inbox_ui.js';
 
 const $ = (id) => document.getElementById(id);
 const fmt = (v) => String(Math.round(v * 100) / 100);
@@ -1073,7 +1074,7 @@ async function openProjectFile(file) {
   try {
     if (/\.r3c$/i.test(file.name)) {
       if (await coloring.loadFile(file)) {
-        nameTree.close();
+        nameTree.close(); inbox.close();
         hideHome(); $('studio').hidden = true; $('hablador').hidden = true; $('colorsplit').hidden = true; $('phonestand').hidden = true;
       }
       return;
@@ -1081,22 +1082,22 @@ async function openProjectFile(file) {
     const j = JSON.parse(await file.text());
     if (j.app === 'Relieve3D-ArbolNombres') {
       await nameTree.openProject(j);
-      laser.close(); quote.close(); coloring.close(); tiktok.close(); hideHome();
+      laser.close(); quote.close(); coloring.close(); tiktok.close(); inbox.close(); hideHome();
       $('studio').hidden = true; $('hablador').hidden = true; $('colorsplit').hidden = true; $('phonestand').hidden = true;
       return;
     }
     if (j.app === 'Relieve3D-Laser') {
-      laser.openProject(j); nameTree.close(); quote.close(); coloring.close(); hideHome();
+      laser.openProject(j); nameTree.close(); quote.close(); coloring.close(); inbox.close(); hideHome();
       $('studio').hidden = true; $('hablador').hidden = true; $('colorsplit').hidden = true; $('phonestand').hidden = true; return;
     }
     if (j.app === 'Relieve3D-Coloring') {
       if (await coloring.openProject(j)) {
-        nameTree.close();
+        nameTree.close(); inbox.close();
         hideHome(); $('studio').hidden = true; $('hablador').hidden = true; $('colorsplit').hidden = true; $('phonestand').hidden = true;
       }
       return;
     }
-    if (['Relieve3D', 'Relieve3D-Studio', 'Relieve3D-Hablador', 'Relieve3D-SoporteCelular'].includes(j.app)) coloring.close();
+    if (['Relieve3D', 'Relieve3D-Studio', 'Relieve3D-Hablador', 'Relieve3D-SoporteCelular'].includes(j.app)) { coloring.close(); inbox.close(); }
     if (j.app === 'Relieve3D-Studio') { hideHome(); $('phonestand').hidden = true; studio.openProject(j); nameTree.close(); return; }
     if (j.app === 'Relieve3D-Hablador') { hideHome(); $('phonestand').hidden = true; await hablador.openProject(j); nameTree.close(); return; }
     if (j.app === 'Relieve3D-SoporteCelular') {
@@ -1262,13 +1263,14 @@ $('selSameLevel').onclick = () => {
 
 // drag & drop
 const dz = $('dropZone');
-document.addEventListener('dragover', (e) => { e.preventDefault(); if (!$('quote').hidden || !$('laser').hidden || !$('tiktok').hidden) return; dz.classList.remove('hidden'); dz.classList.add('drag'); });
+document.addEventListener('dragover', (e) => { e.preventDefault(); if (!$('quote').hidden || !$('laser').hidden || !$('tiktok').hidden || !$('inbox').hidden) return; dz.classList.remove('hidden'); dz.classList.add('drag'); });
 document.addEventListener('dragleave', (e) => { if (e.relatedTarget === null) { dz.classList.remove('drag'); if (S.image || S.source === 'text' || !$('home').hidden || !$('studio').hidden) dz.classList.add('hidden'); } });
 document.addEventListener('drop', (e) => {
   e.preventDefault();
   if (!$('laser').hidden) { for (const file of e.dataTransfer.files) laser.guard(() => laser.loadFile(file)); return; }
   if (!$('quote').hidden) { toast('El logo comercial se carga desde Configuración del cotizador.'); return; }
   if (!$('tiktok').hidden) { toast('En el Estudio TikTok los clips se copian a la carpeta del video: usa «Abrir carpeta del video».'); return; }
+  if (!$('inbox').hidden) { toast('Para enviar un archivo en Mensajes usa «Foto o archivo».'); return; }
   dz.classList.remove('drag');
   if (S.image || S.source === 'text') dz.classList.add('hidden');
   const f = e.dataTransfer.files[0];
@@ -1295,7 +1297,7 @@ document.addEventListener('drop', (e) => {
 
 // keyboard
 window.addEventListener('keydown', (e) => {
-  if (isTyping(e) || !$('home').hidden || !$('studio').hidden || !$('hablador').hidden || !$('colorsplit').hidden || !$('phonestand').hidden || !$('nameTree').hidden || !$('coloring').hidden || !$('quote').hidden || !$('laser').hidden || !$('tiktok').hidden) return;
+  if (isTyping(e) || !$('home').hidden || !$('studio').hidden || !$('hablador').hidden || !$('colorsplit').hidden || !$('phonestand').hidden || !$('nameTree').hidden || !$('coloring').hidden || !$('quote').hidden || !$('laser').hidden || !$('tiktok').hidden || !$('inbox').hidden) return;
   const k = e.key.toLowerCase(), ctrl = e.ctrlKey || e.metaKey;
   if (ctrl && k === 'z' && !e.shiftKey) { e.preventDefault(); undo(); }
   else if (ctrl && (k === 'y' || (k === 'z' && e.shiftKey))) { e.preventDefault(); redo(); }
@@ -1886,13 +1888,26 @@ const coloring = new ColoringStudio($('coloring'), { toast, showBusy, hideBusy, 
 const quote = new QuoteStudio($('quote'), { toast, onBack: () => showHome() });
 const laser = new LaserStudio($('laser'), { toast, onBack: () => showHome() });
 const tiktok = new TiktokStudio($('tiktok'), { toast, onBack: () => showHome(), openModule: (id) => enterModule(id) });
+let inboxUnread = 0;
+function setInboxBadge(count) {
+  inboxUnread = Number.isFinite(count) ? Math.max(0, Math.floor(count)) : 0;
+  const badge = $('homeInboxBadge');
+  if (!badge) return;
+  badge.hidden = !inboxUnread;
+  badge.textContent = inboxUnread > 99 ? '99+' : String(inboxUnread);
+  badge.setAttribute('aria-label', `${inboxUnread} ${inboxUnread === 1 ? 'conversación sin leer' : 'conversaciones sin leer'}`);
+}
+const inbox = new InboxStudio($('inbox'), { toast, onBack: () => showHome(), openModule: (id) => enterModule(id), onBadge: setInboxBadge });
 
 function renderHome() {
-  const card = (m) => `<button class="home-card" data-mod="${m.id}"><span class="hc-icon">${m.icon}</span><span class="hc-title">${escHtml(m.title)}</span><span class="hc-desc">${escHtml(m.desc)}</span></button>`;
+  const card = (m) => `<button class="home-card" data-mod="${m.id}"><span class="hc-icon">${m.icon}</span><span class="hc-title">${escHtml(m.title)}</span><span class="hc-desc">${escHtml(m.desc)}</span>${m.id === 'inbox' ? '<span class="hc-badge" id="homeInboxBadge" hidden></span>' : ''}</button>`;
   $('homeGrid3d').innerHTML = MODULES.filter((m) => m.group === '3d').map(card).join('');
   $('homeGrid2d').innerHTML = MODULES.filter((m) => m.group === '2d').map(card).join('');
   $('homeGridBusiness').innerHTML = MODULES.filter((m) => m.group === 'business').map(card).join('');
-  $('homeGridSocial').innerHTML = MODULES.filter((m) => m.group === 'social').map(card).join('');
+  let social = MODULES.filter((m) => m.group === 'social');
+  if (!window.r3dInbox) social = social.filter((m) => m.id !== 'inbox');
+  $('homeGridSocial').innerHTML = social.map(card).join('');
+  setInboxBadge(inboxUnread);
   renderLocalLinks();
 }
 // Accesos locales: HTML de este equipo (<userData>/accesos-locales.json). Solo escritorio: la versión web no expone
@@ -1932,6 +1947,7 @@ function showHome() {
   quote.close();
   coloring.close();
   tiktok.close();
+  inbox.close();
   $('studio').hidden = true;
   $('hablador').hidden = true;
   $('colorsplit').hidden = true;
@@ -1984,6 +2000,13 @@ function clearDesign() {
 
 async function enterModule(id) {
   const m = moduleDef(id);
+  if (id === 'inbox') {
+    if (!window.r3dInbox) return;
+    nameTree.close(); laser.close(); quote.close(); coloring.close(); tiktok.close(); hideHome();
+    $('studio').hidden = true; $('hablador').hidden = true; $('colorsplit').hidden = true; $('phonestand').hidden = true;
+    await inbox.open(); return;
+  }
+  inbox.close();
   if (id === 'nametree') {
     laser.close(); quote.close(); coloring.close(); tiktok.close(); hideHome();
     $('studio').hidden = true; $('hablador').hidden = true; $('colorsplit').hidden = true; $('phonestand').hidden = true;
@@ -2099,7 +2122,7 @@ if (stUpdate) {
     else if (d.state === 'up-to-date' || d.state === 'error') stUpdate.hidden = true;
   });
 }
-window.__r3d = { S, setSelection, doExport, exportParts, saveProject, openProjectFile, undo, redo, commit, hist, setViewMode, enterModule, applyText, showHome, renderLocalLinks, studio, hablador, colorsplit, phonestand, nameTree, coloring, quote, laser, tiktok, getFeat: () => feat, onSettingChanged, placeRing, loadImageFile, view2d,
+window.__r3d = { S, setSelection, doExport, exportParts, saveProject, openProjectFile, undo, redo, commit, hist, setViewMode, enterModule, applyText, showHome, renderLocalLinks, studio, hablador, colorsplit, phonestand, nameTree, coloring, quote, laser, tiktok, inbox, getFeat: () => feat, onSettingChanged, placeRing, loadImageFile, view2d,
   applyTier, applyComposition, getOrig: () => orig, ringSnap, gramsEstimate, viewer, renderElements };
 
 syncProcInputs();

@@ -38,3 +38,6 @@ contextBridge.exposeInMainWorld('api', {
 
 // Solo escritorio, fuera de window.api (la versión web replica window.api): accesos locales de este equipo (src/main/local_links.cjs).
 contextBridge.exposeInMainWorld('r3dLocal', { list: () => ipcRenderer.invoke('local-links'), open: (id, modo) => ipcRenderer.invoke('local-link-open', { id, modo }) });
+
+// Solo escritorio: Mensajes · Pabonitas. La contraseña del formulario viaja por IPC; el token permanece en el proceso principal.
+contextBridge.exposeInMainWorld('r3dInbox', { state: () => ipcRenderer.invoke('inbox-state'), login: form => ipcRenderer.invoke('inbox-login', form), resume: () => ipcRenderer.invoke('inbox-resume'), logout: () => ipcRenderer.invoke('inbox-logout'), request: (method, path, body) => ipcRenderer.invoke('inbox-request', { method, path, body }), media: ref => ipcRenderer.invoke('inbox-media', ref), upload: file => ipcRenderer.invoke('inbox-upload', file), saveMedia: (ref, name) => ipcRenderer.invoke('inbox-save-media', { ref, name }), openWeb: id => ipcRenderer.invoke('inbox-open-web', id), openLink: url => ipcRenderer.invoke('inbox-open-link', url), setNotify: on => ipcRenderer.invoke('inbox-notify', on), onSummary: cb => ipcRenderer.on('inbox-summary', (e, d) => cb(d)), onOpen: cb => ipcRenderer.on('inbox-open', (e, id) => cb(id)) });

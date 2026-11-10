@@ -1,4 +1,4 @@
-const { app, BrowserWindow, ipcMain, dialog, Menu, shell, session } = require('electron');
+const { app, BrowserWindow, ipcMain, dialog, Menu, shell, session, Notification, safeStorage } = require('electron');
 const path = require('path');
 const fs = require('fs/promises');
 const { pathToFileURL } = require('url');
@@ -9,6 +9,7 @@ const { writeNewExportFolder } = require('./src/main/export_folder.cjs');
 const { getBambuPencilProfile, getBambuNameTreeProfile, normalizePencilPlates } = require('./src/main/bambu_profile.cjs');
 const { createTiktokWorkspace } = require('./src/main/tiktok_workspace.cjs');
 const { createLocalLinks } = require('./src/main/local_links.cjs');
+const { createInboxClient, newInboundAlert, inboundTime, cleanFileName } = require('./src/main/inbox_client.cjs');
 
 if (process.platform === 'win32') app.setAppUserModelId('com.relieve3d.app');
 if (process.env.R3D_TEST_FILE && process.env.R3D_TEST_USER_DATA) app.setPath('userData', process.env.R3D_TEST_USER_DATA);
@@ -401,8 +402,104 @@ app.whenReady().then(() => {
     w.on('closed', () => { if (localWindows.get(link.id) === w) localWindows.delete(link.id); });
     return { modo, archivo: link.archivo, yaAbierta: false };
   });
+  // Mensajes · Pabonitas (src/main/inbox_client.cjs): la bandeja de WhatsApp, Messenger, Instagram y TikTok de la web.
+  // La contraseña del formulario viaja por IPC; el token permanece aquí. El renderer solo pide rutas permitidas por window.r3dInbox.
+  // Cada 30 s se lee el resumen: actualiza el contador de Inicio y, si llega un mensaje nuevo con la ventana en segundo
+  // plano, muestra una notificación de Windows (clic = abre ese chat) y hace parpadear el ícono de la barra de tareas.
+  const inbox = createInboxClient({ safeStorage, configFile: process.env.R3D_TEST_FILE && process.env.R3D_INBOX_CONFIG
+    ? process.env.R3D_INBOX_CONFIG : path.join(app.getPath('userData'), 'mensajes.json') });
+  const inboxTest = !!(process.env.R3D_TEST_FILE && process.env.R3D_INBOX_TEST_CAPTURE);
+  const inboxPollMs = Math.max(1000, Number(process.env.R3D_TEST_FILE && process.env.R3D_INBOX_POLL_MS) || 30_000);
+  let inboxLast; // hora del último mensaje de cliente ya visto; undefined = sin línea base (no se avisa lo que ya había)
+  let inboxPolling = false;
+  let inboxPollAfter = false;
+  let inboxEpoch = 0;
+  const inboxSend = (channel, payload) => { if (win && !win.isDestroyed()) win.webContents.send(channel, payload); };
+  const openInboxChat = (id) => {
+    if (!win || win.isDestroyed()) return;
+    if (win.isMinimized()) win.restore();
+    win.show(); win.focus();
+    inboxSend('inbox-open', id);
+  };
+  // Pruebas E2E: avisos y enlaces quedan aquí en vez de salir a Windows o al navegador.
+  const inboxCapture = inboxTest ? { client: inbox, notifications: [], opened: [], poll: () => pollInbox(),
+    click: (index) => openInboxChat(inboxCapture.notifications[index]?.conversationId) } : null;
+  if (inboxCapture) global.__r3dInbox = inboxCapture;
+  async function pollInbox() {
+    if (inboxPolling || !inbox.signedIn()) return;
+    inboxPolling = true;
+    const epoch = inboxEpoch;
+    try {
+      const res = await inbox.request('GET', '/inbox/summary');
+      if (epoch !== inboxEpoch) return;
+      if (!res.ok) { if (res.status === 401) inboxSend('inbox-summary', { summary: null, alert: null, signedIn: false }); return; }
+      const alert = inboxLast === undefined ? null : newInboundAlert(inboxLast, res.data);
+      inboxLast = inboundTime(res.data?.latest_inbound_at);
+      inboxSend('inbox-summary', { summary: res.data, alert, signedIn: true });
+      const background = !win || win.isDestroyed() || !win.isFocused();
+      if (!alert || !inbox.notifyEnabled() || (!background && !inboxTest)) return;
+      if (inboxCapture) inboxCapture.notifications.push(alert);
+      if (background && win && !win.isDestroyed()) win.flashFrame(true);
+      if (inboxTest || !Notification.isSupported()) return;
+      const note = new Notification({ title: alert.title, body: alert.body, icon: path.join(__dirname, 'build', 'icon.png') });
+      note.on('click', () => openInboxChat(alert.conversationId));
+      note.show();
+    } catch (err) {
+      console.error('[mensajes]', err.message);
+    } finally {
+      inboxPolling = false;
+      if (inboxPollAfter) { inboxPollAfter = false; pollInbox(); }
+    }
+  }
+  const inboxSignedIn = (res) => {
+    if (res.ok) {
+      inboxEpoch++;
+      inboxLast = undefined;
+      if (inboxPolling) inboxPollAfter = true;
+      else pollInbox();
+    }
+    return res;
+  };
+  quoteHandle('inbox-state', () => inbox.state());
+  quoteHandle('inbox-login', async (form) => inboxSignedIn(await inbox.login(form)));
+  quoteHandle('inbox-resume', async () => inboxSignedIn(await inbox.resume()));
+  quoteHandle('inbox-logout', () => { inboxEpoch++; inboxPollAfter = false; inboxLast = undefined; return inbox.logout(); });
+  quoteHandle('inbox-request', ({ method, path: route, body } = {}) => inbox.request(method, route, body));
+  quoteHandle('inbox-media', (ref) => inbox.media(ref));
+  quoteHandle('inbox-upload', (file) => inbox.upload(file));
+  quoteHandle('inbox-save-media', async ({ ref, name } = {}) => {
+    const res = await inbox.media(ref);
+    if (!res.ok) return res;
+    const fileName = cleanFileName(name) || res.data.name;
+    const r = process.env.R3D_AUTOSAVE_DIR
+      ? { filePath: path.join(process.env.R3D_AUTOSAVE_DIR, fileName) }
+      : await dialog.showSaveDialog(win, { title: 'Guardar archivo del chat', defaultPath: path.join(app.getPath('downloads'), fileName) });
+    if (r.canceled || !r.filePath) return { ok: true, data: null };
+    await fs.writeFile(r.filePath, res.data.bytes);
+    return { ok: true, data: { path: r.filePath } };
+  });
+  quoteHandle('inbox-open-web', async (id) => {
+    const url = inbox.webUrl(id);
+    if (inboxTest) inboxCapture.opened.push(url);
+    else await shell.openExternal(url);
+    return { ok: true, data: { url } };
+  });
+  // Enlaces de los mensajes y de las herramientas (catálogo, archivos): solo http(s), en el navegador del sistema.
+  quoteHandle('inbox-open-link', async (url) => {
+    let u = null;
+    try { u = new URL(String(url ?? '')); } catch { u = null; }
+    if (!u || !['http:', 'https:'].includes(u.protocol)) return { ok: false, status: 400, detail: 'Solo se abren enlaces http o https.' };
+    if (inboxTest) inboxCapture.opened.push(u.href);
+    else await shell.openExternal(u.href);
+    return { ok: true, data: { url: u.href } };
+  });
+  quoteHandle('inbox-notify', (value) => inbox.setNotify(value));
   createWindow();
   win.once('closed', () => { for (const w of localWindows.values()) if (!w.isDestroyed()) w.destroy(); });
+  win.on('focus', () => win.flashFrame(false));
+  setInterval(() => pollInbox(), inboxPollMs);
+  // Con «Recordarme», Mensajes entra solo al abrir Relieve3D para avisar de mensajes nuevos aunque no abras el módulo.
+  inbox.state().then((s) => (s.hasSavedPassword ? inbox.resume().then(inboxSignedIn) : null)).catch(() => {});
   setupAutoUpdates();
 });
 app.on('window-all-closed', () => app.quit());

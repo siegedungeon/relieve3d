@@ -2,13 +2,14 @@
 <html lang="es">
 <head>
   <meta charset="utf-8" />
-  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-inline' 'wasm-unsafe-eval'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; worker-src 'self' blob:" />
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-inline' 'wasm-unsafe-eval'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; media-src 'self' blob:; worker-src 'self' blob:" />
   <title>Relieve3D</title>
   <script src="theme.js"></script>
   <link rel="stylesheet" href="styles.css" />
   <link rel="stylesheet" href="quote.css" />
   <link rel="stylesheet" href="laser.css" />
   <link rel="stylesheet" href="tiktok.css" />
+  <link rel="stylesheet" href="inbox.css" />
   <link rel="stylesheet" href="theme.css" />
   <script type="importmap">
     {
@@ -538,7 +539,7 @@
       <div class="home-grid" id="homeGrid2d"></div>
       <h2 class="home-group">Producción y negocio <small>costos · cotizaciones · rentabilidad</small></h2>
       <div class="home-grid" id="homeGridBusiness"></div>
-      <h2 class="home-group">Contenido y redes <small>guiones · prompts · TikTok</small></h2>
+      <h2 class="home-group">Contenido y redes <small>guiones · prompts · TikTok · mensajes</small></h2>
       <div class="home-grid" id="homeGridSocial"></div>
       <div class="home-foot muted small" id="homeVersion"></div>
     </div>
@@ -554,6 +555,7 @@
   <div id="quote" class="quote" hidden></div>
   <div id="laser" class="studio" hidden></div>
   <div id="tiktok" class="tk" hidden></div>
+  <div id="inbox" class="ib" hidden></div>
 
   <div id="busy" class="busy" hidden><div class="spinner"></div><span id="busyText">Procesando…</span></div>
   <div id="toast" class="toast" hidden></div>

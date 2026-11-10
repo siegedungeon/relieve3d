@@ -1,8 +1,9 @@
 // End-to-end runner: starts the real Electron app and drives a whole module flow.
-//   node test/e2e/run.mjs [nametree|theme|colorsplit|logo|hablador|pencil|fonts|text-quality|coloring|coloring-decorations|quote|tiktok|phonestand|local-links|all] [input file]
+//   node test/e2e/run.mjs [nametree|theme|colorsplit|logo|hablador|pencil|fonts|text-quality|coloring|coloring-decorations|quote|tiktok|phonestand|local-links|inbox|all] [input file]
 // Defaults use synthetic inputs (painted sphere 3MF, test/logo.png, generated LOVECUBE mockup).
 // tiktok drives a throwaway copy of the TikTok workspace (R3D_TIKTOK_E2E_SRC, default ~/Documents/TikTok-Impresion3D);
 // it needs Python with edge-tts, ffmpeg and internet for the guide voice. The real workspace is never written.
+// inbox requires an explicitly configured, disposable local backend with fake providers; never use a real database.
 // E2E_THEME=dark runs the complete flows in dark mode. Each flow has an isolated application profile.
 // Screenshots and exports go to test/out/e2e/<name>. Exits 1 if any check prints FAIL or the flow didn't finish.
 import fs from 'fs';
@@ -19,6 +20,26 @@ const [which = 'all', inputArg] = process.argv.slice(2);
 
 // Per-module environment, prepared after the output folder is wiped.
 const environments = {
+  inbox: (dir, restart) => {
+    const raw = process.env.R3D_INBOX_E2E_SERVER || '';
+    const control = process.env.R3D_INBOX_E2E_CONTROL || '';
+    const email = process.env.R3D_INBOX_E2E_EMAIL || '';
+    const password = process.env.R3D_INBOX_E2E_PASSWORD || '';
+    let server;
+    try { server = new URL(raw); } catch { throw new Error('inbox needs R3D_INBOX_E2E_SERVER for a disposable local sandbox'); }
+    if (server.protocol !== 'http:' || !['127.0.0.1', 'localhost'].includes(server.hostname) ||
+        !server.port || server.pathname !== '/' || server.search || server.hash ||
+        !control || path.basename(control) !== 'fake-control.json' || !fs.existsSync(control) || !email || !password) {
+      throw new Error('inbox needs a disposable local sandbox, fake-control.json and test login credentials');
+    }
+    const config = path.join(dir, 'mensajes.json');
+    if (restart === 'inbox-resume') fs.copyFileSync(path.join(dir, 'startup-test.json'), config);
+    else fs.writeFileSync(config, JSON.stringify({ server: server.origin, tenant: 'pabonitas', notify: true, remember: true }));
+    return { R3D_INBOX_CONFIG: config, R3D_INBOX_TEST_CAPTURE: '1', R3D_INBOX_POLL_MS: '600000',
+      R3D_INBOX_E2E_SERVER: server.origin, R3D_INBOX_E2E_CONTROL: path.resolve(control),
+      R3D_INBOX_E2E_EMAIL: email, R3D_INBOX_E2E_PASSWORD: password,
+      E2E_INBOX_RESTART: restart === 'inbox-resume' ? '1' : '' };
+  },
   tiktok: (dir) => {
     const src = path.resolve(process.env.R3D_TIKTOK_E2E_SRC || path.join(os.homedir(), 'Documents', 'TikTok-Impresion3D'));
     if (!fs.existsSync(path.join(src, 'herramientas', 'tiktok3d.py'))) throw new Error(`TikTok workspace not found: ${src}`);
@@ -68,6 +89,7 @@ const inputs = {
   quote: () => null,
   tiktok: () => null,
   'local-links': () => null,
+  inbox: () => null,
   colorsplit: () => { const f = path.join(outRoot, 'painted_sphere.3mf'); fs.mkdirSync(outRoot, { recursive: true }); fs.writeFileSync(f, paintedSphere3MF()); return f; },
   logo: () => path.join(root, 'test', 'logo.png'),
   pencil: () => path.join(root, 'test', 'logo.png'),
@@ -92,7 +114,7 @@ function runOne(name, restartTheme) {
   fs.mkdirSync(profile, { recursive: true });
   console.log(`— ${name} (${restartTheme ? 'reinicio: ' + restartTheme : input ? path.basename(input) : 'sin archivo de entrada'})`);
   let extra = {};
-  try { extra = environments[name]?.(dir) || {}; } catch (err) { console.log(`  FAIL ${name}: ${err.message}`); return Promise.resolve(false); }
+  try { extra = environments[name]?.(dir, restartTheme) || {}; } catch (err) { console.log(`  FAIL ${name}: ${err.message}`); return Promise.resolve(false); }
   const env = { ...process.env, R3D_TEST_FILE: path.join(here, `${name}.e2e.cjs`), E2E_DIR: dir, E2E_INPUT: input || '', R3D_AUTOSAVE_DIR: exp,
     R3D_QUOTE_TEST_DIR: path.join(dir, 'quotation-data'), R3D_TEST_USER_DATA: profile,
     R3D_TEST_THEME: restartTheme ? '' : process.env.E2E_THEME || 'light', E2E_THEME_RESTART: restartTheme || '', ...extra };
@@ -117,13 +139,16 @@ function runOne(name, restartTheme) {
       if (ok && name === 'theme' && !restartTheme) {
         for (const value of ['dark', 'light']) ok = (await runOne(name, value)) && ok;
       }
+      if (ok && name === 'inbox' && !restartTheme && fs.existsSync(path.join(dir, 'startup-test.json'))) {
+        ok = await runOne(name, 'inbox-resume');
+      }
       console.log(`  ${ok ? 'OK' : 'FAILED'} — screenshots in ${path.relative(root, dir)}`); resolve(ok);
     });
   });
 }
 
-const names = which === 'all' ? Object.keys(inputs) : [which];
-if (!names.every((n) => inputs[n])) { console.log('usage: node test/e2e/run.mjs [nametree|theme|colorsplit|logo|hablador|pencil|fonts|text-quality|coloring|coloring-decorations|quote|tiktok|phonestand|local-links|all] [input]'); process.exit(2); }
+const names = which === 'all' ? Object.keys(inputs).filter((n) => n !== 'inbox' || process.env.R3D_INBOX_E2E_SERVER) : [which];
+if (!names.every((n) => inputs[n])) { console.log('usage: node test/e2e/run.mjs [nametree|theme|colorsplit|logo|hablador|pencil|fonts|text-quality|coloring|coloring-decorations|quote|tiktok|phonestand|local-links|inbox|all] [input]'); process.exit(2); }
 let allOk = true;
 for (const n of names) allOk = (await runOne(n)) && allOk;
 console.log(allOk ? '\ne2e OK' : '\ne2e FAILED');
