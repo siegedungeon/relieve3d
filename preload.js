@@ -28,6 +28,7 @@ contextBridge.exposeInMainWorld('api', {
   saveFilesToFolder: (opts) => ipcRenderer.invoke('save-files-to-folder', opts),
   pencilBatchProfile: () => ipcRenderer.invoke('pencil-batch-profile'),
   nameTreeProfile: () => ipcRenderer.invoke('name-tree-profile'),
+  clickerBambuProfile: (count) => ipcRenderer.invoke('clicker-bambu-profile', count),
   confirm: (opts) => ipcRenderer.invoke('confirm', opts),
   onTestImage: (cb) => ipcRenderer.on('test-load-image', (e, d) => cb(d)),
   onUpdateStatus: (cb) => ipcRenderer.on('update-status', (e, d) => cb(d)),

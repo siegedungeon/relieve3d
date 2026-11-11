@@ -21,7 +21,7 @@ async function readProfile(root, kind, name, ancestors = []) {
 }
 
 async function loadBambuPencilProfile(root, count = 2) {
-  if (![1, 2].includes(count)) throw new Error('Cantidad de filamentos no válida.');
+  if (!Number.isInteger(count) || count < 1 || count > 16) throw new Error('Cantidad de filamentos no válida.');
   const machine = 'Bambu Lab A1 0.4 nozzle', process = '0.20mm Standard @BBL A1', filament = 'Bambu PLA Basic @BBL A1';
   const [printer, printing, material] = await Promise.all([
     readProfile(root, 'machine', machine), readProfile(root, 'process', process), readProfile(root, 'filament', filament),
@@ -63,6 +63,10 @@ async function getBambuNameTreeProfile() {
   return loadBambuPencilProfile((await findBambu()).profiles, 1);
 }
 
+async function getBambuClickerProfile(count) {
+  return loadBambuPencilProfile((await findBambu()).profiles, count);
+}
+
 async function normalizePencilPlates(folder, names) {
   if (!Array.isArray(names) || !names.length || names.some(name => !/^Placa_\d+_Bambu_A1\.3mf$/.test(name))) {
     throw new Error('Listado de placas Bambu no válido.');
@@ -81,4 +85,4 @@ async function normalizePencilPlates(folder, names) {
   } finally { await fs.rm(temporary, { recursive: true, force: true }); }
 }
 
-module.exports = { getBambuPencilProfile, getBambuNameTreeProfile, loadBambuPencilProfile, normalizePencilPlates };
+module.exports = { getBambuPencilProfile, getBambuNameTreeProfile, getBambuClickerProfile, loadBambuPencilProfile, normalizePencilPlates };

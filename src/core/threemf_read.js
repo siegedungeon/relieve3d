@@ -14,7 +14,8 @@ const attr = (s, name) => {
 const parseMat = (s) => {
   if (!s) return null;
   const v = s.trim().split(/\s+/).map(Number);
-  return v.length === 12 ? v : null;
+  if (v.length !== 12 || !v.every(Number.isFinite)) throw new Error('El 3MF contiene una transformación inválida');
+  return v;
 };
 // 3MF transform "m00 m01 m02 m10 m11 m12 m20 m21 m22 m30 m31 m32" (row vectors: p' = p * M)
 const mulMat = (a, b) => {
@@ -82,6 +83,10 @@ export function read3MF(bytes) {
   const rootXml = get('3D/3dmodel.model');
   if (!rootXml) throw new Error('El archivo no es un 3MF válido (falta 3D/3dmodel.model)');
   const title = (/<metadata name="Title">([^<]*)</.exec(rootXml) || [])[1] || '';
+  const units = { micron: 0.001, millimeter: 1, centimeter: 10, inch: 25.4, foot: 304.8, meter: 1000 };
+  const unit = attr((/<model\b([^>]*)>/.exec(rootXml) || [])[1] || '', 'unit') || 'millimeter';
+  const unitFactor = units[unit];
+  if (!unitFactor) throw new Error(`Unidad 3MF no compatible: ${unit}`);
 
   // palette: Bambu/Orca project settings or PrusaSlicer config
   let palette = [];
@@ -136,6 +141,8 @@ export function read3MF(bytes) {
     const res = { objects: new Map(), materials: new Map() };
     models.set(path, res);
     if (!xml) return res;
+    const modelUnit = attr((/<model\b([^>]*)>/.exec(xml) || [])[1] || '', 'unit') || 'millimeter';
+    if (modelUnit !== unit) throw new Error('El 3MF mezcla unidades entre sus modelos');
     for (const bm of xml.matchAll(/<(?:m:)?(basematerials|colorgroup)\s+id="(\d+)"[^>]*>([\s\S]*?)<\/(?:m:)?\1>/g)) {
       const cols = [...bm[3].matchAll(/(?:displaycolor|color)="([^"]+)"/g)].map((m) => parseHexColor(m[1]));
       res.materials.set(bm[2], cols);
@@ -146,13 +153,19 @@ export function read3MF(bytes) {
       const body = om[2];
       if (/<mesh/.test(body)) {
         const vs = [];
-        const vre = /<vertex\s+x="([^"]+)"\s+y="([^"]+)"\s+z="([^"]+)"/g;
-        for (let m; (m = vre.exec(body));) vs.push(+m[1], +m[2], +m[3]);
+        const vre = /<vertex\s([^>]*?)\/?>/g;
+        for (let m; (m = vre.exec(body));) {
+          const xyz = ['x', 'y', 'z'].map((key) => attr(m[1], key));
+          if (xyz.some((v) => v == null || !Number.isFinite(Number(v)))) throw new Error('El 3MF contiene vértices inválidos');
+          vs.push(...xyz.map(Number));
+        }
         const ts = [], paint = [], tp = [];
         const tre = /<triangle\s([^>]*?)\/?>/g;
         for (let m; (m = tre.exec(body));) {
           const a = m[1];
-          ts.push(+attr(a, 'v1'), +attr(a, 'v2'), +attr(a, 'v3'));
+          const tri = ['v1', 'v2', 'v3'].map((key) => attr(a, key));
+          if (tri.some((v) => v == null || !/^\d+$/.test(v) || +v >= vs.length / 3)) throw new Error('El 3MF contiene triángulos inválidos');
+          ts.push(...tri.map(Number));
           paint.push(attr(a, 'paint_color') || attr(a, 'slic3rpe:mmu_segmentation') || '');
           const pid = attr(a, 'pid'), p1 = attr(a, 'p1');
           tp.push(p1 != null ? [pid, +p1] : null);
@@ -171,7 +184,7 @@ export function read3MF(bytes) {
 
   const usedExtruders = new Set();
   const parts = [];
-  const emit = (o, mat, topId, matHex) => {
+  const emit = (o, mat, topId, matHex, instanceIndex) => {
     const mesh = o.mesh;
     const nV = mesh.V.length / 3, nT = mesh.T.length / 3;
     const defExt = partExtruder.get(topId + ':' + o.id) || objExtruder.get(topId) || objExtruder.get(o.id) || 1;
@@ -179,10 +192,10 @@ export function read3MF(bytes) {
     for (let i = 0; i < nV; i++) {
       const x = mesh.V[i * 3], y = mesh.V[i * 3 + 1], z = mesh.V[i * 3 + 2];
       if (mat) {
-        V[i * 3] = x * mat[0] + y * mat[3] + z * mat[6] + mat[9];
-        V[i * 3 + 1] = x * mat[1] + y * mat[4] + z * mat[7] + mat[10];
-        V[i * 3 + 2] = x * mat[2] + y * mat[5] + z * mat[8] + mat[11];
-      } else { V[i * 3] = x; V[i * 3 + 1] = y; V[i * 3 + 2] = z; }
+        V[i * 3] = (x * mat[0] + y * mat[3] + z * mat[6] + mat[9]) * unitFactor;
+        V[i * 3 + 1] = (x * mat[1] + y * mat[4] + z * mat[7] + mat[10]) * unitFactor;
+        V[i * 3 + 2] = (x * mat[2] + y * mat[5] + z * mat[8] + mat[11]) * unitFactor;
+      } else { V[i * 3] = x * unitFactor; V[i * 3 + 1] = y * unitFactor; V[i * 3 + 2] = z * unitFactor; }
     }
     const extraV = [], extraT = [], extraC = [];
     const T = [], tcol = [];
@@ -224,21 +237,31 @@ export function read3MF(bytes) {
       ({ V: VV, T: TT, tags: tk } = weldPainted(VV, T, tcol, nV));
     }
     for (const c of tk) usedExtruders.add(c);
-    parts.push({ name: o.name || `pieza ${parts.length + 1}`, V: VV, T: new Uint32Array(TT), tkey: tk });
+    parts.push({ name: o.name || `pieza ${parts.length + 1}`, V: VV, T: new Uint32Array(TT), tkey: tk, instanceIndex });
   };
-  const walk = (path, id, mat, topId, matHex) => {
+  const walk = (path, id, mat, topId, matHex, instanceIndex, stack = new Set()) => {
+    const key = `${path}:${id}`;
+    if (stack.has(key) || stack.size > 64) throw new Error('El 3MF contiene componentes cíclicos');
     const o = parseModel(path).objects.get(id);
-    if (!o) return;
+    if (!o) throw new Error('El 3MF referencia una pieza inexistente');
     let hex = matHex;
     if (o.pid != null && o.pindex != null) { const cols = models.get(path).materials.get(o.pid); if (cols && cols[+o.pindex]) hex = cols[+o.pindex]; }
-    if (o.mesh) emit(o, mat, topId, hex);
-    else for (const c of o.components) walk((c.path || path).replace(/^\//, ''), c.objectid, mulMat(c.transform, mat), topId, hex);
+    if (o.mesh) emit(o, mat, topId, hex, instanceIndex);
+    else {
+      stack.add(key);
+      for (const c of o.components) walk((c.path || path).replace(/^\//, ''), c.objectid, mulMat(c.transform, mat), topId, hex, instanceIndex, stack);
+      stack.delete(key);
+    }
   };
   const buildXml = /<build[^>]*>([\s\S]*?)<\/build>/.exec(rootXml);
+  const instances = [];
   if (buildXml) {
     for (const im of buildXml[1].matchAll(/<item\s([^>]*?)\/?>/g)) {
       if (attr(im[1], 'printable') === '0') continue;
-      walk('3D/3dmodel.model', attr(im[1], 'objectid'), parseMat(attr(im[1], 'transform')), attr(im[1], 'objectid'), null);
+      const objectId = attr(im[1], 'objectid'), transform = parseMat(attr(im[1], 'transform'));
+      const index = instances.length;
+      instances.push({ index, objectId, transform });
+      walk('3D/3dmodel.model', objectId, transform, objectId, null, index);
     }
   }
   if (!parts.length) throw new Error('El 3MF no contiene mallas');
@@ -253,5 +276,5 @@ export function read3MF(bytes) {
     for (let i = 0; i < p.tkey.length; i++) p.tc[i] = keys.indexOf(p.tkey[i]);
     delete p.tkey;
   }
-  return { title, palette: outPalette, names, parts };
+  return { title, palette: outPalette, names, parts, instances, unit, unitFactor };
 }

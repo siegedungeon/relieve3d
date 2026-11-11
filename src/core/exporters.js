@@ -63,7 +63,8 @@ export function threeMF(parts, modelName = 'Relieve3D', opts = {}) {
   const assigned = assemblies.flatMap(a => a.parts);
   if (!assemblies.length || assigned.length !== parts.length || new Set(assigned).size !== parts.length
     || assigned.some(i => !Number.isInteger(i) || i < 0 || i >= parts.length)
-    || assemblies.some(a => !a.parts.length || (a.shift && (a.shift.length !== 2 || !a.shift.every(Number.isFinite))))) {
+    || assemblies.some(a => !a.parts.length || (a.shift && (a.shift.length !== 2 || !a.shift.every(Number.isFinite)))
+      || (a.extruder != null && (!Number.isInteger(a.extruder) || a.extruder < 1 || a.extruder > 16)))) {
     throw new Error('Los objetos del lote deben contener todas las piezas, sin repetirlas.');
   }
   const filamentColors = [];
@@ -118,7 +119,7 @@ export function threeMF(parts, modelName = 'Relieve3D', opts = {}) {
     out.push('</components>\n</object>\n');
     build.push(`<item objectid="${asm}" transform="1 0 0 0 1 0 0 0 1 ${f(shift[0])} ${f(shift[1])} 0" printable="1"/>\n`);
     const extra = Object.entries(a.settings || {}).map(([k, v]) => `<metadata key="${esc(k)}" value="${esc(v)}"/>`).join('');
-    cfg.push(`<object id="${asm}"><metadata key="name" value="${esc(a.name)}"/><metadata key="extruder" value="1"/>${extra}\n`);
+    cfg.push(`<object id="${asm}"><metadata key="name" value="${esc(a.name)}"/><metadata key="extruder" value="${a.extruder ?? 1}"/>${extra}\n`);
     a.parts.forEach(i => {
       const p = parts[i];
       cfg.push(`<part id="${ids[i]}" subtype="normal_part"><metadata key="name" value="${esc(p.name)}"/><metadata key="extruder" value="${p.filamentIndex + 1}"/></part>\n`);

@@ -12,6 +12,14 @@ export const MODULES = [
     patch: { widthMM: 50, base: { enabled: true, margin: 3, thickness: 2.6 }, ring: { enabled: true, pos: 'left', outer: 9, inner: 4.5, thickness: 2.6 } },
   },
   {
+    id: 'keyring3mf', group: '3d', icon: '🔗', title: 'Argolla para 3MF',
+    desc: 'Abre un 3MF, elige el objeto y añade una argolla sin cambiar sus mallas ni medidas originales.',
+  },
+  {
+    id: 'clicker', group: '3d', icon: '🖱️', title: 'Clicker desde imagen',
+    desc: 'Crea una tapa en relieve y una base para un interruptor mecánico tipo MX a partir de una imagen.',
+  },
+  {
     id: 'pencil', group: '3d', icon: '✏️', title: 'Nombres para lápices / lapiceros', source: 'text',
     desc: 'Pega tu listado: nombres Matemasie blancos sobre base morada, sin figuras, con canal de 7.9 mm.',
     cards: ['text', 'base', 'pencil'],

@@ -40,6 +40,8 @@ Regresión del tema: `npm run test:theme` verifica persistencia, navegación, co
 | Módulo | Qué hace |
 |---|---|
 | Llavero | Módulo completo para marcas y merchandising (ver abajo) |
+| Argolla para 3MF | Agrega una argolla a un objeto de un 3MF existente y guarda una copia, conservando las mallas y medidas originales (ver abajo) |
+| Clicker desde imagen | Crea una tapa con silueta y relieve y una base separada para un interruptor mecánico tipo MX, no incluido (ver abajo) |
 | Árbol navideño de nombres | Estilo del modelo de referencia: tronco con año o texto, nombres entre barras finas y estrella, corazón, círculo o silueta propia. Escala uniforme dentro del alto/ancho máximo; grosor que se afina por igual delante y detrás para que quede vertical y estable; guías ocultas invisibles por delante y por detrás. Proyectos `.r3t`, vista armada y placas monocolor con STL por pieza |
 | Soporte celular llavero | Llavero que se abre en **soporte para el celular** (bisagra impresa armada, sin soportes) con la forma de arriba a elegir (corazón, ratón estilo Mickey, flor, estrella… o **tu propia silueta**), el logo o marca del cliente, texto y, opcionales, **chip NFC** y **abre latas** (ver abajo) |
 | Nombres para lápices / lapiceros | Genera un listado completo: **Matemasie blanca sobre base morada, sin figuras**, canal horizontal de **7.9 mm** y máximo **75 × 19 × 13 mm** por nombre. Guarda proyectos editables, 3MF a dos colores, STL unidos y placas Bambu A1. Conserva la edición individual, los adornos opcionales y los montajes anteriores |
@@ -54,6 +56,55 @@ Regresión del tema: `npm run test:theme` verifica persistencia, navegación, co
 | Separar colores 3D | Abre un **3MF multicolor** (p. ej. de MakerWorld) y lo divide en **piezas de un solo color** para imprimir sin cambios de filamento y pegar (ver abajo) |
 
 Los módulos de texto usan las fuentes más populares y las instaladas en el equipo, con contorno/bordeado opcional.
+
+### Argolla para un 3MF existente
+
+En **Inicio → Argolla para 3MF**, abre o arrastra una placa 3MF imprimible y elige
+el objeto al que irá unida. Ajusta el lado, la posición, la altura, los diámetros,
+el grosor y el solapamiento; pulsa **Comprobar y actualizar** antes de guardar. La
+argolla debe tener una pared de al menos 1,2 mm y un agujero de al menos 2,5 mm.
+Se comprueban su solidez, una intersección volumétrica con el objeto y que el agujero
+esté libre. El color de referencia y el número de filamento se pueden elegir; verifica
+la asignación en el laminador.
+
+**Guardar copia con argolla** no modifica el archivo de entrada: conserva su geometría,
+medidas y colores, y añade la argolla al objeto elegido. Se eliminan G-code, miniaturas
+y datos de laminado anteriores porque ya no corresponden a la nueva geometría. Abre
+la copia en el laminador, verifica que esté sobre la placa y vuelve a laminar. La
+argolla elevada puede requerir soportes. La unión digital no garantiza su resistencia:
+haz una impresión de prueba con el material y orientación finales.
+
+Un ensamblaje de varias piezas no se fusiona automáticamente. Los archivos marcados
+`NO_IMPRIMIR` son vistas de montaje y no se exportan como placas; abre una pieza o
+placa imprimible. Si hay instancias compartidas, mallas abiertas o una variante 3MF
+no compatible, separa o repara el modelo en el laminador antes de intentarlo de nuevo.
+`npm run test:keyring` comprueba la geometría, los colores y el flujo de Electron con
+un modelo sintético.
+
+### Clicker desde una imagen
+
+En **Inicio → Clicker desde imagen**, abre o arrastra una imagen y genera una tapa
+con silueta, relieve por colores y una base separada. Puedes elegir fondo, cantidad
+de colores, ancho de 25 a 100 mm, borde, altura del relieve y colores de tapa y base.
+La vectorización puede simplificar u omitir detalles finos; revisa la vista previa.
+Se rechazan siluetas desconectadas, demasiado delgadas o demasiado grandes para la placa.
+
+El diseño es para un **interruptor mecánico tipo MX**, que debes conseguir aparte.
+La tapa tiene 4 mm de grosor y un alojamiento de cruz abierto por debajo; la base de
+24 × 24 × 8,5 mm tiene una abertura nominal de 14 mm y está abierta por detrás.
+Las holguras de montaje y vástago se ajustan por separado. Estas medidas son una
+referencia, no una garantía de compatibilidad: imprime una prueba y verifica el
+ajuste y la resistencia con tu interruptor, impresora y material.
+
+**Bambu A1 instalado** guarda un proyecto 3MF con los perfiles locales de Bambu Studio
+y los filamentos de la tapa, el relieve y la base; **3MF estándar** exporta la misma
+geometría sin perfil de impresora. Revisa los colores y la ubicación en el laminador.
+Una A1 con un AMS Lite tiene cuatro posiciones: si el diseño usa más colores, debes
+planificar los cambios de filamento según tu equipo. La tapa se imprime con el encaje
+hacia la cama y el diseño hacia arriba; revisa el puente del encaje y usa soportes si
+son necesarios. `npm run test:clicker` ejecuta regresiones y el flujo Electron;
+`npm run test:clicker:print`, en Windows con Bambu Studio instalado, también lamina el
+3MF exportado y comprueba sus objetos, trayectorias y filamentos.
 
 En **Árbol navideño de nombres**, escribe de 1 a 20 nombres (uno por renglón). Sigue el estilo del modelo de referencia: cada nombre va entre dos barras finas y es tan ancho como el triángulo del árbol a su altura; el tronco lleva el año u otro texto (o es liso) y la figura de la cima conserva su proporción aunque haya muchos nombres. Por defecto se respeta tu listado de abajo hacia arriba; el orden automático coloca los más largos abajo para letras más grandes. Los acentos quedan calados en la barra superior, así cada palabra es una sola pieza. Cada nombre conserva las proporciones de la fuente y el árbol completo, incluido tronco y remate, cabe dentro de ambos límites. Los grosores inferior y superior son independientes y se reparten por igual delante y detrás: el árbol queda vertical, sin inclinarse hacia atrás. El resumen indica cuántos grados aguanta antes de volcar, y si la base es delgada para la altura se sugiere el grosor inferior adecuado. Las letras se separan solas para que entre ellas queden al menos 0,8 mm al imprimir (más si el trazo mínimo es mayor), y cada nombre tiene un tamaño mínimo legible según su fuente para que no se cierren los huecos de A, R y O, las ranuras de E, M y N ni los pasos de G y S (por ejemplo, FAMILIA en Bebas Neue necesita letras de al menos 8,8 mm). Si un nombre o encaje quedaría más pequeño, no se exporta una pieza ilegible o frágil: el aviso dice qué nombre falla y qué tamaño necesita, y ofrece botones para aplicar el alto/ancho máximo que sí cabe o el orden automático.
 

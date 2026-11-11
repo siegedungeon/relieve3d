@@ -17,6 +17,8 @@ import { View2D, isTyping } from './view2d.js';
 import { Studio } from './studio.js';
 import { HabladorStudio } from './hablador_ui.js';
 import { ColorSplitStudio } from './colorsplit_ui.js';
+import { Keyring3MFStudio } from './keyring_3mf_ui.js';
+import { ClickerStudio } from './clicker_ui.js';
 import { PhoneStandStudio } from './phonestand_ui.js';
 import { NameTreeStudio } from './name_tree_ui.js';
 import { ColoringStudio } from './coloring_ui.js';
@@ -1287,6 +1289,8 @@ document.addEventListener('drop', (e) => {
   }
   if (!$('studio').hidden) { studio.loadFile(f); return; }
   if (!$('hablador').hidden) { if (/\.(r3h|json)$/i.test(f.name)) openProjectFile(f); else hablador.loadLogo(f); return; }
+  if (!$('keyring3mf').hidden) { keyring3mf.loadFile(f); return; }
+  if (!$('clicker').hidden) { clicker.loadFile(f); return; }
   if (!$('colorsplit').hidden) { colorsplit.loadFile(f); return; }
   if (!$('phonestand').hidden) { if (/\.(r3p|json)$/i.test(f.name)) openProjectFile(f); else phonestand.loadLogo(f); return; }
   if (!$('home').hidden && /\.3mf$/i.test(f.name)) { hideHome(); colorsplit.open().then(() => colorsplit.loadFile(f)); return; }
@@ -1297,7 +1301,7 @@ document.addEventListener('drop', (e) => {
 
 // keyboard
 window.addEventListener('keydown', (e) => {
-  if (isTyping(e) || !$('home').hidden || !$('studio').hidden || !$('hablador').hidden || !$('colorsplit').hidden || !$('phonestand').hidden || !$('nameTree').hidden || !$('coloring').hidden || !$('quote').hidden || !$('laser').hidden || !$('tiktok').hidden || !$('inbox').hidden) return;
+  if (isTyping(e) || !$('home').hidden || !$('studio').hidden || !$('hablador').hidden || !$('colorsplit').hidden || !$('keyring3mf').hidden || !$('clicker').hidden || !$('phonestand').hidden || !$('nameTree').hidden || !$('coloring').hidden || !$('quote').hidden || !$('laser').hidden || !$('tiktok').hidden || !$('inbox').hidden) return;
   const k = e.key.toLowerCase(), ctrl = e.ctrlKey || e.metaKey;
   if (ctrl && k === 'z' && !e.shiftKey) { e.preventDefault(); undo(); }
   else if (ctrl && (k === 'y' || (k === 'z' && e.shiftKey))) { e.preventDefault(); redo(); }
@@ -1882,6 +1886,8 @@ const studio = new Studio($('studio'), {
 });
 const hablador = new HabladorStudio($('hablador'), { toast, showBusy, hideBusy, onBack: () => showHome() });
 const colorsplit = new ColorSplitStudio($('colorsplit'), { toast, showBusy, hideBusy, onBack: () => showHome() });
+const keyring3mf = new Keyring3MFStudio($('keyring3mf'), { toast, showBusy, hideBusy, onBack: () => showHome() });
+const clicker = new ClickerStudio($('clicker'), { toast, showBusy, hideBusy, onBack: () => showHome() });
 const phonestand = new PhoneStandStudio($('phonestand'), { toast, showBusy, hideBusy, onBack: () => showHome() });
 const nameTree = new NameTreeStudio($('nameTree'), { toast, onBack: () => showHome() });
 const coloring = new ColoringStudio($('coloring'), { toast, showBusy, hideBusy, onBack: () => showHome() });
@@ -1942,6 +1948,8 @@ async function openLocalLink(id, modo) {
   }
 }
 function showHome() {
+  keyring3mf.close();
+  clicker.close();
   nameTree.close();
   laser.close();
   quote.close();
@@ -2000,6 +2008,18 @@ function clearDesign() {
 
 async function enterModule(id) {
   const m = moduleDef(id);
+  if (id !== 'keyring3mf') keyring3mf.close();
+  if (id !== 'clicker') clicker.close();
+  if (id === 'clicker') {
+    nameTree.close(); laser.close(); quote.close(); coloring.close(); tiktok.close(); inbox.close(); hideHome();
+    $('studio').hidden = true; $('hablador').hidden = true; $('colorsplit').hidden = true; $('phonestand').hidden = true;
+    await clicker.open(); return;
+  }
+  if (id === 'keyring3mf') {
+    nameTree.close(); laser.close(); quote.close(); coloring.close(); tiktok.close(); inbox.close(); hideHome();
+    $('studio').hidden = true; $('hablador').hidden = true; $('colorsplit').hidden = true; $('phonestand').hidden = true;
+    await keyring3mf.open(); return;
+  }
   if (id === 'inbox') {
     if (!window.r3dInbox) return;
     nameTree.close(); laser.close(); quote.close(); coloring.close(); tiktok.close(); hideHome();
@@ -2122,7 +2142,7 @@ if (stUpdate) {
     else if (d.state === 'up-to-date' || d.state === 'error') stUpdate.hidden = true;
   });
 }
-window.__r3d = { S, setSelection, doExport, exportParts, saveProject, openProjectFile, undo, redo, commit, hist, setViewMode, enterModule, applyText, showHome, renderLocalLinks, studio, hablador, colorsplit, phonestand, nameTree, coloring, quote, laser, tiktok, inbox, getFeat: () => feat, onSettingChanged, placeRing, loadImageFile, view2d,
+window.__r3d = { S, setSelection, doExport, exportParts, saveProject, openProjectFile, undo, redo, commit, hist, setViewMode, enterModule, applyText, showHome, renderLocalLinks, studio, hablador, colorsplit, keyring3mf, clicker, phonestand, nameTree, coloring, quote, laser, tiktok, inbox, getFeat: () => feat, onSettingChanged, placeRing, loadImageFile, view2d,
   applyTier, applyComposition, getOrig: () => orig, ringSnap, gramsEstimate, viewer, renderElements };
 
 syncProcInputs();
