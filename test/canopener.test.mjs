@@ -173,6 +173,28 @@ test('raised border recesses the heart face and supports artwork', () => {
   assert.deepEqual(loaded.cfg.border, { enabled: true, width: 2, depth: 1 });
 });
 
+test('external ring and ribbon are joined, open and follow the chosen side', () => {
+  for (const kind of ['round', 'slot']) {
+    const cfg = { shape: 'circle', attachment: { mount: 'external', kind, diameter: 4, wall: 2, slotWidth: 10 } };
+    const top = canOpenerSolids({ ...cfg, attachment: { ...cfg.attachment, target: { x: 0, y: 70 } } });
+    const side = canOpenerSolids({ ...cfg, attachment: { ...cfg.attachment, target: { x: -70, y: 24 } } });
+    try {
+      checkSolidAndSlot(top);
+      checkSolidAndSlot(side);
+      assert.ok(top.info.attachment.position[1] > 49, kind + ': top hole is outside the figure');
+      assert.ok(side.info.attachment.position[0] < -24.5, kind + ': side hole is outside the figure');
+      assert.ok(Math.hypot(top.info.attachment.position[0] - side.info.attachment.position[0],
+        top.info.attachment.position[1] - side.info.attachment.position[1]) > 10);
+      for (const hole of side.info.attachment.bodyHoles) {
+        const c = Manifold.cylinder(side.cfg.thickness + 2, hole.diameter / 2 - 0.2, hole.diameter / 2 - 0.2, 48);
+        const probe = c.translate([hole.x, hole.y, -1]); c.delete();
+        try { assert.ok(overlap(side.body, probe) < 1e-3, kind + ': the opening is free'); }
+        finally { probe.delete(); }
+      }
+    } finally { top.dispose(); side.dispose(); }
+  }
+});
+
 test('the perpendicular opening reaches the outside and left-hand narrow shapes gain a functional lip', () => {
   const s = canOpenerSolids({ shape: 'heart', attachment: { mount: 'integrated', kind: 'lateral', diameter: 4 } });
   try {

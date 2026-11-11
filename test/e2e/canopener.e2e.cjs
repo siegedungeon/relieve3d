@@ -74,6 +74,16 @@ module.exports = async ({ win, run, shot, wait }) => {
     ok(option.cfg.attachment.mount === 'integrated' && option.parts.every(p => !p.apart) &&
       (kind === 'slot' || option.info.attachment.bodyHoles.length === 1), preset + ' uses one opening and no separate connector');
   }
+  for (const [preset, kind] of [['externalRing', 'round'], ['externalRibbon', 'slot']]) {
+    await run(`(() => { const el=${q('[data-r="preset"]')}; el.value=${JSON.stringify(preset)}; el.dispatchEvent(new Event('change',{bubbles:true})); })()`);
+    ok(await until(`window.__r3d.canopener.res?.cfg.attachment.mount === 'external' && window.__r3d.canopener.res.cfg.attachment.kind === ${JSON.stringify(kind)} && !window.__r3d.canopener.stale`), preset + ' generates a joined external attachment');
+    const state = await info();
+    ok(state.parts.every(p => !p.apart), preset + ' stays attached to the body');
+    await run(`(${q('[data-r="format"]')}.value='standard')`);
+    await run('window.__r3d.canopener.export()');
+    ok(fs.existsSync(path.join(exp, 'Destapador.3mf')), preset + ' exports a 3MF');
+  }
+  await run(`(${q('[data-r="format"]')}.value='bambu')`);
   await set('shape', 'circle');
   await run(`(() => { const el=${q('[data-r="preset"]')}; el.value='edge'; el.dispatchEvent(new Event('change',{bubbles:true})); })()`);
   for (const position of ['center', 'left', 'right', 'side-left', 'side-right']) {

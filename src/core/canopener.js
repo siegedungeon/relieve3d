@@ -184,7 +184,7 @@ export function canOpenerSolids(input = {}, { logoImage = null, shapeImage = nul
     const warnings = [], original = shapeOutline(S, cfg, shapeImage, warnings);
     const selected = holeLayout(a.kind, a.diameter, a.slotWidth, a.wall);
     const layout = a.mount === 'separate' ? holeLayout('round', LINK_DIAMETER, 8, a.wall) : selected;
-    let outline = original, position, edgeData = null;
+    let outline = original, position, edgeData = null, externalData = null, externalEar = null;
     if (layout.edgeLoop) {
       if (a.mount !== 'integrated') throw new Error('El paso en el borde debe estar dentro de la figura.');
       const angles = { center: 0, left: -45, right: 45, 'side-left': -90, 'side-right': 90 };
@@ -201,17 +201,52 @@ export function canOpenerSolids(input = {}, { logoImage = null, shapeImage = nul
       const rad = -angle * Math.PI / 180;
       position = [local[0] * Math.cos(rad) - innerY * Math.sin(rad), local[0] * Math.sin(rad) + innerY * Math.cos(rad)];
       edgeData = { angle, center: [local[0], innerY], tops };
+    } else if (a.mount === 'external' && ['round', 'slot'].includes(a.kind)) {
+      const bounds = original.bounds();
+      const center = [(bounds.min[0] + bounds.max[0]) / 2, (bounds.min[1] + bounds.max[1]) / 2];
+      const fallback = { center: 0, left: -45, right: 45, 'side-left': -90, 'side-right': 90 };
+      const angle = a.target
+        ? Math.atan2(a.target.x - center[0], a.target.y - center[1]) * 180 / Math.PI
+        : fallback[a.position];
+      const rotated = o(original.rotate(angle));
+      const anchor = findPosition(S, rotated, { centers: [[0, 0]], r: 0 }, a.wall + 0.2, 'center');
+      const polys = rotated.toPolygons();
+      const lowX = anchor[0] + Math.min(...layout.centers.map(([x]) => x - layout.r));
+      const highX = anchor[0] + Math.max(...layout.centers.map(([x]) => x + layout.r));
+      const heights = [H.maxAt(polys, 0, lowX), H.maxAt(polys, 0, highX), H.maxAt(polys, 0, anchor[0])];
+      for (const poly of polys) for (const [x, y] of poly) if (x >= lowX && x <= highX) heights.push(y);
+      const top = Math.max(...heights);
+      const low = Math.min(...layout.centers.map(([, y]) => y - layout.r));
+      const local = [anchor[0], top - low + 0.2];
+      const expanded = layout.centers.map(([x, y]) => H.circle(S, x + local[0], y + local[1], layout.r + a.wall, 64));
+      const ear = o(CS.hull([H.circle(S, anchor[0], anchor[1], a.wall + 0.1, 64), ...expanded]));
+      externalEar = o(ear.rotate(-angle));
+      outline = o(original.add(externalEar));
+      const radians = -angle * Math.PI / 180;
+      position = [local[0] * Math.cos(radians) - local[1] * Math.sin(radians),
+        local[0] * Math.sin(radians) + local[1] * Math.cos(radians)];
+      externalData = { angle, local };
     } else if (a.mount === 'external') {
       const anchor = findPosition(S, original, { centers: [[0, 0]], r: 0 }, a.wall + 0.2, a.position);
       const top = H.maxAt(original.toPolygons(), 0, anchor[0]);
       const low = Math.min(...layout.centers.map(([, y]) => y - layout.r));
       position = [anchor[0], top - low + 0.4];
       const expanded = layout.centers.map(([x, y]) => H.circle(S, x + position[0], y + position[1], layout.r + a.wall, 64));
-      const ear = o(CS.hull([H.circle(S, anchor[0], anchor[1], a.wall + 0.1, 64), ...expanded]));
-      outline = o(original.add(ear));
+      externalEar = o(CS.hull([H.circle(S, anchor[0], anchor[1], a.wall + 0.1, 64), ...expanded]));
+      outline = o(original.add(externalEar));
     } else position = findPosition(S, original, layout, a.wall, a.position, a.target);
-    const holeCS = o(footprint(S, layout).translate(position));
-    const bodyHoles = layout.centers.map(([x, y]) => ({ x: x + position[0], y: y + position[1], diameter: layout.r * 2 }));
+    const holeCS = externalData
+      ? o(o(footprint(S, layout).translate(externalData.local)).rotate(-externalData.angle))
+      : o(footprint(S, layout).translate(position));
+    if (externalData && o(holeCS.intersect(original)).area() > 1e-5) {
+      throw new Error('El agujero exterior cruza la figura. Mueve el enganche a otro borde.');
+    }
+    const rotation = -(externalData?.angle || 0) * Math.PI / 180;
+    const bodyHoles = layout.centers.map(([x, y]) => ({
+      x: position[0] + x * Math.cos(rotation) - y * Math.sin(rotation),
+      y: position[1] + x * Math.sin(rotation) + y * Math.cos(rotation),
+      diameter: layout.r * 2,
+    }));
     const ringRadius = Math.max(...layout.centers.map(([x, y]) => Math.hypot(x, y) + layout.r));
     const mech = { W: 150, T, yh0: -48, variant: 'short' }, opCfg = { opener: { enabled: true, side: cfg.side, notch: cfg.notch, target: cfg.openerTarget } };
     const ringGuard = { x: position[0], y: position[1], r: ringRadius + a.wall - 2.5 };
@@ -271,7 +306,7 @@ export function canOpenerSolids(input = {}, { logoImage = null, shapeImage = nul
     }
     if (a.mount === 'external' && a.kind !== 'lateral' && a.kind !== 'cord-loop') {
       // Keep the eyelet thin enough for a split ring or folded ribbon to pass around it.
-      const outside = o(outline.subtract(original));
+      const outside = o(externalEar.subtract(original));
       const relief = H.extrudeZ(S, outside, 3.5, T + 1);
       body = o(body.subtract(relief));
     }

@@ -18,6 +18,8 @@ const PRESETS = {
   small: { mount: 'integrated', kind: 'round', diameter: 3, wall: 1.5, slotWidth: 8 },
   cord: { mount: 'integrated', kind: 'round', diameter: 3.2, wall: 2, slotWidth: 8 },
   edge: { mount: 'integrated', kind: 'edge-loop', diameter: 3, wall: 2, slotWidth: 8 },
+  externalRing: { mount: 'external', kind: 'round', diameter: 4, wall: 2, slotWidth: 8 },
+  externalRibbon: { mount: 'external', kind: 'slot', diameter: 3.2, wall: 2, slotWidth: 10 },
   ribbon: { mount: 'integrated', kind: 'slot', diameter: 3.2, wall: 2.5, slotWidth: 10 },
 };
 
@@ -65,11 +67,11 @@ export class CanOpenerStudio {
         </section>
         <section class="card">
           <h3>2. Enganche del llavero</h3>
-          <label class="row">Tipo de enganche <select data-r="preset"><option value="custom">Configuración actual</option><option value="small">Anillo de llavero</option><option value="cord">Correa de hilo</option><option value="ribbon">Cinta</option><option value="edge">Paso de hilo en el borde</option></select></label>
+          <label class="row">Tipo de enganche <select data-r="preset"><option value="custom">Configuración actual</option><option value="small">Anillo de llavero</option><option value="cord">Correa de hilo</option><option value="ribbon">Cinta</option><option value="edge">Paso de hilo en el borde</option><option value="externalRing">Argolla exterior para anillo o hilo</option><option value="externalRibbon">Argolla exterior para cinta</option></select></label>
           ${number('Diámetro / alto del agujero (mm)', 'attachment.diameter', 'De 2 a 9 mm para el paso en el borde y de 3 a 9 mm para las demás opciones. Para el paso en el borde se conservan al menos 1,5 mm arriba y abajo.')}
           <div data-r="slotSize">${number('Ancho de la ranura de cinta (mm)', 'attachment.slotWidth', 'De 6 a 16 mm; no menor que el alto.')}</div>
           ${number('Pared alrededor (mm)', 'attachment.wall', 'De 1,5 a 5 mm de material alrededor del agujero.')}
-          <div class="small muted">El paso en el borde tiene dos entradas conectadas dentro de la figura. La correa de hilo pasa por un solo ojal: introduce el lazo y pasa la correa por él. Elige un tamaño que permita pasar tu anillo o cinta y comprueba el ajuste con una impresión de prueba.</div>
+          <div class="small muted">Las argollas exteriores se unen al contorno y se mueven con el punto azul. El paso en el borde tiene dos entradas conectadas dentro de la figura. La correa de hilo pasa por un solo ojal: introduce el lazo y pasa la correa por él. Elige un tamaño que permita pasar tu anillo o cinta y comprueba el ajuste con una impresión de prueba.</div>
         </section>
         <section class="card">
           <h3>3. Logo y texto</h3>
