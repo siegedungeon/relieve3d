@@ -57,7 +57,7 @@ export class CanOpenerStudio {
           ${select('Forma', 'shape', CAN_OPENER_SHAPES.map((s) => [s.id, s.name]))}
           <div data-r="custom"><button class="btn wide" data-a="shape">⬆ Cargar silueta (PNG/JPG/SVG)</button><div class="small muted" data-r="shapeInfo"></div></div>
           ${number('Ancho de la figura (mm)', 'width', 'De 40 a 100 mm; los enganches o el borde funcional pueden añadir tamaño.')}
-          ${check('Borde elevado (estilo corazón)', 'border.enabled')}
+          ${check('Marco del corazón (centro hundido)', 'border.enabled')}
           <div data-r="borderSettings">${number('Ancho del borde (mm)', 'border.width')}${number('Profundidad interior (mm)', 'border.depth')}</div>
           ${number('Grosor del cuerpo (mm)', 'thickness', 'De 6 a 12 mm. La referencia mide aproximadamente 8 mm.')}
           <div class="small muted">Arrastra el punto naranja para mover el abre latas y el azul para mover el enganche.</div>
@@ -134,7 +134,10 @@ export class CanOpenerStudio {
       if (!el.dataset.k) return;
       const value = el.type === 'checkbox' ? el.checked : el.getAttribute('inputmode') === 'decimal' || el.dataset.k === 'logo.colors'
         ? (el.value.trim() ? Number(el.value.replace(',', '.')) : NaN) : el.value;
-      if (Object.is(get(this.cfg, el.dataset.k), value)) return;
+      if (Object.is(get(this.cfg, el.dataset.k), value)) {
+        if (e.type === 'change' && el.getAttribute('inputmode') === 'decimal') this.scheduleRebuild();
+        return;
+      }
       set(this.cfg, el.dataset.k, value);
       if (el.dataset.k.startsWith('attachment.') && el.dataset.k !== 'attachment.position' && el.dataset.k !== 'attachment.mount') this.$('preset').value = 'custom';
       this.visibility();

@@ -52,6 +52,9 @@ module.exports = async ({ win, run, shot, wait }) => {
   ok(await until(`window.__r3d.canopener.res?.cfg.border.enabled && !window.__r3d.canopener.stale`), 'raised heart border is generated');
   ok(await run('Math.abs(window.__r3d.canopener.res.info.border.surfaceZ - 6.8) < 0.01'), 'heart interior is recessed 1.2 mm');
   await wait(600); await shot(path.join(dir, 'heart-raised-border.png'));
+  await run(`(() => { const el=${q('[data-r="preset"]')}; el.value='edge'; el.dispatchEvent(new Event('change',{bubbles:true})); })()`);
+  ok(await until(`window.__r3d.canopener.res?.cfg.attachment.kind === 'edge-loop' && window.__r3d.canopener.res.cfg.border.enabled && !window.__r3d.canopener.stale`), 'edge attachment works together with the raised border');
+
   await run(`(${q('[data-r="format"]')}.value='standard')`);
   await run('window.__r3d.canopener.export()');
   const borderFile = path.join(exp, 'Destapador.3mf');

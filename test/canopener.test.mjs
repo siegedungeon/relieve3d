@@ -166,7 +166,9 @@ test('raised border recesses the heart face and supports artwork', () => {
     } finally { s.dispose(); }
   }
   assert.throws(() => canOpenerSolids({ border: { enabled: true }, thickness: 6, logo: { mode: 'engrave', depth: 1 } }), /techo/i);
-  assert.throws(() => canOpenerSolids({ border: { enabled: true }, attachment: { kind: 'edge-loop', diameter: 4 } }), /techo|paso/i);
+  assert.throws(() => canOpenerSolids({ border: { enabled: true }, attachment: { kind: 'edge-loop', diameter: 4 } }), /grosor|paso/i);
+  const edge = canOpenerSolids({ border: { enabled: true }, attachment: { kind: 'edge-loop', diameter: 3 } });
+  try { checkSolidAndSlot(edge); } finally { edge.dispose(); }
   const loaded = readCanOpenerProject(canOpenerProject({ border: { enabled: true, width: 2, depth: 1 } }));
   assert.deepEqual(loaded.cfg.border, { enabled: true, width: 2, depth: 1 });
 });
@@ -209,7 +211,7 @@ test('logos use the same multicolour, flat and engraved pipeline and export the 
 });
 
 test('rejects invalid custom silhouettes and unsafe measurements instead of exporting a misleading part', () => {
-  assert.throws(() => canOpenerSolids({ attachment: { kind: 'edge-loop', diameter: 4 }, logo: { mode: 'engrave', depth: 1 } }), /techo|paso/i);
+  assert.throws(() => canOpenerSolids({ attachment: { kind: 'edge-loop', diameter: 4 }, logo: { mode: 'engrave', depth: 1.5 } }), /grosor|paso/i);
   assert.throws(() => canOpenerSolids({ shape: 'custom' }), /imagen|silueta/i);
   assert.throws(() => canOpenerSolids({ width: 30 }), /ancho/i);
   assert.throws(() => canOpenerSolids({ thickness: 6, logo: { mode: 'engrave', depth: 2 } }), /techo|grosor/i);

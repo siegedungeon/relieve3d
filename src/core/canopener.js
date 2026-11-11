@@ -59,7 +59,7 @@ export function normalizeCanOpener(input = {}) {
   const logo = { ...shared.logo, where: 'top' }, text = { ...shared.text, where: 'top' };
   const sink = logo.mode === 'flat' ? logo.flatDepth : logo.mode === 'engrave' ? logo.depth : 0;
   const borderDepth = border.enabled ? border.depth : 0;
-  if (a.kind === 'edge-loop' && thickness / 2 - a.diameter / 2 - sink - borderDepth < 1.5) throw new Error('El logo hundido dejaría poco techo sobre el paso: reduce su profundidad o el diámetro, o aumenta el grosor.');
+  if (a.kind === 'edge-loop' && thickness - a.diameter - sink - borderDepth < 3) throw new Error('El paso necesita más grosor: reduce su diámetro o la profundidad del borde y el logo, o aumenta el grosor.');
   if (thickness - sink - borderDepth < 4.6) throw new Error('El logo hundido dejaría muy poco techo sobre la ranura: aumenta el grosor o reduce la profundidad.');
   return {
     name: String(cfg.name || d.name).slice(0, 60), shape,
@@ -236,8 +236,10 @@ export function canOpenerSolids(input = {}, { logoImage = null, shapeImage = nul
     if (edgeData) {
       const { center, tops, angle } = edgeData;
       const arms = layout.centers.map(([dx], i) =>
-        lateralCut(S, [center[0] + dx, center[1]], tops[i] + 2, a.diameter, T));
-      const bridge = cordBridge(S, layout.centers, center, a.diameter, T);
+        lateralCut(S, [center[0] + dx, center[1]], tops[i] + 2, a.diameter,
+          T - (cfg.border.enabled ? cfg.border.depth : 0) - (cfg.logo.mode === 'flat' ? cfg.logo.flatDepth : cfg.logo.mode === 'engrave' ? cfg.logo.depth : 0)));
+      const edgeThickness = T - (cfg.border.enabled ? cfg.border.depth : 0) - (cfg.logo.mode === 'flat' ? cfg.logo.flatDepth : cfg.logo.mode === 'engrave' ? cfg.logo.depth : 0);
+      const bridge = cordBridge(S, layout.centers, center, a.diameter, edgeThickness);
       cuts = o(o(M.union([...arms, bridge])).rotate([0, 0, -angle]));
     }
     if (layout.lateral) {
