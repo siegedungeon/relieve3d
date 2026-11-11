@@ -79,8 +79,23 @@ test('keyring variants have open holes, safe walls and a separate connector when
   assert.throws(() => canOpenerSolids({ thickness: 6, attachment: { kind: 'lateral', diameter: 6 } }), /lateral|grosor/i);
 });
 
+test('the external ring eyelet has a through hole and a thin outer rim', () => {
+  const s = canOpenerSolids({ attachment: { mount: 'external', kind: 'round' } });
+  try {
+    const { x, y, diameter } = s.info.attachment.bodyHoles[0];
+    const rimY = y + diameter / 2 + 1;
+    const c = Manifold.cylinder(1, 0.3, 0.3, 32);
+    const lower = c.translate([x, rimY, 1]);
+    const upper = c.translate([x, rimY, 4]);
+    try {
+      assert.ok(overlap(s.body, lower) > 0.1, 'the eyelet has material around the hole');
+      assert.ok(overlap(s.body, upper) < 1e-3, 'the outer rim is 3.5 mm thick');
+    } finally { c.delete(); lower.delete(); upper.delete(); }
+  } finally { s.dispose(); }
+});
+
 test('the perpendicular opening reaches the outside and left-hand narrow shapes gain a functional lip', () => {
-  const s = canOpenerSolids({ shape: 'heart', attachment: { kind: 'lateral', diameter: 4 } });
+  const s = canOpenerSolids({ shape: 'heart', attachment: { mount: 'integrated', kind: 'lateral', diameter: 4 } });
   try {
     const [x, y] = s.info.attachment.position;
     const end = s.outline.bounds().max[1] + 2;

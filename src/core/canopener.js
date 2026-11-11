@@ -14,7 +14,7 @@ export const CAN_OPENER_SHAPES = [
 export const DEFAULT_CAN_OPENER = () => ({
   name: 'Destapador', shape: 'heart', width: 49, thickness: 8,
   side: 'right',
-  attachment: { mount: 'integrated', kind: 'lateral', position: 'left', diameter: 4.5, slotWidth: 8, wall: 2.5 },
+  attachment: { mount: 'external', kind: 'round', position: 'left', diameter: 4.5, slotWidth: 8, wall: 2.5 },
   logo: { ...DEFAULT_PHONESTAND().logo },
   text: { ...DEFAULT_PHONESTAND().text, where: 'top' },
   colors: { ...DEFAULT_PHONESTAND().colors },
@@ -215,6 +215,12 @@ export function canOpenerSolids(input = {}, { logoImage = null, shapeImage = nul
     }
     let body = o(H.extrudeZ(S, outline, 0, T).subtract(slot));
     body = o(body.subtract(cuts));
+    if (a.mount === 'external' && a.kind !== 'lateral') {
+      // Keep the eyelet thin enough for a split ring or folded ribbon to pass around it.
+      const outside = o(outline.subtract(original));
+      const relief = H.extrudeZ(S, outside, 3.5, T + 1);
+      body = o(body.subtract(relief));
+    }
     if (art.top && mode !== 'relief') {
       const recess = H.extrudeZ(S, o(art.top.cs.simplify(1e-6)), T - sink, T + 1);
       body = o(body.subtract(recess));

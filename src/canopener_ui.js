@@ -18,7 +18,6 @@ const PRESETS = {
   large: { kind: 'round', diameter: 7, slotWidth: 8 },
   cord: { kind: 'lateral', diameter: 3.2, slotWidth: 8 },
   ribbon: { kind: 'slot', diameter: 3.2, slotWidth: 10 },
-  double: { kind: 'double-horizontal', diameter: 3.2, slotWidth: 8 },
 };
 
 export class CanOpenerStudio {
@@ -63,13 +62,13 @@ export class CanOpenerStudio {
         <section class="card">
           <h3>2. Enganche del llavero</h3>
           ${select('Construcción', 'attachment.mount', [['integrated', 'Agujeros en la figura'], ['external', 'Argolla exterior unida'], ['separate', 'Conector impreso aparte']])}
-          <label class="row">Medida orientativa <select data-r="preset"><option value="custom">Personalizada</option><option value="small">Anillo pequeño · agujero Ø4,5</option><option value="large">Anillo grande · agujero Ø7</option><option value="cord">Hilo · Ø3,2 y entrada lateral</option><option value="ribbon">Cinta pequeña · ranura 10 × 3,2</option><option value="double">Dos agujeros · Ø3,2</option></select></label>
-          ${select('Perforación', 'attachment.kind', [['round', 'Un agujero redondo'], ['double-horizontal', 'Dos agujeros horizontales'], ['double-vertical', 'Dos agujeros verticales'], ['slot', 'Ranura para cinta'], ['lateral', 'Vertical + entrada lateral']])}
+          <label class="row">Medida orientativa <select data-r="preset"><option value="custom">Personalizada</option><option value="small">Anillo pequeño · agujero Ø4,5</option><option value="large">Anillo grande · agujero Ø7</option><option value="cord">Cordón fino · paso lateral Ø3,2</option><option value="ribbon">Cinta · ranura 10 × 3,2</option></select></label>
+          ${select('Perforación', 'attachment.kind', [['round', 'Anillo metálico · ojal redondo'], ['lateral', 'Hilo o cordón · entrada lateral'], ['slot', 'Cinta · ranura alargada'], ['double-horizontal', 'Dos agujeros horizontales (anterior)'], ['double-vertical', 'Dos agujeros verticales (anterior)']])}
           ${select('Posición en la figura', 'attachment.position', [['left', 'Arriba a la izquierda'], ['center', 'Arriba al centro'], ['right', 'Arriba a la derecha']])}
           ${number('Diámetro / alto del agujero (mm)', 'attachment.diameter', 'De 3 a 9 mm. Para el lateral se conservan al menos 1,5 mm arriba y abajo.')}
           <div data-r="slotSize">${number('Ancho de la ranura de cinta (mm)', 'attachment.slotWidth', 'De 6 a 16 mm; no menor que el alto.')}</div>
           ${number('Pared alrededor (mm)', 'attachment.wall', 'Mínimo 2,5 mm de material alrededor de los agujeros.')}
-          <div class="small muted">La medida es del agujero, no del diámetro exterior del anillo. El conector aparte necesita una argolla o hilo adicional para unirlo al cuerpo.</div>
+          <div class="small muted">Para anillo, pásalo por el ojal y alrededor del borde. Para hilo, pasa un lazo por la entrada lateral y sácalo por el agujero superior. Para cinta, pásala por la ranura y vuelve sobre sí misma. La argolla exterior para anillo o cinta tiene 3,5 mm de grosor; comprueba que tu anillo pueda rodear el borde. El conector aparte requiere una argolla o hilo adicional.</div>
         </section>
         <section class="card">
           <h3>3. Logo y texto</h3>

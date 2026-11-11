@@ -28,7 +28,7 @@ module.exports = async ({ win, run, shot, wait }) => {
   ok(await run(`(() => { const card=document.querySelector('[data-mod="canopener"]'); if(!card)return false; card.click(); return true; })()`), 'the standalone opener opens from its home card');
   ok(await until(`!!window.__r3d.canopener.res && !window.__r3d.canopener.stale`), 'the default heart is generated with a functional slot');
   const initial = await info();
-  ok(initial.cfg.shape === 'heart' && initial.cfg.thickness === 8 && initial.info.opener && initial.info.attachment.kind === 'lateral', 'the 8 mm heart has a slot and perpendicular attachment openings');
+  ok(initial.cfg.shape === 'heart' && initial.cfg.thickness === 8 && initial.info.opener && initial.info.attachment.kind === 'round' && initial.info.attachment.mount === 'external', 'the default heart has a slot and an external ring eyelet');
   await wait(600); await shot(path.join(dir, 'canopener-heart.png'));
 
   await set('shape', 'star');
