@@ -31,6 +31,10 @@ module.exports = async ({ win, run, shot, wait }) => {
   ok(initial.cfg.shape === 'heart' && initial.cfg.thickness === 8 && initial.info.opener && initial.info.attachment.kind === 'round' && initial.info.attachment.mount === 'external', 'the default heart has a slot and an external ring eyelet');
   await wait(600); await shot(path.join(dir, 'canopener-heart.png'));
 
+  await run(`(() => { const el=${q('[data-r="preset"]')}; el.value='cord'; el.dispatchEvent(new Event('change',{bubbles:true})); })()`);
+  ok(await until(`window.__r3d.canopener.res?.cfg.attachment.kind === 'cord-loop' && !window.__r3d.canopener.stale`), 'the cord preset generates two connected holes');
+  await run(`(() => { const el=${q('[data-r="preset"]')}; el.value='small'; el.dispatchEvent(new Event('change',{bubbles:true})); })()`);
+  ok(await until(`window.__r3d.canopener.res?.cfg.attachment.kind === 'round' && window.__r3d.canopener.res.cfg.attachment.wall === 1.5 && !window.__r3d.canopener.stale`), 'the small ring preset creates a narrow rim');
   await set('shape', 'star');
   ok(await until(`window.__r3d.canopener.res?.cfg.shape === 'star' && !window.__r3d.canopener.stale`), 'selecting a figure updates the preview automatically');
   await set('attachment.kind', 'double-horizontal');

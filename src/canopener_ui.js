@@ -14,9 +14,9 @@ const fileBase = (s) => String(s || 'destapador').replace(/[<>:"/\\|?*\x00-\x1f]
 const get = (o, k) => k.split('.').reduce((a, p) => a?.[p], o);
 const set = (o, k, v) => { const p = k.split('.'), last = p.pop(); p.reduce((a, x) => (a[x] ??= {}), o)[last] = v; };
 const PRESETS = {
-  small: { kind: 'round', diameter: 4.5, slotWidth: 8 },
-  large: { kind: 'round', diameter: 7, slotWidth: 8 },
-  cord: { kind: 'lateral', diameter: 3.2, slotWidth: 8 },
+  small: { mount: 'external', kind: 'round', diameter: 3, wall: 1.5, slotWidth: 8 },
+  large: { mount: 'external', kind: 'round', diameter: 5, wall: 2.5, slotWidth: 8 },
+  cord: { mount: 'external', kind: 'cord-loop', diameter: 3.2, wall: 2.5, slotWidth: 8 },
   ribbon: { kind: 'slot', diameter: 3.2, slotWidth: 10 },
 };
 
@@ -62,13 +62,13 @@ export class CanOpenerStudio {
         <section class="card">
           <h3>2. Enganche del llavero</h3>
           ${select('Construcción', 'attachment.mount', [['integrated', 'Agujeros en la figura'], ['external', 'Argolla exterior unida'], ['separate', 'Conector impreso aparte']])}
-          <label class="row">Medida orientativa <select data-r="preset"><option value="custom">Personalizada</option><option value="small">Anillo pequeño · agujero Ø4,5</option><option value="large">Anillo grande · agujero Ø7</option><option value="cord">Cordón fino · paso lateral Ø3,2</option><option value="ribbon">Cinta · ranura 10 × 3,2</option></select></label>
-          ${select('Perforación', 'attachment.kind', [['round', 'Anillo metálico · ojal redondo'], ['lateral', 'Hilo o cordón · entrada lateral'], ['slot', 'Cinta · ranura alargada'], ['double-horizontal', 'Dos agujeros horizontales (anterior)'], ['double-vertical', 'Dos agujeros verticales (anterior)']])}
+          <label class="row">Medida orientativa <select data-r="preset"><option value="custom">Personalizada</option><option value="small">Anillo pequeño · ojal Ø3, pared 1,5</option><option value="large">Anillo grande · ojal Ø5, pared 2,5</option><option value="cord">Lazo de hilo · dos entradas conectadas Ø3,2</option><option value="ribbon">Cinta · ranura 10 × 3,2</option></select></label>
+          ${select('Perforación', 'attachment.kind', [['round', 'Anillo metálico · ojal redondo'], ['cord-loop', 'Lazo fino · dos agujeros conectados'], ['lateral', 'Hilo · entrada lateral y superior'], ['slot', 'Cinta · ranura alargada'], ['double-horizontal', 'Dos agujeros horizontales (anterior)'], ['double-vertical', 'Dos agujeros verticales (anterior)']])}
           ${select('Posición en la figura', 'attachment.position', [['left', 'Arriba a la izquierda'], ['center', 'Arriba al centro'], ['right', 'Arriba a la derecha']])}
           ${number('Diámetro / alto del agujero (mm)', 'attachment.diameter', 'De 3 a 9 mm. Para el lateral se conservan al menos 1,5 mm arriba y abajo.')}
           <div data-r="slotSize">${number('Ancho de la ranura de cinta (mm)', 'attachment.slotWidth', 'De 6 a 16 mm; no menor que el alto.')}</div>
-          ${number('Pared alrededor (mm)', 'attachment.wall', 'Mínimo 2,5 mm de material alrededor de los agujeros.')}
-          <div class="small muted">Para anillo, pásalo por el ojal y alrededor del borde. Para hilo, pasa un lazo por la entrada lateral y sácalo por el agujero superior. Para cinta, pásala por la ranura y vuelve sobre sí misma. La argolla exterior para anillo o cinta tiene 3,5 mm de grosor; comprueba que tu anillo pueda rodear el borde. El conector aparte requiere una argolla o hilo adicional.</div>
+          ${number('Pared alrededor (mm)', 'attachment.wall', 'De 1,5 a 5 mm de material alrededor del agujero.')}
+          <div class="small muted">Para anillo, comprueba que pueda rodear el espesor y la pared del ojal. Para el lazo fino, pasa el hilo por un agujero y sácalo por el otro mediante el canal interior. Para cinta, pásala por la ranura y vuelve sobre sí misma. La argolla exterior para anillo o cinta tiene 3,5 mm de grosor; comprueba que tu anillo pueda rodear el borde. El conector aparte requiere una argolla o hilo adicional.</div>
         </section>
         <section class="card">
           <h3>3. Logo y texto</h3>

@@ -41,14 +41,14 @@ export function normalizeCanOpener(input = {}) {
   const shape = cfg.shape === undefined ? d.shape : cfg.shape;
   if (!CAN_OPENER_SHAPES.some((s) => s.id === shape)) throw new Error('Elige una forma válida.');
   if (!['integrated', 'external', 'separate'].includes(a.mount)) throw new Error('Elige un tipo de enganche válido.');
-  if (!['round', 'double-horizontal', 'double-vertical', 'slot', 'lateral'].includes(a.kind)) throw new Error('Elige una forma de agujero válida.');
+  if (!['round', 'double-horizontal', 'double-vertical', 'slot', 'lateral', 'cord-loop'].includes(a.kind)) throw new Error('Elige una forma de agujero válida.');
   if (!['left', 'center', 'right'].includes(a.position)) throw new Error('Elige una posición válida para el enganche.');
   const thickness = measure(cfg.thickness, d.thickness, 6, 12, 'Grosor');
   a.diameter = measure(a.diameter, d.attachment.diameter, 3, 9, 'Diámetro del agujero');
   a.slotWidth = measure(a.slotWidth, d.attachment.slotWidth, 6, 16, 'Ancho de la ranura para cinta');
-  a.wall = measure(a.wall, d.attachment.wall, 2.5, 5, 'Pared alrededor del agujero');
+  a.wall = measure(a.wall, d.attachment.wall, 1.5, 5, 'Pared alrededor del agujero');
   if (a.kind === 'slot' && a.slotWidth < a.diameter) throw new Error('La ranura para cinta debe ser más ancha que su alto.');
-  if (a.kind === 'lateral' && a.diameter > thickness - 3) throw new Error('El agujero lateral necesita al menos 1,5 mm arriba y abajo: reduce su diámetro o aumenta el grosor.');
+  if ((a.kind === 'lateral' || a.kind === 'cord-loop') && a.diameter > thickness - 3) throw new Error('El agujero lateral necesita al menos 1,5 mm arriba y abajo: reduce su diámetro o aumenta el grosor.');
   const logo = { ...shared.logo, where: 'top' }, text = { ...shared.text, where: 'top' };
   const sink = logo.mode === 'flat' ? logo.flatDepth : logo.mode === 'engrave' ? logo.depth : 0;
   if (thickness - sink < 4.6) throw new Error('El logo hundido dejaría muy poco techo sobre la ranura: aumenta el grosor o reduce la profundidad.');
@@ -89,6 +89,7 @@ function shapeOutline(S, cfg, image, warnings) {
 
 function holeLayout(kind, diameter, slotWidth, wall) {
   const r = diameter / 2, gap = diameter + wall;
+  if (kind === 'cord-loop') return { centers: [[-gap / 2, 0], [gap / 2, 0]], r, cordLoop: true };
   if (kind === 'double-horizontal') return { centers: [[-gap / 2, 0], [gap / 2, 0]], r };
   if (kind === 'double-vertical') return { centers: [[0, -gap / 2], [0, gap / 2]], r };
   if (kind === 'slot') {
@@ -127,6 +128,13 @@ function lateralCut(S, center, endY, diameter, thickness) {
     .translate([center[0], center[1], thickness / 2]));
 }
 
+function cordBridge(S, centers, position, diameter, thickness) {
+  const { o, M } = S;
+  const left = centers[0][0] + position[0], right = centers[1][0] + position[0];
+  return o(o(o(M.cylinder(right - left + 0.2, diameter / 2, diameter / 2, 64)).rotate([0, 90, 0]))
+    .translate([left - 0.1, centers[0][1] + position[1], thickness / 2]));
+}
+
 function makeConnector(S, layout, cfg, bodyBounds) {
   const { o, CS } = S, a = cfg.attachment;
   const left = holeLayout('round', LINK_DIAMETER, 8, a.wall);
@@ -139,6 +147,7 @@ function makeConnector(S, layout, cfg, bodyBounds) {
   ]));
   const holes = o(CS.union([footprint(S, left), footprint(S, right)]));
   let solid = H.extrudeZ(S, o(outer.subtract(holes)), 0, cfg.thickness);
+  if (layout.cordLoop) solid = o(solid.subtract(cordBridge(S, right.centers, [0, 0], a.diameter, cfg.thickness)));
   if (layout.lateral) {
     const center = right.centers[0], end = outer.bounds().max[1] + 1;
     solid = o(solid.subtract(lateralCut(S, center, end, a.diameter, cfg.thickness)));
@@ -201,6 +210,7 @@ export function canOpenerSolids(input = {}, { logoImage = null, shapeImage = nul
       sideCut = lateralCut(S, position, end, a.diameter, T);
       cuts = o(cuts.add(sideCut));
     }
+    if (layout.cordLoop) cuts = o(cuts.add(cordBridge(S, layout.centers, position, a.diameter, T)));
     const collision = o(slot.intersect(cuts));
     if (collision.volume() > 0.001) throw new Error('La ranura del abre latas se cruza con el enganche: cambia el lado o la posición.');
     const avoid = { fit: o(holeCS.offset(1.6, 'Round', 2, 48)), clip: o(holeCS.offset(1, 'Round', 2, 48)) };
@@ -215,7 +225,7 @@ export function canOpenerSolids(input = {}, { logoImage = null, shapeImage = nul
     }
     let body = o(H.extrudeZ(S, outline, 0, T).subtract(slot));
     body = o(body.subtract(cuts));
-    if (a.mount === 'external' && a.kind !== 'lateral') {
+    if (a.mount === 'external' && a.kind !== 'lateral' && a.kind !== 'cord-loop') {
       // Keep the eyelet thin enough for a split ring or folded ribbon to pass around it.
       const outside = o(outline.subtract(original));
       const relief = H.extrudeZ(S, outside, 3.5, T + 1);
@@ -237,7 +247,7 @@ export function canOpenerSolids(input = {}, { logoImage = null, shapeImage = nul
       }
       warnings.push('El conector se imprime aparte; únelo al destapador con una argolla o hilo adicional, no incluido.');
     }
-    if (layout.lateral || (connector && selected.lateral)) warnings.push('El agujero lateral y la ranura del abre latas tienen puentes: revisa el laminado y realiza una prueba física.');
+    if (layout.lateral || layout.cordLoop || (connector && (selected.lateral || selected.cordLoop))) warnings.push('El agujero lateral y la ranura del abre latas tienen puentes: revisa el laminado y realiza una prueba física.');
     const used = new Set(artPieces.filter((p) => p.kind === 'logo').map((p) => p.idx));
     const logo = art.palette?.map((e) => ({ ...e, used: used.has(e.idx) || (mode === 'engrave' && !art.skip.has(e.idx)), skipped: !e.on ? 'off' : art.skip.has(e.idx) ? 'body' : null })) || null;
     const bbox = body.boundingBox(), info = {

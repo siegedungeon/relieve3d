@@ -94,6 +94,27 @@ test('the external ring eyelet has a through hole and a thin outer rim', () => {
   } finally { s.dispose(); }
 });
 
+test('the cord loop has two separate entrances joined by an open internal channel', () => {
+  for (const mount of ['external', 'integrated', 'separate']) {
+    const s = canOpenerSolids({ attachment: { mount, kind: 'cord-loop', diameter: 3.2, wall: 2.5 } });
+    try {
+      const holes = mount === 'separate' ? s.info.attachment.connectorHoles.slice(1) : s.info.attachment.bodyHoles;
+      const solid = mount === 'separate' ? s.connector : s.body;
+      assert.equal(holes.length, 2);
+      const [a, b] = holes;
+      const cylinder = Manifold.cylinder(b.x - a.x, 1.4, 1.4, 48);
+      const rotated = cylinder.rotate([0, 90, 0]);
+      const probe = rotated.translate([a.x, a.y, s.cfg.thickness / 2]);
+      try { assert.ok(overlap(solid, probe) < 1e-3, mount + ': channel joins both holes'); }
+      finally { cylinder.delete(); rotated.delete(); probe.delete(); }
+      const wall = Manifold.cylinder(1, 0.2, 0.2, 32);
+      const top = wall.translate([(a.x + b.x) / 2, a.y, s.cfg.thickness - 1]);
+      try { assert.ok(overlap(solid, top) > 0.05, mount + ': material remains above the channel'); }
+      finally { wall.delete(); top.delete(); }
+    } finally { s.dispose(); }
+  }
+});
+
 test('the perpendicular opening reaches the outside and left-hand narrow shapes gain a functional lip', () => {
   const s = canOpenerSolids({ shape: 'heart', attachment: { mount: 'integrated', kind: 'lateral', diameter: 4 } });
   try {
