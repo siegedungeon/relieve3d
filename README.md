@@ -60,7 +60,7 @@ Los módulos de texto usan las fuentes más populares y las instaladas en el equ
 
 ### Destapador llavero
 
-En **Inicio → Destapador llavero**, elige una figura o carga una silueta, ajusta el tamaño y el lado de la ranura y añade el logo del cliente. Selecciona un ojal redondo para anillo, dos agujeros unidos por un canal interior para un lazo de hilo, un paso lateral para hilo o una ranura para cinta. Puedes usar un enganche integrado, una argolla exterior o un conector imprimible separado. La argolla exterior para anillo o cinta tiene 3,5 mm de grosor. Comprueba que el anillo pueda rodear el borde y que el hilo o la cinta pasen por la abertura. Guarda el proyecto editable para recuperarlo o exporta el 3MF estándar o el proyecto Bambu A1 con sus colores. Comprueba el ajuste y la resistencia con una impresión de prueba.
+En **Inicio → Destapador llavero**, elige una figura o carga una silueta, ajusta el tamaño y el lado de la ranura y añade el logo del cliente. En enganche, elige anillo pequeño, anillo grande, correa de hilo o cinta. La correa de hilo pasa por un único ojal: introduce el lazo y pasa la correa por él. Ajusta las medidas y comprueba el ajuste y la resistencia con una impresión de prueba. Guarda el proyecto editable o exporta el 3MF estándar o el proyecto Bambu A1 con sus colores.
 
 Las pruebas específicas se ejecutan con `npm run test:canopener`. En Windows con Bambu Studio, `npm run test:canopener:print` también lamina el archivo exportado.
 ### Argolla para un 3MF existente

@@ -16,8 +16,8 @@ const set = (o, k, v) => { const p = k.split('.'), last = p.pop(); p.reduce((a, 
 const PRESETS = {
   small: { mount: 'external', kind: 'round', diameter: 3, wall: 1.5, slotWidth: 8 },
   large: { mount: 'external', kind: 'round', diameter: 5, wall: 2.5, slotWidth: 8 },
-  cord: { mount: 'external', kind: 'cord-loop', diameter: 3.2, wall: 2.5, slotWidth: 8 },
-  ribbon: { kind: 'slot', diameter: 3.2, slotWidth: 10 },
+  cord: { mount: 'external', kind: 'round', diameter: 3.2, wall: 2, slotWidth: 8 },
+  ribbon: { mount: 'external', kind: 'slot', diameter: 3.2, wall: 2.5, slotWidth: 10 },
 };
 
 export class CanOpenerStudio {
@@ -61,14 +61,12 @@ export class CanOpenerStudio {
         </section>
         <section class="card">
           <h3>2. Enganche del llavero</h3>
-          ${select('Construcción', 'attachment.mount', [['integrated', 'Agujeros en la figura'], ['external', 'Argolla exterior unida'], ['separate', 'Conector impreso aparte']])}
-          <label class="row">Medida orientativa <select data-r="preset"><option value="custom">Personalizada</option><option value="small">Anillo pequeño · ojal Ø3, pared 1,5</option><option value="large">Anillo grande · ojal Ø5, pared 2,5</option><option value="cord">Lazo de hilo · dos entradas conectadas Ø3,2</option><option value="ribbon">Cinta · ranura 10 × 3,2</option></select></label>
-          ${select('Perforación', 'attachment.kind', [['round', 'Anillo metálico · ojal redondo'], ['cord-loop', 'Lazo fino · dos agujeros conectados'], ['lateral', 'Hilo · entrada lateral y superior'], ['slot', 'Cinta · ranura alargada'], ['double-horizontal', 'Dos agujeros horizontales (anterior)'], ['double-vertical', 'Dos agujeros verticales (anterior)']])}
+          <label class="row">Tipo de enganche <select data-r="preset"><option value="custom">Configuración actual</option><option value="small">Anillo pequeño</option><option value="large">Anillo grande</option><option value="cord">Correa de hilo</option><option value="ribbon">Cinta</option></select></label>
           ${select('Posición en la figura', 'attachment.position', [['left', 'Arriba a la izquierda'], ['center', 'Arriba al centro'], ['right', 'Arriba a la derecha']])}
           ${number('Diámetro / alto del agujero (mm)', 'attachment.diameter', 'De 3 a 9 mm. Para el lateral se conservan al menos 1,5 mm arriba y abajo.')}
           <div data-r="slotSize">${number('Ancho de la ranura de cinta (mm)', 'attachment.slotWidth', 'De 6 a 16 mm; no menor que el alto.')}</div>
           ${number('Pared alrededor (mm)', 'attachment.wall', 'De 1,5 a 5 mm de material alrededor del agujero.')}
-          <div class="small muted">Para anillo, comprueba que pueda rodear el espesor y la pared del ojal. Para el lazo fino, pasa el hilo por un agujero y sácalo por el otro mediante el canal interior. Para cinta, pásala por la ranura y vuelve sobre sí misma. La argolla exterior para anillo o cinta tiene 3,5 mm de grosor; comprueba que tu anillo pueda rodear el borde. El conector aparte requiere una argolla o hilo adicional.</div>
+          <div class="small muted">La correa de hilo pasa por un solo ojal: introduce el lazo y pasa la correa por él. Elige un tamaño que permita pasar tu anillo o cinta y comprueba el ajuste con una impresión de prueba.</div>
         </section>
         <section class="card">
           <h3>3. Logo y texto</h3>
@@ -165,6 +163,8 @@ export class CanOpenerStudio {
       const value = get(this.cfg, el.dataset.k);
       if (el.type === 'checkbox') el.checked = !!value; else el.value = value ?? '';
     }
+    this.$('preset').value = Object.keys(PRESETS).find((key) =>
+      Object.entries(PRESETS[key]).every(([field, value]) => this.cfg.attachment[field] === value)) || 'custom';
     this.$('logoInfo').innerHTML = this.logoSrc
       ? `<img src="${esc(this.logoSrc)}" alt="Logo" /><span class="small">${esc(this.logoName || 'Logo')}</span><button class="btn mini" data-a="clearLogo">✕</button>`
       : '<span class="small muted">Sin logo: puedes cargar uno o escribir texto.</span>';

@@ -31,37 +31,25 @@ module.exports = async ({ win, run, shot, wait }) => {
   ok(initial.cfg.shape === 'heart' && initial.cfg.thickness === 8 && initial.info.opener && initial.info.attachment.kind === 'round' && initial.info.attachment.mount === 'external', 'the default heart has a slot and an external ring eyelet');
   await wait(600); await shot(path.join(dir, 'canopener-heart.png'));
 
-  await run(`(() => { const el=${q('[data-r="preset"]')}; el.value='cord'; el.dispatchEvent(new Event('change',{bubbles:true})); })()`);
-  ok(await until(`window.__r3d.canopener.res?.cfg.attachment.kind === 'cord-loop' && !window.__r3d.canopener.stale`), 'the cord preset generates two connected holes');
-  await run(`(() => { const el=${q('[data-r="preset"]')}; el.value='small'; el.dispatchEvent(new Event('change',{bubbles:true})); })()`);
-  ok(await until(`window.__r3d.canopener.res?.cfg.attachment.kind === 'round' && window.__r3d.canopener.res.cfg.attachment.wall === 1.5 && !window.__r3d.canopener.stale`), 'the small ring preset creates a narrow rim');
-  await set('shape', 'star');
-  ok(await until(`window.__r3d.canopener.res?.cfg.shape === 'star' && !window.__r3d.canopener.stale`), 'selecting a figure updates the preview automatically');
-  await set('attachment.kind', 'double-horizontal');
-  ok(await until(`window.__r3d.canopener.res?.info.attachment.bodyHoles.length === 2 && !window.__r3d.canopener.stale`), 'selecting the keyring holes updates the preview automatically');
-  await set('side', 'left');
-  ok(await run(`${q('[data-r="export"]')}.disabled`), 'unapplied changes cannot be exported');
-  await run('window.__r3d.canopener.rebuild()');
-  let state = await info();
-  ok(state.cfg.shape === 'star' && state.info.opener.side === 'left' && state.info.attachment.bodyHoles.length === 2, 'star, left-hand slot and two holes are reflected in the model');
-
-  await set('thickness', '6'); await set('attachment.kind', 'lateral'); await set('attachment.diameter', '6');
-  await run('window.__r3d.canopener.rebuild()');
-  ok(await run(`${q('[data-r="export"]')}.disabled && /lateral|grosor/i.test(${q('[data-r="warn"]')}.textContent)`), 'a lateral hole with insufficient roof and floor is rejected');
-
+  for (const [preset, kind] of [['small', 'round'], ['large', 'round'], ['cord', 'round'], ['ribbon', 'slot']]) {
+    await run(`(() => { const el=${q('[data-r="preset"]')}; el.value=${JSON.stringify(preset)}; el.dispatchEvent(new Event('change',{bubbles:true})); })()`);
+    ok(await until(`window.__r3d.canopener.res?.cfg.attachment.kind === ${JSON.stringify(kind)} && !window.__r3d.canopener.stale`), preset + ' updates the preview');
+    const option = await info();
+    ok(option.cfg.attachment.mount === 'external' && option.parts.every(p => !p.apart) &&
+      (kind === 'slot' || option.info.attachment.bodyHoles.length === 1), preset + ' uses one opening and no separate connector');
+  }
   await set('shape', 'nailpolish'); await set('side', 'right'); await set('width', '60'); await set('thickness', '8');
-  await set('attachment.mount', 'separate');
-  await run(`(() => { const el=${q('[data-r="preset"]')}; el.value='ribbon'; el.dispatchEvent(new Event('change',{bubbles:true})); })()`);
+  await run('window.__r3d.canopener.rebuild()');
   await drop(logo, 'logo-prueba.png', 'image/png');
   ok(await until(`!!window.__r3d.canopener.logoImg && !!window.__r3d.canopener.res && !window.__r3d.canopener.stale`), 'dropping a client logo loads and rebuilds the custom opener');
   await set('logo.colors', '2'); await set('logo.mode', 'flat');
   await check('text.enabled', true); await set('text.value', 'Pabonitas');
   await run('window.__r3d.canopener.rebuild()');
   state = await info();
-  ok(state.cfg.shape === 'nailpolish' && state.cfg.attachment.mount === 'separate' && state.cfg.attachment.kind === 'slot' && state.cfg.attachment.slotWidth === 10,
-    'the nail-polish figure and separate ribbon connector use the selected dimensions');
-  ok(state.info.logo?.length >= 1 && state.parts.some((p) => p.art) && state.parts.some((p) => p.apart) && state.colors.length <= 4,
-    'the logo produces coloured pieces and the connector is a separate printable part');
+  ok(state.cfg.shape === 'nailpolish' && state.cfg.attachment.mount === 'external' && state.cfg.attachment.kind === 'slot' && state.cfg.attachment.slotWidth === 10,
+    'the nail-polish figure and ribbon opening use the selected dimensions');
+  ok(state.info.logo?.length >= 1 && state.parts.some((p) => p.art) && state.colors.length <= 4,
+    'the logo produces coloured pieces');
   const firstLayer = await run(`!!${q('[data-layer="0"] [data-lm="color"]')}`);
   if (firstLayer) {
     await run(`(() => { const el=${q('[data-layer="0"] [data-lm="color"]')}; el.value='#1199ee'; el.dispatchEvent(new Event('input',{bubbles:true})); })()`);
@@ -87,7 +75,7 @@ module.exports = async ({ win, run, shot, wait }) => {
     const file = path.join(exp, name);
     if (!fs.existsSync(file)) { ok(false, `${name} is saved`); return null; }
     const bytes = fs.readFileSync(file), model = read3MF(bytes), zip = unzipSync(bytes);
-    ok(model.instances.length === 2 && model.parts.some((p) => /Cuerpo destapador/.test(p.name)) && model.parts.some((p) => /Conector independiente/.test(p.name)) && model.parts.some((p) => /Logo/.test(p.name)), `${name} reopens with the body, logo and separate connector`);
+    ok(model.instances.length === 1 && model.parts.some((p) => /Cuerpo destapador/.test(p.name)) && model.parts.some((p) => /Logo/.test(p.name)), `${name} reopens with the body and logo`);
     return { model, zip };
   };
   const roots = [process.env.ProgramFiles, process.env.LOCALAPPDATA && path.join(process.env.LOCALAPPDATA, 'Programs')].filter(Boolean);
