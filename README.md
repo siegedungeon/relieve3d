@@ -40,6 +40,7 @@ Regresión del tema: `npm run test:theme` verifica persistencia, navegación, co
 | Módulo | Qué hace |
 |---|---|
 | Llavero | Módulo completo para marcas y merchandising (ver abajo) |
+| Destapador llavero | Crea un destapador personalizado con figura, logo y enganche para llavero (ver abajo) |
 | Argolla para 3MF | Agrega una argolla a un objeto de un 3MF existente y guarda una copia, conservando las mallas y medidas originales (ver abajo) |
 | Clicker desde imagen | Crea una tapa con silueta y relieve y una base separada para un interruptor mecánico tipo MX, no incluido (ver abajo) |
 | Árbol navideño de nombres | Estilo del modelo de referencia: tronco con año o texto, nombres entre barras finas y estrella, corazón, círculo o silueta propia. Escala uniforme dentro del alto/ancho máximo; grosor que se afina por igual delante y detrás para que quede vertical y estable; guías ocultas invisibles por delante y por detrás. Proyectos `.r3t`, vista armada y placas monocolor con STL por pieza |
@@ -57,6 +58,11 @@ Regresión del tema: `npm run test:theme` verifica persistencia, navegación, co
 
 Los módulos de texto usan las fuentes más populares y las instaladas en el equipo, con contorno/bordeado opcional.
 
+### Destapador llavero
+
+En **Inicio → Destapador llavero**, elige una figura o carga una silueta, ajusta el tamaño y el lado de la ranura y añade el logo del cliente. Selecciona agujeros integrados, una argolla exterior o un conector imprimible separado, y ajusta sus medidas. Guarda el proyecto editable para recuperarlo o exporta el 3MF estándar o el proyecto Bambu A1 con sus colores. Comprueba el ajuste y la resistencia con una impresión de prueba.
+
+Las pruebas específicas se ejecutan con `npm run test:canopener`. En Windows con Bambu Studio, `npm run test:canopener:print` también lamina el archivo exportado.
 ### Argolla para un 3MF existente
 
 En **Inicio → Argolla para 3MF**, abre o arrastra una placa 3MF imprimible y elige

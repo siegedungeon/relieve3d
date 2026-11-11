@@ -19,6 +19,7 @@ import { HabladorStudio } from './hablador_ui.js';
 import { ColorSplitStudio } from './colorsplit_ui.js';
 import { Keyring3MFStudio } from './keyring_3mf_ui.js';
 import { ClickerStudio } from './clicker_ui.js';
+import { CanOpenerStudio } from './canopener_ui.js';
 import { PhoneStandStudio } from './phonestand_ui.js';
 import { NameTreeStudio } from './name_tree_ui.js';
 import { ColoringStudio } from './coloring_ui.js';
@@ -219,7 +220,7 @@ function toast(msg, error = false) {
 // ---------------------------------------------------------------- loading & processing
 async function loadImageFile(file) {
   if (!file) return;
-  if (/\.(r3d|r3s|r3p|r3t|json)$/i.test(file.name)) return openProjectFile(file);
+  if (/\.(r3d|r3s|r3p|r3t|r3o|json)$/i.test(file.name)) return openProjectFile(file);
   if (!file.type.startsWith('image/') && !/\.(png|jpe?g|webp|bmp|gif)$/i.test(file.name)) {
     toast('Formato no soportado: ' + file.name, true);
     return;
@@ -1076,7 +1077,7 @@ async function openProjectFile(file) {
   try {
     if (/\.r3c$/i.test(file.name)) {
       if (await coloring.loadFile(file)) {
-        nameTree.close(); inbox.close();
+        nameTree.close(); inbox.close(); canopener.close();
         hideHome(); $('studio').hidden = true; $('hablador').hidden = true; $('colorsplit').hidden = true; $('phonestand').hidden = true;
       }
       return;
@@ -1084,32 +1085,39 @@ async function openProjectFile(file) {
     const j = JSON.parse(await file.text());
     if (j.app === 'Relieve3D-ArbolNombres') {
       await nameTree.openProject(j);
-      laser.close(); quote.close(); coloring.close(); tiktok.close(); inbox.close(); hideHome();
+      laser.close(); quote.close(); coloring.close(); tiktok.close(); inbox.close(); canopener.close(); hideHome();
       $('studio').hidden = true; $('hablador').hidden = true; $('colorsplit').hidden = true; $('phonestand').hidden = true;
       return;
     }
     if (j.app === 'Relieve3D-Laser') {
-      laser.openProject(j); nameTree.close(); quote.close(); coloring.close(); inbox.close(); hideHome();
+      laser.openProject(j); nameTree.close(); quote.close(); coloring.close(); inbox.close(); canopener.close(); hideHome();
       $('studio').hidden = true; $('hablador').hidden = true; $('colorsplit').hidden = true; $('phonestand').hidden = true; return;
     }
     if (j.app === 'Relieve3D-Coloring') {
       if (await coloring.openProject(j)) {
-        nameTree.close(); inbox.close();
+        nameTree.close(); inbox.close(); canopener.close();
         hideHome(); $('studio').hidden = true; $('hablador').hidden = true; $('colorsplit').hidden = true; $('phonestand').hidden = true;
       }
       return;
     }
+    if (j.app === 'Relieve3D-Destapador') {
+      await canopener.openProject(j);
+      keyring3mf.close(); clicker.close(); nameTree.close(); laser.close(); quote.close(); coloring.close(); tiktok.close(); inbox.close();
+      hideHome(); $('studio').hidden = true; $('hablador').hidden = true; $('colorsplit').hidden = true; $('phonestand').hidden = true;
+      return;
+    }
     if (['Relieve3D', 'Relieve3D-Studio', 'Relieve3D-Hablador', 'Relieve3D-SoporteCelular'].includes(j.app)) { coloring.close(); inbox.close(); }
-    if (j.app === 'Relieve3D-Studio') { hideHome(); $('phonestand').hidden = true; studio.openProject(j); nameTree.close(); return; }
-    if (j.app === 'Relieve3D-Hablador') { hideHome(); $('phonestand').hidden = true; await hablador.openProject(j); nameTree.close(); return; }
+    if (j.app === 'Relieve3D-Studio') { hideHome(); $('phonestand').hidden = true; studio.openProject(j); nameTree.close(); canopener.close(); return; }
+    if (j.app === 'Relieve3D-Hablador') { hideHome(); $('phonestand').hidden = true; await hablador.openProject(j); nameTree.close(); canopener.close(); return; }
     if (j.app === 'Relieve3D-SoporteCelular') {
       // validates before touching the screen, so a broken file leaves the current view as it was
       await phonestand.openProject(j);
-      nameTree.close();
+      nameTree.close(); canopener.close();
       hideHome(); $('studio').hidden = true; $('hablador').hidden = true; $('colorsplit').hidden = true;
       return;
     }
     if (j.app !== 'Relieve3D') throw new Error('No es un proyecto de Relieve3D');
+    canopener.close();
     clearTimeout(textTimer); ++textSeq; textError = '';
     S.module = j.state.module || 'logo';
     S.text = { ...DEFAULT_TEXT(), ...(j.state.text || {}) };
@@ -1277,7 +1285,7 @@ document.addEventListener('drop', (e) => {
   if (S.image || S.source === 'text') dz.classList.add('hidden');
   const f = e.dataTransfer.files[0];
   if (!f) return;
-  if (/\.(r3c|r3l|r3t)$/i.test(f.name)) { openProjectFile(f); return; }
+  if (/\.(r3c|r3l|r3t|r3o)$/i.test(f.name)) { openProjectFile(f); return; }
   if (!$('nameTree').hidden) {
     if (/\.(r3d|r3s|r3h|r3p|json)$/i.test(f.name)) openProjectFile(f);
     else nameTree.loadShape(f).catch(err => toast(err.message, true));
@@ -1291,6 +1299,7 @@ document.addEventListener('drop', (e) => {
   if (!$('hablador').hidden) { if (/\.(r3h|json)$/i.test(f.name)) openProjectFile(f); else hablador.loadLogo(f); return; }
   if (!$('keyring3mf').hidden) { keyring3mf.loadFile(f); return; }
   if (!$('clicker').hidden) { clicker.loadFile(f); return; }
+  if (!$('canopener').hidden) { canopener.loadLogo(f); return; }
   if (!$('colorsplit').hidden) { colorsplit.loadFile(f); return; }
   if (!$('phonestand').hidden) { if (/\.(r3p|json)$/i.test(f.name)) openProjectFile(f); else phonestand.loadLogo(f); return; }
   if (!$('home').hidden && /\.3mf$/i.test(f.name)) { hideHome(); colorsplit.open().then(() => colorsplit.loadFile(f)); return; }
@@ -1301,7 +1310,7 @@ document.addEventListener('drop', (e) => {
 
 // keyboard
 window.addEventListener('keydown', (e) => {
-  if (isTyping(e) || !$('home').hidden || !$('studio').hidden || !$('hablador').hidden || !$('colorsplit').hidden || !$('keyring3mf').hidden || !$('clicker').hidden || !$('phonestand').hidden || !$('nameTree').hidden || !$('coloring').hidden || !$('quote').hidden || !$('laser').hidden || !$('tiktok').hidden || !$('inbox').hidden) return;
+  if (isTyping(e) || !$('home').hidden || !$('studio').hidden || !$('hablador').hidden || !$('colorsplit').hidden || !$('keyring3mf').hidden || !$('clicker').hidden || !$('canopener').hidden || !$('phonestand').hidden || !$('nameTree').hidden || !$('coloring').hidden || !$('quote').hidden || !$('laser').hidden || !$('tiktok').hidden || !$('inbox').hidden) return;
   const k = e.key.toLowerCase(), ctrl = e.ctrlKey || e.metaKey;
   if (ctrl && k === 'z' && !e.shiftKey) { e.preventDefault(); undo(); }
   else if (ctrl && (k === 'y' || (k === 'z' && e.shiftKey))) { e.preventDefault(); redo(); }
@@ -1888,6 +1897,7 @@ const hablador = new HabladorStudio($('hablador'), { toast, showBusy, hideBusy, 
 const colorsplit = new ColorSplitStudio($('colorsplit'), { toast, showBusy, hideBusy, onBack: () => showHome() });
 const keyring3mf = new Keyring3MFStudio($('keyring3mf'), { toast, showBusy, hideBusy, onBack: () => showHome() });
 const clicker = new ClickerStudio($('clicker'), { toast, showBusy, hideBusy, onBack: () => showHome() });
+const canopener = new CanOpenerStudio($('canopener'), { toast, showBusy, hideBusy, onBack: () => showHome() });
 const phonestand = new PhoneStandStudio($('phonestand'), { toast, showBusy, hideBusy, onBack: () => showHome() });
 const nameTree = new NameTreeStudio($('nameTree'), { toast, onBack: () => showHome() });
 const coloring = new ColoringStudio($('coloring'), { toast, showBusy, hideBusy, onBack: () => showHome() });
@@ -1950,6 +1960,7 @@ async function openLocalLink(id, modo) {
 function showHome() {
   keyring3mf.close();
   clicker.close();
+  canopener.close();
   nameTree.close();
   laser.close();
   quote.close();
@@ -2010,6 +2021,12 @@ async function enterModule(id) {
   const m = moduleDef(id);
   if (id !== 'keyring3mf') keyring3mf.close();
   if (id !== 'clicker') clicker.close();
+  if (id !== 'canopener') canopener.close();
+  if (id === 'canopener') {
+    nameTree.close(); laser.close(); quote.close(); coloring.close(); tiktok.close(); inbox.close(); hideHome();
+    $('studio').hidden = true; $('hablador').hidden = true; $('colorsplit').hidden = true; $('phonestand').hidden = true;
+    await canopener.open(); return;
+  }
   if (id === 'clicker') {
     nameTree.close(); laser.close(); quote.close(); coloring.close(); tiktok.close(); inbox.close(); hideHome();
     $('studio').hidden = true; $('hablador').hidden = true; $('colorsplit').hidden = true; $('phonestand').hidden = true;
@@ -2142,7 +2159,7 @@ if (stUpdate) {
     else if (d.state === 'up-to-date' || d.state === 'error') stUpdate.hidden = true;
   });
 }
-window.__r3d = { S, setSelection, doExport, exportParts, saveProject, openProjectFile, undo, redo, commit, hist, setViewMode, enterModule, applyText, showHome, renderLocalLinks, studio, hablador, colorsplit, keyring3mf, clicker, phonestand, nameTree, coloring, quote, laser, tiktok, inbox, getFeat: () => feat, onSettingChanged, placeRing, loadImageFile, view2d,
+window.__r3d = { S, setSelection, doExport, exportParts, saveProject, openProjectFile, undo, redo, commit, hist, setViewMode, enterModule, applyText, showHome, renderLocalLinks, studio, hablador, colorsplit, keyring3mf, clicker, canopener, phonestand, nameTree, coloring, quote, laser, tiktok, inbox, getFeat: () => feat, onSettingChanged, placeRing, loadImageFile, view2d,
   applyTier, applyComposition, getOrig: () => orig, ringSnap, gramsEstimate, viewer, renderElements };
 
 syncProcInputs();

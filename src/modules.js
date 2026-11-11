@@ -20,6 +20,10 @@ export const MODULES = [
     desc: 'Crea una tapa en relieve y una base para un interruptor mecánico tipo MX a partir de una imagen.',
   },
   {
+    id: 'canopener', group: '3d', icon: '🥫', title: 'Destapador de latas llavero',
+    desc: 'Personaliza la figura, el logo y los agujeros para anillos, hilo o cinta; opción de conector independiente.',
+  },
+  {
     id: 'pencil', group: '3d', icon: '✏️', title: 'Nombres para lápices / lapiceros', source: 'text',
     desc: 'Pega tu listado: nombres Matemasie blancos sobre base morada, sin figuras, con canal de 7.9 mm.',
     cards: ['text', 'base', 'pencil'],

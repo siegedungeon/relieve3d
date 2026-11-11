@@ -1587,3 +1587,9 @@ export function readPhoneStandProject(text) {
   const src = (v) => (typeof v === 'string' && /^data:image\//.test(v) ? v : null);
   return { cfg: normalizePhoneStand(j.cfg), logoSrc: src(j.logoSrc), shapeSrc: src(j.shapeSrc) };
 }
+
+// Shared by the standalone can-tab opener so its shapes, artwork and functional slit match the phone stand.
+export const phoneStandShared = Object.freeze({
+  SHAPE_DEFS, shapeKit, customSilhouette, makeScope, roundRect, circle, extrudeZ, meshGeometry,
+  opening, inside, maxAt, buildArt, placeOpener, openerCutter,
+});

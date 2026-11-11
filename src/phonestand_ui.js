@@ -80,6 +80,7 @@ function svgSized(src, max) {
   }
 }
 const isImageFile = (f) => /^image\//.test(f.type || '') || /\.(png|jpe?g|webp|bmp|gif|svg)$/i.test(f.name || '');
+export { readDataURL, imageDataFrom, isImageFile };
 
 export class PhoneStandStudio {
   constructor(root, cb) {
