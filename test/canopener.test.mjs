@@ -115,6 +115,35 @@ test('the cord loop has two separate entrances joined by an open internal channe
   }
 });
 
+test('edge loop joins two edge openings without cutting through the faces', () => {
+  for (const position of ['center', 'left', 'right', 'side-left', 'side-right']) {
+    const s = canOpenerSolids({ shape: 'circle', attachment: { kind: 'edge-loop', mount: 'integrated', diameter: 3, wall: 2, position } });
+    try {
+      const { angle, center, tops } = s.info.attachment.edgeData;
+      const dx = (s.cfg.attachment.diameter + s.cfg.attachment.wall) / 2;
+      for (const [i, offset] of [-dx, dx].entries()) {
+        const c = Manifold.cylinder(tops[i] - center[1] + 1, 1.3, 1.3, 48);
+        const r = c.rotate([-90, 0, 0]);
+        const t = r.translate([center[0] + offset, center[1], s.cfg.thickness / 2]);
+        const probe = t.rotate([0, 0, -angle]);
+        try { assert.ok(overlap(s.body, probe) < 1e-3, position + ': open edge entrance'); }
+        finally { c.delete(); r.delete(); t.delete(); probe.delete(); }
+      }
+      const c = Manifold.cylinder(2 * dx, 1.3, 1.3, 48);
+      const r = c.rotate([0, 90, 0]);
+      const t = r.translate([center[0] - dx, center[1], s.cfg.thickness / 2]);
+      const probe = t.rotate([0, 0, -angle]);
+      try { assert.ok(overlap(s.body, probe) < 1e-3, position + ': entrances connect'); }
+      finally { c.delete(); r.delete(); t.delete(); probe.delete(); }
+      const face = Manifold.cylinder(1, 0.2, 0.2, 32);
+      const p = face.translate([center[0], center[1], s.cfg.thickness - 1]);
+      const top = p.rotate([0, 0, -angle]);
+      try { assert.ok(overlap(s.body, top) > 0.05, position + ': top face remains closed'); }
+      finally { face.delete(); p.delete(); top.delete(); }
+    } finally { s.dispose(); }
+  }
+});
+
 test('the perpendicular opening reaches the outside and left-hand narrow shapes gain a functional lip', () => {
   const s = canOpenerSolids({ shape: 'heart', attachment: { mount: 'integrated', kind: 'lateral', diameter: 4 } });
   try {
@@ -153,6 +182,7 @@ test('logos use the same multicolour, flat and engraved pipeline and export the 
 });
 
 test('rejects invalid custom silhouettes and unsafe measurements instead of exporting a misleading part', () => {
+  assert.throws(() => canOpenerSolids({ attachment: { kind: 'edge-loop', diameter: 4 }, logo: { mode: 'engrave', depth: 1 } }), /techo|paso/i);
   assert.throws(() => canOpenerSolids({ shape: 'custom' }), /imagen|silueta/i);
   assert.throws(() => canOpenerSolids({ width: 30 }), /ancho/i);
   assert.throws(() => canOpenerSolids({ thickness: 6, logo: { mode: 'engrave', depth: 2 } }), /techo|grosor/i);

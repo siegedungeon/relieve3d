@@ -38,6 +38,16 @@ module.exports = async ({ win, run, shot, wait }) => {
     ok(option.cfg.attachment.mount === 'integrated' && option.parts.every(p => !p.apart) &&
       (kind === 'slot' || option.info.attachment.bodyHoles.length === 1), preset + ' uses one opening and no separate connector');
   }
+  await set('shape', 'circle');
+  await run(`(() => { const el=${q('[data-r="preset"]')}; el.value='edge'; el.dispatchEvent(new Event('change',{bubbles:true})); })()`);
+  for (const position of ['center', 'left', 'right', 'side-left', 'side-right']) {
+    await set('attachment.position', position);
+    ok(await until(`window.__r3d.canopener.res?.cfg.attachment.kind === 'edge-loop' && window.__r3d.canopener.res.cfg.attachment.position === ${JSON.stringify(position)} && !window.__r3d.canopener.stale`), 'edge passage updates at ' + position);
+  }
+  await set('attachment.diameter', '4');
+  await run('window.__r3d.canopener.rebuild()');
+  ok(await run("window.__r3d.canopener.res?.cfg.attachment.diameter === 4 && !window.__r3d.canopener.stale"), 'edge passage uses the custom diameter');
+  await run(`(() => { const el=${q('[data-r="preset"]')}; el.value='ribbon'; el.dispatchEvent(new Event('change',{bubbles:true})); })()`);
   await set('shape', 'nailpolish'); await set('side', 'right'); await set('width', '60'); await set('thickness', '8');
   await run('window.__r3d.canopener.rebuild()');
   await drop(logo, 'logo-prueba.png', 'image/png');

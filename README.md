@@ -60,7 +60,7 @@ Los módulos de texto usan las fuentes más populares y las instaladas en el equ
 
 ### Destapador llavero
 
-En **Inicio → Destapador llavero**, elige una figura o carga una silueta, ajusta el tamaño y el lado de la ranura y añade el logo del cliente. En enganche, elige anillo de llavero, correa de hilo o cinta. El agujero se realiza dentro de la figura. La correa de hilo pasa por un único ojal: introduce el lazo y pasa la correa por él. Ajusta las medidas y comprueba el ajuste y la resistencia con una impresión de prueba. Guarda el proyecto editable o exporta el 3MF estándar o el proyecto Bambu A1 con sus colores.
+En **Inicio → Destapador llavero**, elige una figura o carga una silueta, ajusta el tamaño y el lado de la ranura y añade el logo del cliente. En enganche, elige anillo de llavero, correa de hilo, cinta o paso de hilo en el borde. El paso en el borde tiene dos entradas comunicadas dentro de la figura y permite elegir su posición y diámetro. El agujero se realiza dentro de la figura. La correa de hilo pasa por un único ojal: introduce el lazo y pasa la correa por él. Ajusta las medidas y comprueba el ajuste y la resistencia con una impresión de prueba. Guarda el proyecto editable o exporta el 3MF estándar o el proyecto Bambu A1 con sus colores.
 
 Las pruebas específicas se ejecutan con `npm run test:canopener`. En Windows con Bambu Studio, `npm run test:canopener:print` también lamina el archivo exportado.
 ### Argolla para un 3MF existente
