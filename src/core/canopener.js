@@ -14,7 +14,7 @@ export const CAN_OPENER_SHAPES = [
 export const DEFAULT_CAN_OPENER = () => ({
   name: 'Destapador', shape: 'heart', width: 49, thickness: 8,
   side: 'right',
-  attachment: { mount: 'external', kind: 'round', position: 'left', diameter: 4.5, slotWidth: 8, wall: 2.5 },
+  attachment: { mount: 'integrated', kind: 'round', position: 'left', diameter: 3, slotWidth: 8, wall: 1.5 },
   logo: { ...DEFAULT_PHONESTAND().logo },
   text: { ...DEFAULT_PHONESTAND().text, where: 'top' },
   colors: { ...DEFAULT_PHONESTAND().colors },

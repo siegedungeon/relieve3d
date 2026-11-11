@@ -28,14 +28,14 @@ module.exports = async ({ win, run, shot, wait }) => {
   ok(await run(`(() => { const card=document.querySelector('[data-mod="canopener"]'); if(!card)return false; card.click(); return true; })()`), 'the standalone opener opens from its home card');
   ok(await until(`!!window.__r3d.canopener.res && !window.__r3d.canopener.stale`), 'the default heart is generated with a functional slot');
   const initial = await info();
-  ok(initial.cfg.shape === 'heart' && initial.cfg.thickness === 8 && initial.info.opener && initial.info.attachment.kind === 'round' && initial.info.attachment.mount === 'external', 'the default heart has a slot and an external ring eyelet');
+  ok(initial.cfg.shape === 'heart' && initial.cfg.thickness === 8 && initial.info.opener && initial.info.attachment.kind === 'round' && initial.info.attachment.mount === 'integrated', 'the default heart has a hole inside the figure');
   await wait(600); await shot(path.join(dir, 'canopener-heart.png'));
 
-  for (const [preset, kind] of [['small', 'round'], ['large', 'round'], ['cord', 'round'], ['ribbon', 'slot']]) {
+  for (const [preset, kind] of [['small', 'round'], ['cord', 'round'], ['ribbon', 'slot']]) {
     await run(`(() => { const el=${q('[data-r="preset"]')}; el.value=${JSON.stringify(preset)}; el.dispatchEvent(new Event('change',{bubbles:true})); })()`);
     ok(await until(`window.__r3d.canopener.res?.cfg.attachment.kind === ${JSON.stringify(kind)} && !window.__r3d.canopener.stale`), preset + ' updates the preview');
     const option = await info();
-    ok(option.cfg.attachment.mount === 'external' && option.parts.every(p => !p.apart) &&
+    ok(option.cfg.attachment.mount === 'integrated' && option.parts.every(p => !p.apart) &&
       (kind === 'slot' || option.info.attachment.bodyHoles.length === 1), preset + ' uses one opening and no separate connector');
   }
   await set('shape', 'nailpolish'); await set('side', 'right'); await set('width', '60'); await set('thickness', '8');
@@ -46,7 +46,7 @@ module.exports = async ({ win, run, shot, wait }) => {
   await check('text.enabled', true); await set('text.value', 'Pabonitas');
   await run('window.__r3d.canopener.rebuild()');
   state = await info();
-  ok(state.cfg.shape === 'nailpolish' && state.cfg.attachment.mount === 'external' && state.cfg.attachment.kind === 'slot' && state.cfg.attachment.slotWidth === 10,
+  ok(state.cfg.shape === 'nailpolish' && state.cfg.attachment.mount === 'integrated' && state.cfg.attachment.kind === 'slot' && state.cfg.attachment.slotWidth === 10,
     'the nail-polish figure and ribbon opening use the selected dimensions');
   ok(state.info.logo?.length >= 1 && state.parts.some((p) => p.art) && state.colors.length <= 4,
     'the logo produces coloured pieces');

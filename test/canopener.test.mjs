@@ -49,7 +49,7 @@ test('keyring variants have open holes, safe walls and a separate connector when
     ['integrated', 'round'], ['integrated', 'double-horizontal'], ['integrated', 'double-vertical'],
     ['external', 'slot'], ['external', 'lateral'], ['separate', 'round'], ['separate', 'slot'],
   ]) {
-    const s = canOpenerSolids({ attachment: { mount, kind } });
+    const s = canOpenerSolids({ attachment: { mount, kind, wall: 2.5 } });
     try {
       checkSolidAndSlot(s);
       assert.ok(s.info.attachment.wall >= 2.5);

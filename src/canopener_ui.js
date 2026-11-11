@@ -14,10 +14,9 @@ const fileBase = (s) => String(s || 'destapador').replace(/[<>:"/\\|?*\x00-\x1f]
 const get = (o, k) => k.split('.').reduce((a, p) => a?.[p], o);
 const set = (o, k, v) => { const p = k.split('.'), last = p.pop(); p.reduce((a, x) => (a[x] ??= {}), o)[last] = v; };
 const PRESETS = {
-  small: { mount: 'external', kind: 'round', diameter: 3, wall: 1.5, slotWidth: 8 },
-  large: { mount: 'external', kind: 'round', diameter: 5, wall: 2.5, slotWidth: 8 },
-  cord: { mount: 'external', kind: 'round', diameter: 3.2, wall: 2, slotWidth: 8 },
-  ribbon: { mount: 'external', kind: 'slot', diameter: 3.2, wall: 2.5, slotWidth: 10 },
+  small: { mount: 'integrated', kind: 'round', diameter: 3, wall: 1.5, slotWidth: 8 },
+  cord: { mount: 'integrated', kind: 'round', diameter: 3.2, wall: 2, slotWidth: 8 },
+  ribbon: { mount: 'integrated', kind: 'slot', diameter: 3.2, wall: 2.5, slotWidth: 10 },
 };
 
 export class CanOpenerStudio {
@@ -61,12 +60,12 @@ export class CanOpenerStudio {
         </section>
         <section class="card">
           <h3>2. Enganche del llavero</h3>
-          <label class="row">Tipo de enganche <select data-r="preset"><option value="custom">Configuración actual</option><option value="small">Anillo pequeño</option><option value="large">Anillo grande</option><option value="cord">Correa de hilo</option><option value="ribbon">Cinta</option></select></label>
+          <label class="row">Tipo de enganche <select data-r="preset"><option value="custom">Configuración actual</option><option value="small">Anillo de llavero</option><option value="cord">Correa de hilo</option><option value="ribbon">Cinta</option></select></label>
           ${select('Posición en la figura', 'attachment.position', [['left', 'Arriba a la izquierda'], ['center', 'Arriba al centro'], ['right', 'Arriba a la derecha']])}
           ${number('Diámetro / alto del agujero (mm)', 'attachment.diameter', 'De 3 a 9 mm. Para el lateral se conservan al menos 1,5 mm arriba y abajo.')}
           <div data-r="slotSize">${number('Ancho de la ranura de cinta (mm)', 'attachment.slotWidth', 'De 6 a 16 mm; no menor que el alto.')}</div>
           ${number('Pared alrededor (mm)', 'attachment.wall', 'De 1,5 a 5 mm de material alrededor del agujero.')}
-          <div class="small muted">La correa de hilo pasa por un solo ojal: introduce el lazo y pasa la correa por él. Elige un tamaño que permita pasar tu anillo o cinta y comprueba el ajuste con una impresión de prueba.</div>
+          <div class="small muted">El agujero se hace dentro de la figura. La correa de hilo pasa por un solo ojal: introduce el lazo y pasa la correa por él. Elige un tamaño que permita pasar tu anillo o cinta y comprueba el ajuste con una impresión de prueba.</div>
         </section>
         <section class="card">
           <h3>3. Logo y texto</h3>
