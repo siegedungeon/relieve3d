@@ -139,6 +139,7 @@ export class CanOpenerStudio {
       if (el.dataset.k.startsWith('attachment.') && el.dataset.k !== 'attachment.position' && el.dataset.k !== 'attachment.mount') this.$('preset').value = 'custom';
       this.visibility();
       this.invalidate();
+      if (el.tagName === 'SELECT' && (el.dataset.k === 'shape' || el.dataset.k.startsWith('attachment.'))) this.scheduleRebuild();
     };
     this.root.addEventListener('input', input);
     this.root.addEventListener('change', input);
@@ -149,6 +150,7 @@ export class CanOpenerStudio {
       this.sync();
       e.target.value = Object.keys(PRESETS).find((key) => PRESETS[key] === preset);
       this.invalidate();
+      this.scheduleRebuild();
     });
     this.$('fileLogo').addEventListener('change', async (e) => { const f = e.target.files[0]; e.target.value = ''; if (f) await this.loadLogo(f); });
     this.$('fileShape').addEventListener('change', async (e) => { const f = e.target.files[0]; e.target.value = ''; if (f) await this.loadShape(f); });
@@ -180,7 +182,14 @@ export class CanOpenerStudio {
     this.$('engrave').hidden = this.cfg.logo.mode !== 'engrave';
   }
 
+  scheduleRebuild() {
+    clearTimeout(this.rebuildTimer);
+    if (this.cfg.shape === 'custom' && !this.shapeImg) return;
+    this.rebuildTimer = setTimeout(() => this.rebuild(), 250);
+  }
+
   invalidate() {
+    clearTimeout(this.rebuildTimer);
     this.seq++;
     this.stale = true;
     this.$('export').disabled = true;
@@ -220,7 +229,7 @@ export class CanOpenerStudio {
     if (!this.res) await this.rebuild();
   }
 
-  close() { this.root.hidden = true; }
+  close() { clearTimeout(this.rebuildTimer); this.root.hidden = true; }
 
   async textFont() {
     if (!this.cfg.text.enabled || !String(this.cfg.text.value || '').trim()) return null;
@@ -231,6 +240,7 @@ export class CanOpenerStudio {
   }
 
   async rebuild() {
+    clearTimeout(this.rebuildTimer);
     const seq = ++this.seq;
     this.stale = true;
     this.$('export').disabled = true;

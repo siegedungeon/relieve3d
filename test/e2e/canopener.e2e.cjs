@@ -31,7 +31,11 @@ module.exports = async ({ win, run, shot, wait }) => {
   ok(initial.cfg.shape === 'heart' && initial.cfg.thickness === 8 && initial.info.opener && initial.info.attachment.kind === 'lateral', 'the 8 mm heart has a slot and perpendicular attachment openings');
   await wait(600); await shot(path.join(dir, 'canopener-heart.png'));
 
-  await set('shape', 'star'); await set('side', 'left'); await set('attachment.kind', 'double-horizontal');
+  await set('shape', 'star');
+  ok(await until(`window.__r3d.canopener.res?.cfg.shape === 'star' && !window.__r3d.canopener.stale`), 'selecting a figure updates the preview automatically');
+  await set('attachment.kind', 'double-horizontal');
+  ok(await until(`window.__r3d.canopener.res?.info.attachment.bodyHoles.length === 2 && !window.__r3d.canopener.stale`), 'selecting the keyring holes updates the preview automatically');
+  await set('side', 'left');
   ok(await run(`${q('[data-r="export"]')}.disabled`), 'unapplied changes cannot be exported');
   await run('window.__r3d.canopener.rebuild()');
   let state = await info();
