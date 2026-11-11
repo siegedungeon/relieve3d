@@ -149,7 +149,12 @@ export function normalizePhoneStand(cfgIn = {}) {
   c.nfc.where = c.nfc.where === 'auto' ? 'auto' : place(c.nfc.where, 'auto');
   c.nfc.mark = c.nfc.mark !== false;
   c.opener.enabled = !!c.opener.enabled;
+  c.opener.notch = !!c.opener.notch;
   c.opener.side = c.opener.side === 'left' ? 'left' : 'right';
+  for (const item of [c.opener, c.ring]) {
+    item.target = item.target && Number.isFinite(item.target.x) && Number.isFinite(item.target.y)
+      ? { x: item.target.x, y: item.target.y } : null;
+  }
   c.logo.enabled = c.logo.enabled !== false;
   c.logo.where = place(c.logo.where, 'top');
   // v1.19 'inlay' (flush, its depth was logo.depth) is now the flat multicolour mode
@@ -863,6 +868,16 @@ function ringSpot(S, deco, cfg, warnings) {
     if (inset.isEmpty()) continue;
     const asked = D / 2;
     const polys = inset.toPolygons();
+    if (cfg.ring.target) {
+      const target = [cfg.ring.target.x, cfg.ring.target.y];
+      if (inside(polys, target)) return { x: target[0], y: target[1], r, asked };
+      let nearest = null, distance = Infinity;
+      for (const poly of polys) for (const v of poly) {
+        const d2 = (v[0] - target[0]) ** 2 + (v[1] - target[1]) ** 2;
+        if (d2 < distance) { distance = d2; nearest = v; }
+      }
+      if (nearest) return { x: nearest[0], y: nearest[1], r, asked };
+    }
     const y = maxAt(polys, 0, 0);
     if (Number.isFinite(y)) return { x: 0, y: y - 0.05, r, asked };
     let best = null;
@@ -1247,7 +1262,12 @@ function placeOpener(mech, cfg, polys, yTop, ring, nfc, warnings) {
       let solid = true;
       for (let k = i - nWall; k <= i + nLen + nWall && solid; k++) solid = X[k] >= xin + 3 && CR[k].filter((x) => x > xin - 3).length === 1;
       if (!solid || rectHitsPoly(xin, x1, ys, y1, win) || keep.some((c) => rectHitsCircle(xin, x1, ys, y1, c))) continue;
-      const score = hi - lo + 0.02 * Math.abs(deg) - 0.01 * lo;
+      const target = cfg.opener.target;
+      const centerX = xin + SLOT.depth, centerY = ys + SLOT.len / 2;
+      const worldX = sg * (centerX * Math.cos(deg * D2R) - centerY * Math.sin(deg * D2R));
+      const worldY = centerX * Math.sin(deg * D2R) + centerY * Math.cos(deg * D2R);
+      const score = target ? Math.hypot(worldX - target.x, worldY - target.y) + (hi - lo) * 0.01
+        : hi - lo + 0.02 * Math.abs(deg) - 0.01 * lo;
       if (!best || score < best.score) best = { score, deg, xin, ys, edge: lo };
     }
   }
@@ -1255,7 +1275,7 @@ function placeOpener(mech, cfg, polys, yTop, ring, nfc, warnings) {
     warnings.push('No hay un borde libre de 16 mm para el abre latas: prueba el otro lado, otra forma o una forma más grande.');
     return null;
   }
-  return { side: cfg.opener.side, sg, angle: best.deg, xin: best.xin, ys: best.ys, edge: best.edge, len: SLOT.len, depth: SLOT.depth, lip: SLOT.mouth };
+  return { side: cfg.opener.side, sg, notch: !!cfg.opener.notch, angle: best.deg, xin: best.xin, ys: best.ys, edge: best.edge, len: SLOT.len, depth: SLOT.depth, lip: SLOT.mouth };
 }
 function openerCutter(S, mech, op) {
   const { o, CS } = S;
@@ -1264,6 +1284,11 @@ function openerCutter(S, mech, op) {
   const prof = o(new CS([[[xin, SLOT.inner], [xin + SLOT.depth, SLOT.mouth], [x2, SLOT.mouth], [x2, SLOT.top], [xin, SLOT.top]]], 'NonZero'));
   const plan = extrudeZ(S, roundRect(S, xin, x2 + 3, ys, ys + SLOT.len, 3), -1, mech.T + 1);
   let cut = o(alongY(S, prof, ys, ys + SLOT.len).intersect(plan));
+  if (op.notch) {
+    const notch = o(o(S.M.cylinder(SLOT.mouth + 1.4, 3.2, 3.2, 64))
+      .translate([xin + SLOT.depth + 0.5, ys + SLOT.len / 2, -1]));
+    cut = o(cut.add(notch));
+  }
   if (op.angle) cut = o(cut.rotate([0, 0, op.angle]));
   return op.sg < 0 ? o(cut.mirror([1, 0, 0])) : cut;
 }

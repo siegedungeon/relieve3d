@@ -97,6 +97,7 @@ const inputs = {
   logo: () => path.join(root, 'test', 'logo.png'),
   pencil: () => path.join(root, 'test', 'logo.png'),
   phonestand: () => path.join(root, 'test', 'logo.png'),
+  'phonestand-placement': () => null,
   coloring: () => path.join(root, 'src', 'examples', 'coloring-scene.svg'),
   'coloring-decorations': () => path.join(root, 'src', 'examples', 'coloring-scene.svg'),
   hablador: () => {
@@ -150,7 +151,7 @@ function runOne(name, restartTheme) {
   });
 }
 
-const names = which === 'all' ? Object.keys(inputs).filter((n) => n !== 'inbox' || process.env.R3D_INBOX_E2E_SERVER) : [which];
+const names = which === 'all' ? Object.keys(inputs).filter((n) => n !== 'phonestand-placement' && (n !== 'inbox' || process.env.R3D_INBOX_E2E_SERVER)) : [which];
 if (!names.every((n) => inputs[n])) { console.log('usage: node test/e2e/run.mjs [nametree|theme|colorsplit|keyring3mf|clicker|canopener|logo|hablador|pencil|fonts|text-quality|coloring|coloring-decorations|quote|tiktok|phonestand|local-links|inbox|all] [input]'); process.exit(2); }
 let allOk = true;
 for (const n of names) allOk = (await runOne(n)) && allOk;

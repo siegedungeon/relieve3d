@@ -1,3 +1,4 @@
+import { PlacementHandles, openerHandle } from './placement_handles.js';
 // Módulo «Soporte celular llavero»: llavero que se abre en soporte para el celular (bisagra impresa en su lugar).
 // Formulario paramétrico → core/phonestand.js (manifold) → vista 3D (como se imprime, abierto con celular, cerrado,
 // de arriba; la pata gira en la bisagra, la bandeja NFC entra en su ranura y el chip se ve en dorado a través del
@@ -210,8 +211,9 @@ export class PhoneStandStudio {
             ${sel('Dónde', 'nfc.where', [['auto', 'Automático (debajo del logo)'], ['top', 'En la forma de arriba'], ['bar', 'Cerca de la bisagra']], 'Automático: debajo del logo, así el cliente sabe dónde tocar con el celular. Arriba: lo más alto que quepa sin tocar el aro del llavero')}
             ${chk('Señal 📶 encima del chip', 'nfc.mark', 'El símbolo de pago sin contacto sobre el chip, para saber dónde tocar con el celular. Se hace como el logo (relieve, liso o grabado) y en el color de acento. Si el logo ya está encima del chip no hace falta')}
           </div>
+          <div class="small muted">Arrastra el punto naranja para mover el abre latas y el azul para mover el agujero del llavero.</div>
           ${chk('🥫 Abre latas', 'opener.enabled', 'Ranura en un borde: mete la pestaña de la lata y haz palanca. Si no hay borde libre, la forma de arriba se alarga sola')}
-          <div data-show="opener">${sel('Lado', 'opener.side', [['right', 'Derecho'], ['left', 'Izquierdo']])}</div>
+          <div data-show="opener">${chk('Muesca inferior en el abre latas', 'opener.notch')}</div>
           ${chk('🔑 Agujero para la argolla', 'ring.enabled')}
           <div data-show="ring">${num('Diámetro del agujero (mm)', 'ring.diameter')}</div>
         </section>
@@ -308,7 +310,17 @@ export class PhoneStandStudio {
   async open() {
     this.root.hidden = false;
     this.sync();
-    if (!this.viewer) this.viewer = new Viewer3D(this.$('view'));
+    if (!this.viewer) {
+      this.viewer = new Viewer3D(this.$('view'));
+      this.handles = new PlacementHandles(this.viewer, (id, point) => {
+        if (id === 'opener') {
+          this.cfg.opener.target = point;
+          this.cfg.opener.side = point.x < 0 ? 'left' : 'right';
+        } else this.cfg.ring.target = point;
+        this.sync();
+        this.schedule();
+      });
+    }
     this.viewer.resize();
     if (!this.engineReady) {
       this.cb.showBusy('Preparando el motor 3D…');
@@ -628,6 +640,7 @@ export class PhoneStandStudio {
     const v = this.viewer, res = this.res;
     if (!v || !res) return;
     if (this.pivot) { v.model.remove(this.pivot); this.pivot = null; }
+    this.handles.clear();
     v.clear();
     // the leg turns about the hinge axis (X through y = axis.y, z = axis.z)
     const { axis } = res;
@@ -662,6 +675,9 @@ export class PhoneStandStudio {
     const b = new THREE.Box3();
     for (const p of res.parts) { if (p.preview || p.apart) continue; p.geometry.computeBoundingBox(); b.union(p.geometry.boundingBox); }
     v.model.position.set(-(b.min.x + b.max.x) / 2, -(b.min.y + b.max.y) / 2, 0);
+    const z = res.axis.z * 2 + 2;
+    this.handles.set('opener', openerHandle(res.info.opener, z), '#ff942d');
+    if (res.info.ring) this.handles.set('attachment', { x: res.info.ring.x, y: res.info.ring.y, z }, '#37a4ff');
     // re-frame when the NFC tray appears beside the stand (or goes away), so it is never cut off at the edge
     const apart = res.parts.some((p) => p.apart);
     this.applyView(!this.framed || (apart !== this._apart && this.tab === 'print'));

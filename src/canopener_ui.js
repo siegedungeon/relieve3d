@@ -1,3 +1,4 @@
+import { PlacementHandles, openerHandle } from './placement_handles.js';
 import * as THREE from 'three';
 import { parse as parseFont } from 'opentype.js';
 import { Viewer3D } from './viewer3d.js';
@@ -57,12 +58,12 @@ export class CanOpenerStudio {
           <div data-r="custom"><button class="btn wide" data-a="shape">⬆ Cargar silueta (PNG/JPG/SVG)</button><div class="small muted" data-r="shapeInfo"></div></div>
           ${number('Ancho de la figura (mm)', 'width', 'De 40 a 100 mm; los enganches o el borde funcional pueden añadir tamaño.')}
           ${number('Grosor del cuerpo (mm)', 'thickness', 'De 6 a 12 mm. La referencia mide aproximadamente 8 mm.')}
-          ${select('Lado de la ranura', 'side', [['right', 'Derecho'], ['left', 'Izquierdo']])}
+          <div class="small muted">Arrastra el punto naranja para mover el abre latas y el azul para mover el enganche.</div>
+          ${check('Muesca inferior en el abre latas', 'notch')}
         </section>
         <section class="card">
           <h3>2. Enganche del llavero</h3>
           <label class="row">Tipo de enganche <select data-r="preset"><option value="custom">Configuración actual</option><option value="small">Anillo de llavero</option><option value="cord">Correa de hilo</option><option value="ribbon">Cinta</option><option value="edge">Paso de hilo en el borde</option></select></label>
-          ${select('Posición en la figura', 'attachment.position', [['left', 'Esquina superior izquierda'], ['center', 'Arriba'], ['right', 'Esquina superior derecha'], ['side-left', 'Lado izquierdo'], ['side-right', 'Lado derecho']])}
           ${number('Diámetro / alto del agujero (mm)', 'attachment.diameter', 'De 2 a 9 mm para el paso en el borde y de 3 a 9 mm para las demás opciones. Para el paso en el borde se conservan al menos 1,5 mm arriba y abajo.')}
           <div data-r="slotSize">${number('Ancho de la ranura de cinta (mm)', 'attachment.slotWidth', 'De 6 a 16 mm; no menor que el alto.')}</div>
           ${number('Pared alrededor (mm)', 'attachment.wall', 'De 1,5 a 5 mm de material alrededor del agujero.')}
@@ -136,7 +137,7 @@ export class CanOpenerStudio {
       if (el.dataset.k.startsWith('attachment.') && el.dataset.k !== 'attachment.position' && el.dataset.k !== 'attachment.mount') this.$('preset').value = 'custom';
       this.visibility();
       this.invalidate();
-      if (el.tagName === 'SELECT' && (el.dataset.k === 'shape' || el.dataset.k.startsWith('attachment.'))) this.scheduleRebuild();
+      if (el.dataset.k === 'notch' || (el.tagName === 'SELECT' && (el.dataset.k === 'shape' || el.dataset.k.startsWith('attachment.')))) this.scheduleRebuild();
     };
     this.root.addEventListener('input', input);
     this.root.addEventListener('change', input);
@@ -177,10 +178,6 @@ export class CanOpenerStudio {
   visibility() {
     this.$('custom').hidden = this.cfg.shape !== 'custom';
     this.$('slotSize').hidden = this.cfg.attachment.kind !== 'slot';
-    const position = this.root.querySelector('[data-k="attachment.position"]');
-    for (const option of position.options) {
-      if (option.value.startsWith('side-')) option.hidden = this.cfg.attachment.kind !== 'edge-loop';
-    }
     this.$('height').hidden = this.cfg.logo.mode !== 'relief';
     this.$('flat').hidden = this.cfg.logo.mode !== 'flat';
     this.$('engrave').hidden = this.cfg.logo.mode !== 'engrave';
@@ -228,7 +225,26 @@ export class CanOpenerStudio {
 
   async open() {
     this.root.hidden = false;
-    if (!this.viewer) this.viewer = new Viewer3D(this.$('view'));
+    if (!this.viewer) {
+      this.viewer = new Viewer3D(this.$('view'));
+      this.handles = new PlacementHandles(this.viewer, (id, point) => {
+        if (id === 'opener') {
+          this.cfg.openerTarget = point;
+          this.cfg.side = point.x < 0 ? 'left' : 'right';
+        } else {
+          this.cfg.attachment.target = point;
+          if (this.cfg.attachment.kind === 'edge-loop') {
+            const bounds = new THREE.Box3().setFromBufferAttribute(this.res.parts[0].geometry.getAttribute('position'));
+            const angle = Math.atan2(point.x - (bounds.min.x + bounds.max.x) / 2, point.y - (bounds.min.y + bounds.max.y) / 2);
+            this.cfg.attachment.position = angle < -Math.PI * 3 / 8 ? 'side-left' : angle < -Math.PI / 8 ? 'left'
+              : angle > Math.PI * 3 / 8 ? 'side-right' : angle > Math.PI / 8 ? 'right' : 'center';
+          }
+        }
+        this.sync();
+        this.invalidate();
+        this.scheduleRebuild();
+      });
+    }
     this.viewer.resize();
     if (!this.res) await this.rebuild();
   }
@@ -255,6 +271,7 @@ export class CanOpenerStudio {
       await new Promise((resolve) => setTimeout(resolve, 30));
       const result = buildCanOpener(this.cfg, { logoImage: this.logoImg, shapeImage: this.shapeImg, font });
       if (seq !== this.seq) { result.parts.forEach((p) => p.geometry.dispose()); return; }
+      this.handles.clear();
       this.viewer.clear();
       this.res = result;
       this.cfg = result.cfg;
@@ -288,6 +305,9 @@ export class CanOpenerStudio {
     });
     const center = box.getCenter(new THREE.Vector3());
     this.viewer.model.position.set(-center.x, -center.y, -box.min.z);
+    this.handles.set('opener', openerHandle(this.res.info.opener, this.cfg.thickness + 2), '#ff942d');
+    const [x, y] = this.res.info.attachment.position;
+    this.handles.set('attachment', { x, y, z: this.cfg.thickness + 2 }, '#37a4ff');
     this.viewer.requestRender();
   }
 

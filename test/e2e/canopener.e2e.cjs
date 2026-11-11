@@ -30,6 +30,27 @@ module.exports = async ({ win, run, shot, wait }) => {
   const initial = await info();
   ok(initial.cfg.shape === 'heart' && initial.cfg.thickness === 8 && initial.info.opener && initial.info.attachment.kind === 'round' && initial.info.attachment.mount === 'integrated', 'the default heart has a hole inside the figure');
   await wait(600); await shot(path.join(dir, 'canopener-heart.png'));
+  for (const id of ['attachment', 'opener']) {
+    const p = await run(`(() => {
+      const studio = window.__r3d.canopener, marker = studio.handles.handles.get(${JSON.stringify(id)});
+      studio.viewer.model.updateWorldMatrix(true, true);
+      const v = marker.getWorldPosition(marker.position.clone()).project(studio.viewer.camera);
+      const r = studio.viewer.renderer.domElement.getBoundingClientRect();
+      return { x: Math.round(r.left + (v.x + 1) * r.width / 2), y: Math.round(r.top + (1 - v.y) * r.height / 2) };
+    })()`);
+    win.webContents.sendInputEvent({ type: 'mouseMove', x: p.x, y: p.y });
+    win.webContents.sendInputEvent({ type: 'mouseDown', x: p.x, y: p.y, button: 'left', clickCount: 1 });
+    win.webContents.sendInputEvent({ type: 'mouseMove', x: p.x + 35, y: p.y + 10, button: 'left' });
+    win.webContents.sendInputEvent({ type: 'mouseUp', x: p.x + 35, y: p.y + 10, button: 'left', clickCount: 1 });
+    const field = id === 'opener' ? 'openerTarget' : 'attachment.target';
+    ok(await until(`!!window.__r3d.canopener.cfg.${field} && !window.__r3d.canopener.stale`), id + ' moves with the mouse');
+  }
+  await check('notch', true);
+  await run('window.__r3d.canopener.rebuild()');
+  ok(await run("window.__r3d.canopener.res?.info.opener.notch === true"), 'the optional notch is generated');
+  await check('notch', false);
+  await run('window.__r3d.canopener.rebuild()');
+
 
   for (const [preset, kind] of [['small', 'round'], ['cord', 'round'], ['ribbon', 'slot']]) {
     await run(`(() => { const el=${q('[data-r="preset"]')}; el.value=${JSON.stringify(preset)}; el.dispatchEvent(new Event('change',{bubbles:true})); })()`);
@@ -41,14 +62,14 @@ module.exports = async ({ win, run, shot, wait }) => {
   await set('shape', 'circle');
   await run(`(() => { const el=${q('[data-r="preset"]')}; el.value='edge'; el.dispatchEvent(new Event('change',{bubbles:true})); })()`);
   for (const position of ['center', 'left', 'right', 'side-left', 'side-right']) {
-    await set('attachment.position', position);
+    await run(`window.__r3d.canopener.cfg.attachment.position = ${JSON.stringify(position)}; window.__r3d.canopener.rebuild()`);
     ok(await until(`window.__r3d.canopener.res?.cfg.attachment.kind === 'edge-loop' && window.__r3d.canopener.res.cfg.attachment.position === ${JSON.stringify(position)} && !window.__r3d.canopener.stale`), 'edge passage updates at ' + position);
   }
   await set('attachment.diameter', '4');
   await run('window.__r3d.canopener.rebuild()');
   ok(await run("window.__r3d.canopener.res?.cfg.attachment.diameter === 4 && !window.__r3d.canopener.stale"), 'edge passage uses the custom diameter');
   await run(`(() => { const el=${q('[data-r="preset"]')}; el.value='ribbon'; el.dispatchEvent(new Event('change',{bubbles:true})); })()`);
-  await set('shape', 'nailpolish'); await set('side', 'right'); await set('width', '60'); await set('thickness', '8');
+  await set('shape', 'nailpolish'); await set('width', '60'); await set('thickness', '8');
   await run('window.__r3d.canopener.rebuild()');
   await drop(logo, 'logo-prueba.png', 'image/png');
   ok(await until(`!!window.__r3d.canopener.logoImg && !!window.__r3d.canopener.res && !window.__r3d.canopener.stale`), 'dropping a client logo loads and rebuilds the custom opener');

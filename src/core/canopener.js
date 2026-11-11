@@ -46,6 +46,8 @@ export function normalizeCanOpener(input = {}) {
   const thickness = measure(cfg.thickness, d.thickness, 6, 12, 'Grosor');
   a.diameter = measure(a.diameter, d.attachment.diameter, a.kind === 'edge-loop' ? 2 : 3, 9, 'Diámetro del agujero');
   a.slotWidth = measure(a.slotWidth, d.attachment.slotWidth, 6, 16, 'Ancho de la ranura para cinta');
+  a.target = a.target && Number.isFinite(a.target.x) && Number.isFinite(a.target.y)
+    ? { x: a.target.x, y: a.target.y } : null;
   a.wall = measure(a.wall, d.attachment.wall, 1.5, 5, 'Pared alrededor del agujero');
   if (a.kind === 'slot' && a.slotWidth < a.diameter) throw new Error('La ranura para cinta debe ser más ancha que su alto.');
   if ((a.kind === 'lateral' || a.kind === 'cord-loop' || a.kind === 'edge-loop') && a.diameter > thickness - 3) throw new Error('El agujero lateral necesita al menos 1,5 mm arriba y abajo: reduce su diámetro o aumenta el grosor.');
@@ -56,7 +58,9 @@ export function normalizeCanOpener(input = {}) {
   return {
     name: String(cfg.name || d.name).slice(0, 60), shape,
     width: measure(cfg.width, d.width, 40, 100, 'Ancho de la forma'),
-    thickness, side: cfg.side === 'left' ? 'left' : 'right',
+    thickness, side: cfg.side === 'left' ? 'left' : 'right', notch: !!cfg.notch,
+    openerTarget: cfg.openerTarget && Number.isFinite(cfg.openerTarget.x) && Number.isFinite(cfg.openerTarget.y)
+      ? { x: cfg.openerTarget.x, y: cfg.openerTarget.y } : null,
     attachment: a, logo, text, colors: shared.colors,
   };
 }
@@ -106,7 +110,7 @@ function footprint(S, layout, extra = 0) {
   return layout.slot ? S.o(S.CS.hull(discs)) : discs.length === 1 ? discs[0] : S.o(S.CS.union(discs));
 }
 
-function findPosition(S, outline, layout, wall, position) {
+function findPosition(S, outline, layout, wall, position, desired = null) {
   const safe = S.o(outline.offset(-(layout.r + wall), 'Round', 2, 64));
   if (safe.isEmpty()) throw new Error('No cabe el enganche con la pared requerida: agranda la forma o reduce el agujero.');
   const polys = safe.toPolygons(), b = safe.bounds();
@@ -115,7 +119,7 @@ function findPosition(S, outline, layout, wall, position) {
   for (let y = b.min[1]; y <= b.max[1]; y += 0.6) {
     for (let x = b.min[0]; x <= b.max[0]; x += 0.6) {
       if (!layout.centers.every(([dx, dy]) => H.inside(polys, [x + dx, y + dy]))) continue;
-      const s = y - Math.abs(x - target) * 0.45;
+      const s = desired ? -Math.hypot(x - desired.x, y - desired.y) : y - Math.abs(x - target) * 0.45;
       if (s > score) { score = s; best = [x, y]; }
     }
   }
@@ -180,7 +184,9 @@ export function canOpenerSolids(input = {}, { logoImage = null, shapeImage = nul
       const angles = { center: 0, left: -45, right: 45, 'side-left': -90, 'side-right': 90 };
       const angle = angles[a.position];
       const rotated = o(original.rotate(angle));
-      const local = findPosition(S, rotated, layout, a.wall, 'center');
+      const t = a.target, r = angle * Math.PI / 180;
+      const desired = t && { x: t.x * Math.cos(r) - t.y * Math.sin(r), y: t.x * Math.sin(r) + t.y * Math.cos(r) };
+      const local = findPosition(S, rotated, layout, a.wall, 'center', desired);
       const polygon = rotated.toPolygons();
       const tops = layout.centers.map(([dx]) => H.maxAt(polygon, 0, local[0] + dx));
       if (tops.some((v) => !Number.isFinite(v))) throw new Error('No cabe el paso en ese borde. Cambia la posición.');
@@ -197,11 +203,11 @@ export function canOpenerSolids(input = {}, { logoImage = null, shapeImage = nul
       const expanded = layout.centers.map(([x, y]) => H.circle(S, x + position[0], y + position[1], layout.r + a.wall, 64));
       const ear = o(CS.hull([H.circle(S, anchor[0], anchor[1], a.wall + 0.1, 64), ...expanded]));
       outline = o(original.add(ear));
-    } else position = findPosition(S, original, layout, a.wall, a.position);
+    } else position = findPosition(S, original, layout, a.wall, a.position, a.target);
     const holeCS = o(footprint(S, layout).translate(position));
     const bodyHoles = layout.centers.map(([x, y]) => ({ x: x + position[0], y: y + position[1], diameter: layout.r * 2 }));
     const ringRadius = Math.max(...layout.centers.map(([x, y]) => Math.hypot(x, y) + layout.r));
-    const mech = { W: 150, T, yh0: -48, variant: 'short' }, opCfg = { opener: { enabled: true, side: cfg.side } };
+    const mech = { W: 150, T, yh0: -48, variant: 'short' }, opCfg = { opener: { enabled: true, side: cfg.side, notch: cfg.notch, target: cfg.openerTarget } };
     const ringGuard = { x: position[0], y: position[1], r: ringRadius + a.wall - 2.5 };
     const place = () => H.placeOpener(mech, opCfg, outline.toPolygons(), outline.bounds().max[1], ringGuard, null, []);
     let opener = place();

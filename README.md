@@ -60,7 +60,7 @@ Los módulos de texto usan las fuentes más populares y las instaladas en el equ
 
 ### Destapador llavero
 
-En **Inicio → Destapador llavero**, elige una figura o carga una silueta, ajusta el tamaño y el lado de la ranura y añade el logo del cliente. En enganche, elige anillo de llavero, correa de hilo, cinta o paso de hilo en el borde. El paso en el borde tiene dos entradas comunicadas dentro de la figura y permite elegir su posición y diámetro. El agujero se realiza dentro de la figura. La correa de hilo pasa por un único ojal: introduce el lazo y pasa la correa por él. Ajusta las medidas y comprueba el ajuste y la resistencia con una impresión de prueba. Guarda el proyecto editable o exporta el 3MF estándar o el proyecto Bambu A1 con sus colores.
+En **Inicio → Destapador llavero**, elige una figura o carga una silueta, ajusta el tamaño y el lado de la ranura y añade el logo del cliente. Arrastra el punto naranja para mover el abre latas y el azul para mover el enganche. Las posiciones se ajustan al lugar válido más cercano. Activa la muesca inferior si la necesitas. En enganche, elige anillo de llavero, correa de hilo, cinta o paso de hilo en el borde. El paso en el borde tiene dos entradas comunicadas dentro de la figura y permite elegir su posición y diámetro. El agujero se realiza dentro de la figura. La correa de hilo pasa por un único ojal: introduce el lazo y pasa la correa por él. Ajusta las medidas y comprueba el ajuste y la resistencia con una impresión de prueba. Guarda el proyecto editable o exporta el 3MF estándar o el proyecto Bambu A1 con sus colores.
 
 Las pruebas específicas se ejecutan con `npm run test:canopener`. En Windows con Bambu Studio, `npm run test:canopener:print` también lamina el archivo exportado.
 ### Argolla para un 3MF existente
@@ -332,6 +332,8 @@ Regresiones: `node test\pencil.test.mjs` comprueba sólidos, calibre y paredes; 
 - **Marca / empresas**: **código QR** en el frente (avisa si queda muy pequeño para escanear), **nombres en lote** (un 3MF por empleado, atrás o al frente), **peso estimado en gramos** para cotizar y **hoja de propuesta PNG** con las 3 versiones lado a lado para enviar al cliente.
 
 ### Módulo Soporte celular llavero
+
+Arrastra el punto naranja para colocar el abre latas y el azul para colocar el agujero del llavero. El modelo busca una posición válida cercana. La muesca inferior del abre latas se puede activar en sus opciones.
 
 Llavero que se abre y sostiene el celular. Tiene una **pata en bisagra** que se despliega y queda firme sobre su tope; el celular se apoya en ella a unos **60°**, con el borde de abajo dentro de una ranura en V. Cerrada, la pata entra en su hueco con un **clic** y no se abre en el bolsillo. Todo **se imprime armado** (print-in-place), sin soportes ni piezas para pegar: el cuerpo acostado y la pata parada sobre sus pasadores cónicos a 45°.
 
