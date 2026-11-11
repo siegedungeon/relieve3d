@@ -144,6 +144,33 @@ test('edge loop joins two edge openings without cutting through the faces', () =
   }
 });
 
+test('raised border recesses the heart face and supports artwork', () => {
+  const plain = canOpenerSolids({ shape: 'heart' });
+  const bordered = canOpenerSolids({ shape: 'heart', border: { enabled: true, width: 3, depth: 1.2 } });
+  try {
+    checkSolidAndSlot(bordered);
+    assert.equal(bordered.info.border.surfaceZ, 6.8);
+    assert.ok(bordered.body.volume() < plain.body.volume() - 100);
+    const c = Manifold.cylinder(1, 0.5, 0.5, 32);
+    const probe = c.translate([0, 15, 7]);
+    try { assert.ok(overlap(bordered.body, probe) < 1e-3, 'the interior is recessed'); }
+    finally { c.delete(); probe.delete(); }
+  } finally { plain.dispose(); bordered.dispose(); }
+  for (const mode of ['relief', 'flat', 'engrave']) {
+    const s = canOpenerSolids({ border: { enabled: true }, logo: { mode, colors: 2 } }, { logoImage });
+    try {
+      assert.ok(s.info.logo?.length);
+      if (mode === 'relief') for (const art of s.artPieces) {
+        assert.ok(Math.abs(art.solid.boundingBox().min[2] - 6.8) < 0.01, 'art rests on recessed face');
+      }
+    } finally { s.dispose(); }
+  }
+  assert.throws(() => canOpenerSolids({ border: { enabled: true }, thickness: 6, logo: { mode: 'engrave', depth: 1 } }), /techo/i);
+  assert.throws(() => canOpenerSolids({ border: { enabled: true }, attachment: { kind: 'edge-loop', diameter: 4 } }), /techo|paso/i);
+  const loaded = readCanOpenerProject(canOpenerProject({ border: { enabled: true, width: 2, depth: 1 } }));
+  assert.deepEqual(loaded.cfg.border, { enabled: true, width: 2, depth: 1 });
+});
+
 test('the perpendicular opening reaches the outside and left-hand narrow shapes gain a functional lip', () => {
   const s = canOpenerSolids({ shape: 'heart', attachment: { mount: 'integrated', kind: 'lateral', diameter: 4 } });
   try {

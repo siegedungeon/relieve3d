@@ -14,6 +14,7 @@ export const CAN_OPENER_SHAPES = [
 export const DEFAULT_CAN_OPENER = () => ({
   name: 'Destapador', shape: 'heart', width: 49, thickness: 8,
   side: 'right',
+  border: { enabled: false, width: 3, depth: 1.2 },
   attachment: { mount: 'integrated', kind: 'round', position: 'left', diameter: 3, slotWidth: 8, wall: 1.5 },
   logo: { ...DEFAULT_PHONESTAND().logo },
   text: { ...DEFAULT_PHONESTAND().text, where: 'top' },
@@ -38,6 +39,10 @@ export function normalizeCanOpener(input = {}) {
   const d = DEFAULT_CAN_OPENER(), cfg = input && typeof input === 'object' ? input : {};
   const shared = normalizePhoneStand({ logo: cfg.logo, text: cfg.text, colors: cfg.colors });
   const a = { ...d.attachment, ...(cfg.attachment || {}) };
+  const border = { ...d.border, ...(cfg.border || {}) };
+  border.enabled = !!border.enabled;
+  border.width = measure(border.width, d.border.width, 1, 6, 'Ancho del borde');
+  border.depth = measure(border.depth, d.border.depth, 0.4, 2, 'Profundidad del interior');
   const shape = cfg.shape === undefined ? d.shape : cfg.shape;
   if (!CAN_OPENER_SHAPES.some((s) => s.id === shape)) throw new Error('Elige una forma válida.');
   if (!['integrated', 'external', 'separate'].includes(a.mount)) throw new Error('Elige un tipo de enganche válido.');
@@ -53,12 +58,13 @@ export function normalizeCanOpener(input = {}) {
   if ((a.kind === 'lateral' || a.kind === 'cord-loop' || a.kind === 'edge-loop') && a.diameter > thickness - 3) throw new Error('El agujero lateral necesita al menos 1,5 mm arriba y abajo: reduce su diámetro o aumenta el grosor.');
   const logo = { ...shared.logo, where: 'top' }, text = { ...shared.text, where: 'top' };
   const sink = logo.mode === 'flat' ? logo.flatDepth : logo.mode === 'engrave' ? logo.depth : 0;
-  if (a.kind === 'edge-loop' && thickness / 2 - a.diameter / 2 - sink < 1.5) throw new Error('El logo hundido dejaría poco techo sobre el paso: reduce su profundidad o el diámetro, o aumenta el grosor.');
-  if (thickness - sink < 4.6) throw new Error('El logo hundido dejaría muy poco techo sobre la ranura: aumenta el grosor o reduce la profundidad.');
+  const borderDepth = border.enabled ? border.depth : 0;
+  if (a.kind === 'edge-loop' && thickness / 2 - a.diameter / 2 - sink - borderDepth < 1.5) throw new Error('El logo hundido dejaría poco techo sobre el paso: reduce su profundidad o el diámetro, o aumenta el grosor.');
+  if (thickness - sink - borderDepth < 4.6) throw new Error('El logo hundido dejaría muy poco techo sobre la ranura: aumenta el grosor o reduce la profundidad.');
   return {
     name: String(cfg.name || d.name).slice(0, 60), shape,
     width: measure(cfg.width, d.width, 40, 100, 'Ancho de la forma'),
-    thickness, side: cfg.side === 'left' ? 'left' : 'right', notch: !!cfg.notch,
+    thickness, border, side: cfg.side === 'left' ? 'left' : 'right', notch: !!cfg.notch,
     openerTarget: cfg.openerTarget && Number.isFinite(cfg.openerTarget.x) && Number.isFinite(cfg.openerTarget.y)
       ? { x: cfg.openerTarget.x, y: cfg.openerTarget.y } : null,
     attachment: a, logo, text, colors: shared.colors,
@@ -243,17 +249,24 @@ export function canOpenerSolids(input = {}, { logoImage = null, shapeImage = nul
     const collision = o(slot.intersect(cuts));
     if (collision.volume() > 0.001) throw new Error('La ranura del abre latas se cruza con el enganche: cambia el lado o la posición.');
     const avoid = { fit: o(holeCS.offset(1.6, 'Round', 2, 48)), clip: o(holeCS.offset(1, 'Round', 2, 48)) };
-    const art = H.buildArt(S, { variant: 'short', yh0: original.bounds().min[1] - 1 }, cfg, original, null,
+    const inset = cfg.border.enabled ? o(original.offset(-cfg.border.width, 'Round', 2, 64)) : null;
+    if (inset?.isEmpty()) throw new Error('La figura es demasiado estrecha para ese borde: reduce su ancho o agranda la figura.');
+    const surfaceZ = T - (cfg.border.enabled ? cfg.border.depth : 0);
+    const art = H.buildArt(S, { variant: 'short', yh0: original.bounds().min[1] - 1 }, cfg, inset || original, null,
       { logoImage, font }, warnings, avoid);
     const mode = cfg.logo.mode, sink = mode === 'flat' ? cfg.logo.flatDepth : cfg.logo.depth;
     const artPieces = [];
     if (art.top && mode !== 'engrave') for (const p of art.top.pieces) {
       const height = mode === 'relief' ? p.height : sink;
-      const solid = H.extrudeZ(S, p.cs, mode === 'relief' ? T : T - sink, mode === 'relief' ? T + height : T);
+      const solid = H.extrudeZ(S, p.cs, mode === 'relief' ? surfaceZ : surfaceZ - sink, mode === 'relief' ? surfaceZ + height : surfaceZ);
       artPieces.push({ ...p, solid, height });
     }
     let body = o(H.extrudeZ(S, outline, 0, T).subtract(slot));
     body = o(body.subtract(cuts));
+    if (inset) {
+      const borderRecess = H.extrudeZ(S, inset, surfaceZ, T + 1);
+      body = o(body.subtract(borderRecess));
+    }
     if (a.mount === 'external' && a.kind !== 'lateral' && a.kind !== 'cord-loop') {
       // Keep the eyelet thin enough for a split ring or folded ribbon to pass around it.
       const outside = o(outline.subtract(original));
@@ -261,7 +274,7 @@ export function canOpenerSolids(input = {}, { logoImage = null, shapeImage = nul
       body = o(body.subtract(relief));
     }
     if (art.top && mode !== 'relief') {
-      const recess = H.extrudeZ(S, o(art.top.cs.simplify(1e-6)), T - sink, T + 1);
+      const recess = H.extrudeZ(S, o(art.top.cs.simplify(1e-6)), surfaceZ - sink, surfaceZ + 1);
       body = o(body.subtract(recess));
     }
     const components = body.decompose().map(o);
@@ -280,7 +293,7 @@ export function canOpenerSolids(input = {}, { logoImage = null, shapeImage = nul
     const used = new Set(artPieces.filter((p) => p.kind === 'logo').map((p) => p.idx));
     const logo = art.palette?.map((e) => ({ ...e, used: used.has(e.idx) || (mode === 'engrave' && !art.skip.has(e.idx)), skipped: !e.on ? 'off' : art.skip.has(e.idx) ? 'body' : null })) || null;
     const bbox = body.boundingBox(), info = {
-      shape: cfg.shape, opener,
+      shape: cfg.shape, opener, border: { ...cfg.border, surfaceZ },
       attachment: { mount: a.mount, kind: a.kind, wall: a.wall, position, bodyHoles, connectorHoles: connector?.holes || [], lateral: !!layout.lateral, edgeData },
       art: { mode, box: art.top?.box || null }, logo,
       size: { w: bbox.max[0] - bbox.min[0], l: bbox.max[1] - bbox.min[1], h: T },

@@ -48,6 +48,18 @@ module.exports = async ({ win, run, shot, wait }) => {
   await check('notch', true);
   await run('window.__r3d.canopener.rebuild()');
   ok(await run("window.__r3d.canopener.res?.info.opener.notch === true"), 'the optional notch is generated');
+  await check('border.enabled', true);
+  ok(await until(`window.__r3d.canopener.res?.cfg.border.enabled && !window.__r3d.canopener.stale`), 'raised heart border is generated');
+  ok(await run('Math.abs(window.__r3d.canopener.res.info.border.surfaceZ - 6.8) < 0.01'), 'heart interior is recessed 1.2 mm');
+  await wait(600); await shot(path.join(dir, 'heart-raised-border.png'));
+  await run(`(${q('[data-r="format"]')}.value='standard')`);
+  await run('window.__r3d.canopener.export()');
+  const borderFile = path.join(exp, 'Destapador.3mf');
+  ok(fs.existsSync(borderFile) && read3MF(fs.readFileSync(borderFile)).parts.length > 0, 'raised heart border exports as 3MF');
+  await run(`(${q('[data-r="format"]')}.value='bambu')`);
+
+  await check('border.enabled', false);
+  await until('!window.__r3d.canopener.stale');
   await check('notch', false);
   await run('window.__r3d.canopener.rebuild()');
 

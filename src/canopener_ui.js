@@ -57,6 +57,8 @@ export class CanOpenerStudio {
           ${select('Forma', 'shape', CAN_OPENER_SHAPES.map((s) => [s.id, s.name]))}
           <div data-r="custom"><button class="btn wide" data-a="shape">⬆ Cargar silueta (PNG/JPG/SVG)</button><div class="small muted" data-r="shapeInfo"></div></div>
           ${number('Ancho de la figura (mm)', 'width', 'De 40 a 100 mm; los enganches o el borde funcional pueden añadir tamaño.')}
+          ${check('Borde elevado (estilo corazón)', 'border.enabled')}
+          <div data-r="borderSettings">${number('Ancho del borde (mm)', 'border.width')}${number('Profundidad interior (mm)', 'border.depth')}</div>
           ${number('Grosor del cuerpo (mm)', 'thickness', 'De 6 a 12 mm. La referencia mide aproximadamente 8 mm.')}
           <div class="small muted">Arrastra el punto naranja para mover el abre latas y el azul para mover el enganche.</div>
           ${check('Muesca inferior en el abre latas', 'notch')}
@@ -137,7 +139,7 @@ export class CanOpenerStudio {
       if (el.dataset.k.startsWith('attachment.') && el.dataset.k !== 'attachment.position' && el.dataset.k !== 'attachment.mount') this.$('preset').value = 'custom';
       this.visibility();
       this.invalidate();
-      if (el.dataset.k === 'notch' || (el.tagName === 'SELECT' && (el.dataset.k === 'shape' || el.dataset.k.startsWith('attachment.')))) this.scheduleRebuild();
+      if (el.dataset.k === 'notch' || el.dataset.k === 'border.enabled' || (el.tagName === 'SELECT' && (el.dataset.k === 'shape' || el.dataset.k.startsWith('attachment.')))) this.scheduleRebuild();
     };
     this.root.addEventListener('input', input);
     this.root.addEventListener('change', input);
@@ -177,6 +179,7 @@ export class CanOpenerStudio {
 
   visibility() {
     this.$('custom').hidden = this.cfg.shape !== 'custom';
+    this.$('borderSettings').hidden = !this.cfg.border.enabled;
     this.$('slotSize').hidden = this.cfg.attachment.kind !== 'slot';
     this.$('height').hidden = this.cfg.logo.mode !== 'relief';
     this.$('flat').hidden = this.cfg.logo.mode !== 'flat';
