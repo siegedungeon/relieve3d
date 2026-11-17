@@ -153,6 +153,8 @@ export class CanOpenerStudio {
         if (value === 'nailpolish-reference' && previous !== value) {
           if (this.cfg.width === 49) this.cfg.width = 28;
           if (this.cfg.colors.body.toLowerCase() === '#f4e9dc') this.cfg.colors.body = '#e9a9bd';
+          this.cfg.side = 'right';
+          this.cfg.openerTarget = { x: 0, y: 0 };
         } else if (previous === 'nailpolish-reference' && this.cfg.width < 40) {
           this.cfg.width = 40;
         }

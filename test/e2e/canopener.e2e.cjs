@@ -170,6 +170,33 @@ module.exports = async ({ win, run, shot, wait }) => {
   state = await info();
   ok(state.cfg.shape === 'nailpolish-reference' && Math.abs(state.info.size.w - 28) < 0.1 &&
     state.info.size.l > 55 && state.cfg.text.value === 'ANA\nPABON', 'reference bottle and personalised multiline text are generated');
+  const openerPosition = (op) => {
+    const a = op.angle * Math.PI / 180, x = op.xin + op.depth, y = op.ys + op.len / 2;
+    return { x: op.sg * (x * Math.cos(a) - y * Math.sin(a)), y: x * Math.sin(a) + y * Math.cos(a) };
+  };
+  const bottomPosition = openerPosition(state.info.opener);
+  ok(Math.abs(bottomPosition.x) < 2 && bottomPosition.y < 2, 'reference bottle starts with the opener at the bottom');
+  const dragOpener = async (x, y) => {
+    const coords = await run(`(() => {
+      const studio = window.__r3d.canopener, marker = studio.handles.handles.get('opener');
+      const viewer = studio.viewer, rect = viewer.renderer.domElement.getBoundingClientRect();
+      viewer.model.updateWorldMatrix(true, true);
+      const project = (v) => { const p = viewer.model.localToWorld(v).project(viewer.camera);
+        return { x: Math.round(rect.left + (p.x + 1) * rect.width / 2), y: Math.round(rect.top + (1 - p.y) * rect.height / 2) }; };
+      return { from: project(marker.position.clone()), to: project(marker.position.clone().set(${x}, ${y}, marker.position.z)) };
+    })()`);
+    win.webContents.sendInputEvent({ type: 'mouseMove', ...coords.from });
+    win.webContents.sendInputEvent({ type: 'mouseDown', ...coords.from, button: 'left', clickCount: 1 });
+    win.webContents.sendInputEvent({ type: 'mouseMove', ...coords.to, button: 'left' });
+    win.webContents.sendInputEvent({ type: 'mouseUp', ...coords.to, button: 'left', clickCount: 1 });
+    return until(`!window.__r3d.canopener.stale && Math.abs(window.__r3d.canopener.cfg.openerTarget.x - ${x}) < 1.5 && Math.abs(window.__r3d.canopener.cfg.openerTarget.y - ${y}) < 1.5`);
+  };
+  ok(await dragOpener(14, 15), 'the opener can be dragged to a side');
+  let movedOpener = openerPosition((await info()).info.opener);
+  ok(movedOpener.x > 8 && movedOpener.y > 5, 'the side position changes the exported geometry');
+  ok(await dragOpener(0, 0), 'the opener can be dragged back to the bottom');
+  movedOpener = openerPosition((await info()).info.opener);
+  ok(Math.abs(movedOpener.x) < 2 && movedOpener.y < 2, 'the bottom position changes the exported geometry');
   ok(state.parts.some((p) => p.name === 'Borde de esmalte' && p.color === '#ffffff') &&
     state.parts.some((p) => p.name === 'Texto'), 'outline and text are printable colour parts');
   await wait(600); await shot(path.join(dir, 'esmalte-referencia.png'));

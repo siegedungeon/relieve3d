@@ -1234,7 +1234,7 @@ function nfcMark(S, nfc) {
 
 // ------------------------------------------------------------------ can-tab opener: a slit open to a side edge
 // The thin lip under the slit (1 mm at the mouth) slides under the can's tab; lever up to open. The slit may turn
-// (−45°…60° from the chosen side) to sit square on a curved edge; straighter edges and a plain side slot win.
+// to sit square on a curved edge. A dragged target can select any valid orientation around the outline.
 function placeOpener(mech, cfg, polys, yTop, ring, nfc, warnings) {
   if (!cfg.opener.enabled) return null;
   const sg = cfg.opener.side === 'left' ? -1 : 1;
@@ -1247,7 +1247,9 @@ function placeOpener(mech, cfg, polys, yTop, ring, nfc, warnings) {
   const win0 = [[-W2, -50], [W2, -50], [W2, yKeep], [-W2, yKeep]];
   const step = 0.5, nLen = Math.round(SLOT.len / step), nWall = Math.round(SLOT.wall / step);
   let best = null;
-  for (let deg = -45; deg <= 60; deg += 5) {
+  const firstAngle = cfg.opener.target ? -180 : -45;
+  const lastAngle = cfg.opener.target ? 175 : 60;
+  for (let deg = firstAngle; deg <= lastAngle; deg += 5) {
     // frame where the slit runs along +x: the shape turned by −deg
     const a = -deg * D2R, ca = Math.cos(a), sa = Math.sin(a);
     const rot = ([x, y]) => [x * ca - y * sa, x * sa + y * ca];

@@ -55,3 +55,20 @@ test('phone stand retains single-line text and supports multiline text', () => {
     finally { stand.dispose(); }
   }
 });
+
+test('the nail polish opener can move from the side to the bottom edge', () => {
+  const point = (op) => {
+    const a = op.angle * Math.PI / 180, x = op.xin + op.depth, y = op.ys + op.len / 2;
+    return { x: op.sg * (x * Math.cos(a) - y * Math.sin(a)), y: x * Math.sin(a) + y * Math.cos(a) };
+  };
+  const base = { shape: 'nailpolish-reference', width: 28 };
+  const bottom = canOpenerSolids({ ...base, openerTarget: { x: 0, y: 0 } });
+  const side = canOpenerSolids({ ...base, openerTarget: { x: 20, y: 14 } });
+  try {
+    const b = point(bottom.info.opener), s = point(side.info.opener);
+    assert.ok(Math.abs(b.x) < 2 && b.y < 2, 'opening is on the bottom');
+    assert.ok(s.x > 10 && s.y > 5, 'opening also moves to the side');
+    assert.equal(bottom.body.status(), 'NoError');
+    assert.equal(side.body.status(), 'NoError');
+  } finally { bottom.dispose(); side.dispose(); }
+});
