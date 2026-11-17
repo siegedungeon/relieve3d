@@ -15,6 +15,25 @@ const png = PNG.sync.read(fs.readFileSync(new URL('./logo.png', import.meta.url)
 const logoImage = { data: png.data, width: png.width, height: png.height };
 const overlap = (a, b) => { const i = a.intersect(b); const volume = i.volume(); i.delete(); return volume; };
 
+test('image and text can be moved and scaled independently and survive project saving', () => {
+  const bytes = fs.readFileSync(new URL('../src/fonts/Montserrat-Black.ttf', import.meta.url));
+  const font = opentype.parse(bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength));
+  const base = { shape: 'square', width: 80, artIndependent: true, text: { enabled: true, value: 'ANA', size: 80, dx: 0, dy: 0 }, logo: { enabled: true, size: 70, dx: 0, dy: 0 } };
+  const build = (cfg) => canOpenerSolids(cfg, { logoImage, font });
+  const a = build(base), b = build({ ...base, text: { ...base.text, dx: 3 } }),
+    c = build({ ...base, logo: { ...base.logo, size: 50 } });
+  try {
+    assert.ok(a.info.art.boxes.logo && a.info.art.boxes.text);
+    assert.ok(Math.abs(b.info.art.boxes.text.cx - a.info.art.boxes.text.cx - 3) < 0.2);
+    assert.ok(Math.abs(b.info.art.boxes.logo.cx - a.info.art.boxes.logo.cx) < 0.1);
+    assert.ok(c.info.art.boxes.logo.w < a.info.art.boxes.logo.w * 0.8);
+    assert.ok(Math.abs(c.info.art.boxes.text.w - a.info.art.boxes.text.w) < 0.1);
+    const saved = readCanOpenerProject(canOpenerProject(b.cfg));
+    assert.equal(saved.cfg.text.dx, 3);
+    assert.equal(saved.cfg.artIndependent, true);
+  } finally { a.dispose(); b.dispose(); c.dispose(); }
+});
+
 function slotBox(op, [x0, x1], [y0, y1], [z0, z1]) {
   const a = Manifold.cube([x1 - x0, y1 - y0, z1 - z0]), b = a.translate([x0, y0, z0]), c = b.rotate([0, 0, op.angle]);
   a.delete(); b.delete();

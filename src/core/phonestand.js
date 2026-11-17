@@ -1023,10 +1023,12 @@ function fitBlock(S, region, items, cfg, ctx, warnings, prefer = 'centre') {
   if (best.s <= 0.02) { warnings.push(`No cabe el logo/texto en ${name}: agranda la forma o el ancho.`); return null; }
 
   // real size
-  const Hf = Hn * best.s * ((view ? cfg.logo.size : cfg.text.size) / 100);
+  const independent = !!cfg.artIndependent;
+  const Hf = Hn * best.s * (independent ? 1 : (view ? cfg.logo.size : cfg.text.size) / 100);
   const [dx, dy] = view ? [cfg.logo.dx, cfg.logo.dy] : [0, 0];
   let text = nomText ? textAt(Hf) : null;
-  const ff = frame(Hf, text), shift = [xc + dx - ff.cx, best.yc + dy - ff.cy];
+  const ff = frame(Hf, text), shift = [xc + (independent ? 0 : dx) - ff.cx, best.yc + (independent ? 0 : dy) - ff.cy];
+  if (text && independent) text.cap *= cfg.text.size / 100;
   const dropped = !!text && text.cap < 3 * minLine;
   if (dropped) {
     warnings.push(`El texto queda demasiado pequeño en ${name} (${fmt(text.cap)} mm de alto) para imprimirse: no se genera. Agrándalo${view ? ', ponlo en otro lugar' : ''} o agranda la forma.`);
@@ -1035,14 +1037,20 @@ function fitBlock(S, region, items, cfg, ctx, warnings, prefer = 'centre') {
   const raw = [];
   let painted = 0;
   if (view) {
-    const r = logoRaster(ctx.src, view, Hf, minLine, ctx.skip);
+    const logoH = Hf * (independent ? cfg.logo.size / 100 : 1);
+    const r = logoRaster(ctx.src, view, logoH, minLine, ctx.skip);
     painted += r.painted;
-    for (const l of r.layers) raw.push({ kind: 'logo', idx: l.idx, cs: o(o(new CS(l.polys, 'Positive')).translate(shift)) });
+    for (const l of r.layers) raw.push({ kind: 'logo', idx: l.idx, cs: o(o(new CS(l.polys, 'Positive')).translate(independent ? [shift[0] + cfg.logo.dx, shift[1] + cfg.logo.dy + (Hf - logoH) / 2] : shift)) });
   }
   if (text) {
-    const t = thickenText(S, text.cs, minLine);
+    let textCS = text.cs;
+    if (independent) {
+      const b = textCS.bounds(), cx = (b.min[0] + b.max[0]) / 2, cy = (b.min[1] + b.max[1]) / 2, scale = cfg.text.size / 100;
+      textCS = o(o(o(textCS.translate([-cx, -cy])).scale([scale, scale])).translate([cx, cy]));
+    }
+    const t = thickenText(S, textCS, minLine);
     painted += t.painted;
-    if (t.cs) raw.push({ kind: 'text', idx: -1, cs: o(t.cs.translate(shift)) });
+    if (t.cs) raw.push({ kind: 'text', idx: -1, cs: o(t.cs.translate(independent ? [shift[0] + cfg.text.dx, shift[1] + cfg.text.dy] : shift)) });
   }
   if (!raw.length) { if (!dropped) warnings.push(`El logo/texto de ${name} quedó vacío.`); return null; }
   const what = view && text ? 'logo y el texto' : view ? 'logo' : 'texto';

@@ -4,6 +4,8 @@ import { parse as parseFont } from 'opentype.js';
 import { Viewer3D } from './viewer3d.js';
 import { imageDataFrom, isImageFile, readDataURL } from './phonestand_ui.js';
 import { PHONESTAND_FONTS } from './core/phonestand.js';
+import { FontPicker } from './font_picker.js';
+import { ensureFont } from './core/text.js';
 import {
   CAN_OPENER_SHAPES, DEFAULT_CAN_OPENER, prepareCanOpener, buildCanOpener, exportCanOpener,
   canOpenerProject, readCanOpenerProject,
@@ -34,6 +36,7 @@ export class CanOpenerStudio {
     this.stale = true;
     this.seq = 0;
     this.fonts = new Map();
+    this.artTarget = 'text';
     this.build();
   }
 
@@ -81,6 +84,8 @@ export class CanOpenerStudio {
         </section>
         <section class="card">
           <h3>3. Logo y texto</h3>
+          <div class="small muted">Elige qué editar. Arrastra el punto central para moverlo y el punto de la esquina para cambiar su tamaño.</div>
+          <div><button class="btn mini" data-a="editLogo" type="button">Editar imagen</button> <button class="btn mini" data-a="editText" type="button">Editar texto</button></div>
           <div class="ps-logo" data-r="logoInfo"></div>
           <button class="btn wide" data-a="logo">⬆ Cargar logo (PNG/JPG/SVG)</button>
           ${check('Poner el logo', 'logo.enabled')}
@@ -98,6 +103,8 @@ export class CanOpenerStudio {
           <label class="row">Texto <textarea data-k="text.value" maxlength="40" rows="3" placeholder="Escribe el texto; usa Enter para otra línea"></textarea></label>
           ${select('Fuente', 'text.font', Object.keys(PHONESTAND_FONTS).map((name) => [name, name]))}
           ${number('Tamaño del texto (%)', 'text.size')}
+          ${number('Mover texto a la derecha (mm)', 'text.dx')}
+          ${number('Mover texto hacia arriba (mm)', 'text.dy')}
           ${color('Color del cuerpo', 'colors.body')}
           ${color('Color de acento', 'colors.accent')}
           ${check('Logo y texto a color', 'colors.twoColor')}
@@ -125,6 +132,11 @@ export class CanOpenerStudio {
     <input type="file" data-r="fileShape" accept="image/*,.svg" hidden />
     <input type="file" data-r="fileProject" accept=".r3o,.json" hidden />`;
     this.$ = (name) => this.root.querySelector(`[data-r="${name}"]`);
+    this.picker = new FontPicker(this.root.querySelector('[data-k="text.font"]'), {
+      sample: () => ({ text: this.cfg.text.value || 'Tu marca', weight: 400 }),
+      label: 'Fuente del texto', onError: this.cb.toast,
+      loadFont: family => ensureFont(family, 400, { file: PHONESTAND_FONTS[family] }),
+    });
     this.root.addEventListener('click', (e) => {
       const a = e.target.closest('[data-a]')?.dataset.a;
       if (a === 'home') this.cb.onBack();
@@ -135,6 +147,10 @@ export class CanOpenerStudio {
       else if (a === 'save') this.saveProject();
       else if (a === 'apply') this.rebuild();
       else if (a === 'export') this.export();
+      else if (a === 'editLogo' || a === 'editText') {
+        this.artTarget = a === 'editLogo' ? 'logo' : 'text';
+        this.updateHandles();
+      }
     });
     const input = (e) => {
       const el = e.target;
@@ -149,7 +165,15 @@ export class CanOpenerStudio {
         return;
       }
       const previous = get(this.cfg, el.dataset.k);
+      if (!this.cfg.artIndependent && ['text.dx', 'text.dy', 'text.size'].includes(el.dataset.k)) {
+        this.cfg.artIndependent = true;
+        if (this.logoImg && this.cfg.logo.enabled && this.cfg.text.enabled) {
+          this.cfg.text.dx = this.cfg.logo.dx; this.cfg.text.dy = this.cfg.logo.dy;
+          this.cfg.text.size = this.cfg.logo.size;
+        }
+      }
       set(this.cfg, el.dataset.k, value);
+      if (el.dataset.k === 'text.value') this.picker.sync();
       if (el.dataset.k === 'shape') {
         if (value === 'nailpolish-reference' && previous !== value) {
           if (this.cfg.width === 49) this.cfg.width = 28;
@@ -213,6 +237,7 @@ export class CanOpenerStudio {
       : '<span class="small muted">Sin logo: puedes cargar uno o escribir texto.</span>';
     this.$('shapeInfo').textContent = this.shapeSrc ? this.shapeName || 'Silueta del proyecto' : 'Carga una imagen con una silueta conectada.';
     this.visibility();
+    this.picker.sync();
     this.renderLayers();
   }
 
@@ -274,13 +299,31 @@ export class CanOpenerStudio {
         if (id === 'opener') {
           this.cfg.openerTarget = point;
           this.cfg.side = point.x < 0 ? 'left' : 'right';
-        } else {
+        } else if (id === 'attachment') {
           this.cfg.attachment.target = point;
           if (this.cfg.attachment.kind === 'edge-loop') {
             const bounds = new THREE.Box3().setFromBufferAttribute(this.res.parts[0].geometry.getAttribute('position'));
             const angle = Math.atan2(point.x - (bounds.min.x + bounds.max.x) / 2, point.y - (bounds.min.y + bounds.max.y) / 2);
             this.cfg.attachment.position = angle < -Math.PI * 3 / 8 ? 'side-left' : angle < -Math.PI / 8 ? 'left'
               : angle > Math.PI * 3 / 8 ? 'side-right' : angle > Math.PI / 8 ? 'right' : 'center';
+          }
+        } else if (id === 'art-move' || id === 'art-scale') {
+          const box = this.res.info.art.boxes[this.artTarget];
+          if (!box) return;
+          if (!this.cfg.artIndependent) {
+            this.cfg.artIndependent = true;
+            if (this.logoImg && this.cfg.logo.enabled && this.cfg.text.enabled) {
+              this.cfg.text.dx = this.cfg.logo.dx; this.cfg.text.dy = this.cfg.logo.dy;
+              this.cfg.text.size = this.cfg.logo.size;
+            }
+          }
+          const item = this.cfg[this.artTarget];
+          if (id === 'art-move') {
+            item.dx += point.x - box.cx; item.dy += point.y - box.cy;
+          } else {
+            const oldDistance = Math.hypot(box.w / 2, box.h / 2);
+            const distance = Math.hypot(point.x - box.cx, point.y - box.cy);
+            item.size = Math.max(20, Math.min(150, item.size * distance / Math.max(oldDistance, 0.01)));
           }
         }
         this.sync();
@@ -348,9 +391,25 @@ export class CanOpenerStudio {
     });
     const center = box.getCenter(new THREE.Vector3());
     this.viewer.model.position.set(-center.x, -center.y, -box.min.z);
+    this.updateHandles();
+    this.viewer.requestRender();
+  }
+
+  updateHandles() {
+    if (!this.handles || !this.res || !this.viewer) return;
+    this.handles.clear();
+    this.root.querySelector('[data-a="editLogo"]').setAttribute('aria-pressed', String(this.artTarget === 'logo'));
+    this.root.querySelector('[data-a="editText"]').setAttribute('aria-pressed', String(this.artTarget === 'text'));
     this.handles.set('opener', openerHandle(this.res.info.opener, this.cfg.thickness + 2), '#ff942d');
     const [x, y] = this.res.info.attachment.position;
     this.handles.set('attachment', { x, y, z: this.cfg.thickness + 2 }, '#37a4ff');
+    const art = this.res.info.art.boxes[this.artTarget];
+    if (art) {
+      const z = this.res.info.size.totalHeight + 2;
+      const color = this.artTarget === 'text' ? '#d35cff' : '#21d68b';
+      this.handles.set('art-move', { x: art.cx, y: art.cy, z }, color, 1.4);
+      this.handles.set('art-scale', { x: art.cx + art.w / 2, y: art.cy + art.h / 2, z }, color, 1.1);
+    }
     this.viewer.requestRender();
   }
 

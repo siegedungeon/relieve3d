@@ -61,9 +61,9 @@ export class PlacementHandles {
     this.handles.clear();
   }
 
-  set(id, position, color) {
+  set(id, position, color, radius = 2.5) {
     if (!position) return;
-    const marker = new THREE.Mesh(new THREE.SphereGeometry(2.5, 16, 12),
+    const marker = new THREE.Mesh(new THREE.SphereGeometry(radius, 16, 12),
       new THREE.MeshBasicMaterial({ color, depthTest: false }));
     marker.position.set(position.x, position.y, position.z);
     marker.userData.handle = id;

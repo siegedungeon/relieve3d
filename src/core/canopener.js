@@ -19,7 +19,7 @@ export const DEFAULT_CAN_OPENER = () => ({
   polish: { outline: true, color: '#ffffff', width: 1.2, height: 1 },
   attachment: { mount: 'integrated', kind: 'round', position: 'left', diameter: 3, slotWidth: 8, wall: 1.5 },
   logo: { ...DEFAULT_PHONESTAND().logo },
-  text: { ...DEFAULT_PHONESTAND().text, where: 'top' },
+  text: { ...DEFAULT_PHONESTAND().text, where: 'top', dx: 0, dy: 0 }, artIndependent: true,
   colors: { ...DEFAULT_PHONESTAND().colors },
 });
 
@@ -67,6 +67,8 @@ export function normalizeCanOpener(input = {}) {
   const passageWall = shape === 'nailpolish-reference' ? 1 : 1.5;
   if ((a.kind === 'lateral' || a.kind === 'cord-loop' || a.kind === 'edge-loop') && a.diameter > thickness - 2 * passageWall) throw new Error('El agujero lateral necesita más material arriba y abajo: reduce su diámetro o aumenta el grosor.');
   const logo = { ...shared.logo, where: 'top' }, text = { ...shared.text, where: 'top' };
+  text.dx = Math.max(-100, Math.min(100, Number(cfg.text?.dx) || 0));
+  text.dy = Math.max(-100, Math.min(100, Number(cfg.text?.dy) || 0));
   const sink = logo.mode === 'flat' ? logo.flatDepth : logo.mode === 'engrave' ? logo.depth : 0;
   const borderDepth = border.enabled ? border.depth : 0;
   if (a.kind === 'edge-loop' && thickness - a.diameter - sink - borderDepth < 2 * passageWall) throw new Error('El paso necesita más grosor: reduce su diámetro o la profundidad del borde y el logo, o aumenta el grosor.');
@@ -77,7 +79,7 @@ export function normalizeCanOpener(input = {}) {
     thickness, border, polish, side: cfg.side === 'left' ? 'left' : 'right', notch: !!cfg.notch,
     openerTarget: cfg.openerTarget && Number.isFinite(cfg.openerTarget.x) && Number.isFinite(cfg.openerTarget.y)
       ? { x: cfg.openerTarget.x, y: cfg.openerTarget.y } : null,
-    attachment: a, logo, text, colors: shared.colors,
+    attachment: a, logo, text, artIndependent: cfg.artIndependent === true, colors: shared.colors,
   };
 }
 
@@ -387,10 +389,18 @@ export function canOpenerSolids(input = {}, { logoImage = null, shapeImage = nul
     if (layout.lateral || layout.cordLoop || layout.edgeLoop || (connector && (selected.lateral || selected.cordLoop))) warnings.push('El agujero lateral y la ranura del abre latas tienen puentes: revisa el laminado y realiza una prueba física.');
     const used = new Set(artPieces.filter((p) => p.kind === 'logo').map((p) => p.idx));
     const logo = art.palette?.map((e) => ({ ...e, used: used.has(e.idx) || (mode === 'engrave' && !art.skip.has(e.idx)), skipped: !e.on ? 'off' : art.skip.has(e.idx) ? 'body' : null })) || null;
+    const artBoxes = {};
+    for (const kind of ['logo', 'text']) {
+      const sections = (art.top?.pieces || []).filter((p) => p.kind === kind).map((p) => p.cs.bounds());
+      if (!sections.length) continue;
+      const minX = Math.min(...sections.map((b) => b.min[0])), maxX = Math.max(...sections.map((b) => b.max[0]));
+      const minY = Math.min(...sections.map((b) => b.min[1])), maxY = Math.max(...sections.map((b) => b.max[1]));
+      artBoxes[kind] = { cx: (minX + maxX) / 2, cy: (minY + maxY) / 2, w: maxX - minX, h: maxY - minY };
+    }
     const bbox = body.boundingBox(), info = {
       shape: cfg.shape, opener, border: { ...cfg.border, surfaceZ },
       attachment: { mount: a.mount, kind: a.kind, wall: a.wall, position, bodyHoles, connectorHoles: connector?.holes || [], lateral: !!layout.lateral, edgeData },
-      art: { mode, box: art.top?.box || null }, logo,
+      art: { mode, box: art.top?.box || null, boxes: artBoxes }, logo,
       size: { w: bbox.max[0] - bbox.min[0], l: bbox.max[1] - bbox.min[1], h: T,
         totalHeight: Math.max(T, ...polishPieces.map((p) => p.solid.boundingBox().max[2]),
           ...artPieces.map((p) => p.solid.boundingBox().max[2])) },

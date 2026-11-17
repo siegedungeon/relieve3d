@@ -44,6 +44,26 @@ module.exports = async ({ win, run, shot, wait }) => {
   await set('text.value', 'YOUR\nTEXT\nHERE');
   await run('window.__r3d.canopener.rebuild()');
   const referenceText = await info();
+  ok(await until(`document.querySelector('#canopener .font-picker-trigger .font-picker-sample')?.dataset.state === 'ready'`), 'font selector loads a preview');
+  ok(await run(`document.querySelector('#canopener .font-picker-trigger .font-picker-sample').textContent === 'YOUR TEXT HERE'`), 'font selector previews the actual text');
+  const dragArt = async (id, dx, dy) => {
+    const coords = await run(`(() => {
+      const studio = window.__r3d.canopener, marker = studio.handles.handles.get(${JSON.stringify(id)});
+      const viewer = studio.viewer, rect = viewer.renderer.domElement.getBoundingClientRect();
+      viewer.model.updateWorldMatrix(true, true);
+      const project = (v) => { const p = viewer.model.localToWorld(v).project(viewer.camera); return { x: Math.round(rect.left + (p.x + 1) * rect.width / 2), y: Math.round(rect.top + (1 - p.y) * rect.height / 2) }; };
+      return { from: project(marker.position.clone()), to: project(marker.position.clone().add(new (marker.position.constructor)(${dx}, ${dy}, 0))) };
+    })()`);
+    win.webContents.sendInputEvent({ type: 'mouseMove', ...coords.from });
+    win.webContents.sendInputEvent({ type: 'mouseDown', ...coords.from, button: 'left', clickCount: 1 });
+    win.webContents.sendInputEvent({ type: 'mouseMove', ...coords.to, button: 'left' });
+    win.webContents.sendInputEvent({ type: 'mouseUp', ...coords.to, button: 'left', clickCount: 1 });
+    await until('!window.__r3d.canopener.stale');
+  };
+  await dragArt('art-move', 2, 1);
+  ok(Math.abs((await info()).cfg.text.dx) > 0.5, 'text moves using the mouse');
+  await dragArt('art-scale', -2, -2);
+  ok(Math.abs((await info()).cfg.text.size - 100) > 1, 'text resizes using the mouse');
   ok(referenceText.parts.some((p) => p.name === 'Texto' && p.color === '#ffffff') &&
     referenceText.info.size.totalHeight === 5, 'three-line text stays within the 5 mm total height');
   const profileRoots = [process.env.ProgramFiles, process.env.LOCALAPPDATA && path.join(process.env.LOCALAPPDATA, 'Programs')].filter(Boolean);
