@@ -30,6 +30,7 @@ export async function prepareCanOpener() {
 }
 const PROJECT_APP = 'Relieve3D-Destapador';
 const LINK_DIAMETER = 4.5;
+const POLISH_OUTER_MARGIN = 0.8;
 
 function measure(v, fallback, min, max, label) {
   const n = v === undefined ? fallback : Number(typeof v === 'string' ? v.replace(',', '.') : v);
@@ -332,11 +333,12 @@ export function canOpenerSolids(input = {}, { logoImage = null, shapeImage = nul
     }
     const polishPieces = [];
     if (cfg.shape === 'nailpolish-reference' && cfg.polish.outline) {
-      const interior = o(original.offset(-cfg.polish.width, 'Round', 2, 64));
-      if (interior.isEmpty()) throw new Error('El borde de color es demasiado ancho para esta figura.');
+      const outer = o(original.offset(-POLISH_OUTER_MARGIN, 'Round', 2, 64));
+      const interior = o(original.offset(-(POLISH_OUTER_MARGIN + cfg.polish.width), 'Round', 2, 64));
+      if (outer.isEmpty() || interior.isEmpty()) throw new Error('El borde de color es demasiado ancho para esta figura.');
       const seam = H.roundRect(S, -cfg.width, cfg.width, cfg.width - cfg.polish.width / 2,
         cfg.width + cfg.polish.width / 2, cfg.polish.width / 2);
-      let colorArea = o(o(original.subtract(interior)).add(o(seam.intersect(original))));
+      let colorArea = o(o(outer.subtract(interior)).add(o(seam.intersect(outer))));
       colorArea = o(colorArea.subtract(o(holeCS.offset(0.6, 'Round', 2, 48))));
       if (art.top) colorArea = o(colorArea.subtract(art.top.cs));
       const regions = inset

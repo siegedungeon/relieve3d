@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import { PNG } from 'pngjs';
 import opentype from 'opentype.js';
+import { phoneStandShared } from '../src/core/phonestand.js';
 import { read3MF } from '../src/core/threemf_read.js';
 import {
   CAN_OPENER_SHAPES, prepareCanOpener, canOpenerSolids, buildCanOpener, exportCanOpener,
@@ -194,6 +195,25 @@ test('external ring and ribbon are joined, open and follow the chosen side', () 
       }
     } finally { top.dispose(); side.dispose(); }
   }
+});
+
+test('the nail polish colour outline leaves a body-coloured outer margin', () => {
+  const sol = canOpenerSolids({ shape: 'nailpolish-reference', width: 28,
+    polish: { outline: true, width: 1.2 }, text: { enabled: false } });
+  try {
+    const y = 15, edge = phoneStandShared.maxAt(sol.outline.toPolygons(), 1, y);
+    const sample = (x) => {
+      const cylinder = Manifold.cylinder(0.4, 0.12, 0.12, 32);
+      const probe = cylinder.translate([x, y, 7.5]); cylinder.delete();
+      return probe;
+    };
+    const margin = sample(edge - 0.35), stripe = sample(edge - 1.4);
+    try {
+      assert.ok(overlap(sol.body, margin) > 0.01, 'outer margin keeps the body colour');
+      assert.ok(sol.polishPieces.every((part) => overlap(part.solid, margin) < 1e-4), 'outline does not reach edge');
+      assert.ok(sol.polishPieces.some((part) => overlap(part.solid, stripe) > 0.01), 'coloured stripe is inset');
+    } finally { margin.delete(); stripe.delete(); }
+  } finally { sol.dispose(); }
 });
 
 test('reference nail polish has optional colour outline, multiline text and keyring options', () => {
