@@ -40,7 +40,12 @@ module.exports = async ({ win, run, shot, wait }) => {
     reference.info.attachment.bodyHoles[0].diameter === 4, 'default dimensions match the original bottle');
   ok(reference.colors.includes('#e9a9bd') && reference.colors.includes('#ffffff') && reference.cfg.polish.height === 1,
     'the raised 1 mm outline has the reference colours');
-  await check('text.enabled', true);
+  ok(await run(`!${q('[data-k="text.enabled"]')}.checked`), 'text starts disabled');
+  await set('text.font', 'Lilita One');
+  await run(`(() => { const el=${q('[data-k="text.value"]')}; el.value='HB'; el.dispatchEvent(new Event('input',{bubbles:true})); })()`);
+  ok(await until(`!window.__r3d.canopener.stale && window.__r3d.canopener.res?.cfg.text.value === 'HB'`), 'typing text regenerates the design automatically');
+  ok(await run(`window.__r3d.canopener.cfg.text.enabled && ${q('[data-k="text.enabled"]')}.checked && window.__r3d.canopener.res.parts.some(p => p.name === 'Texto')`), 'typing enables text and produces visible geometry');
+  await set('text.font', 'Montserrat Bold');
   await set('text.value', 'YOUR\nTEXT\nHERE');
   await run('window.__r3d.canopener.rebuild()');
   const referenceText = await info();

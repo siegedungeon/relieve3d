@@ -173,7 +173,13 @@ export class CanOpenerStudio {
         }
       }
       set(this.cfg, el.dataset.k, value);
-      if (el.dataset.k === 'text.value') this.picker.sync();
+      if (el.dataset.k === 'text.value') {
+        if (value.trim()) {
+          this.cfg.text.enabled = true;
+          this.root.querySelector('[data-k="text.enabled"]').checked = true;
+        }
+        this.picker.sync();
+      }
       if (el.dataset.k === 'shape') {
         if (value === 'nailpolish-reference' && previous !== value) {
           if (this.cfg.width === 49) this.cfg.width = 28;
@@ -199,7 +205,7 @@ export class CanOpenerStudio {
       if (el.dataset.k.startsWith('attachment.') && el.dataset.k !== 'attachment.position' && el.dataset.k !== 'attachment.mount') this.$('preset').value = 'custom';
       this.visibility();
       this.invalidate();
-      if (el.dataset.k === 'notch' || el.dataset.k === 'border.enabled' || el.dataset.k === 'polish.outline' || el.dataset.k === 'polish.color' || (e.type === 'change' && refreshOnChange) || (el.tagName === 'SELECT' && (el.dataset.k === 'shape' || el.dataset.k.startsWith('attachment.')))) this.scheduleRebuild();
+      if (el.dataset.k === 'text.value' || el.dataset.k === 'notch' || el.dataset.k === 'border.enabled' || el.dataset.k === 'polish.outline' || el.dataset.k === 'polish.color' || (e.type === 'change' && refreshOnChange) || (el.tagName === 'SELECT' && (el.dataset.k === 'shape' || el.dataset.k.startsWith('attachment.')))) this.scheduleRebuild();
     };
     this.root.addEventListener('input', input);
     this.root.addEventListener('change', input);
@@ -228,7 +234,7 @@ export class CanOpenerStudio {
   sync() {
     for (const el of this.root.querySelectorAll('[data-k]')) {
       const value = get(this.cfg, el.dataset.k);
-      if (el.type === 'checkbox') el.checked = !!value; else el.value = value ?? '';
+      if (el.type === 'checkbox') el.checked = !!value; else if (el.value !== String(value ?? '')) el.value = value ?? '';
     }
     this.$('preset').value = Object.keys(PRESETS).find((key) =>
       Object.entries(PRESETS[key]).every(([field, value]) => this.cfg.attachment[field] === value)) || 'custom';
@@ -321,7 +327,7 @@ export class CanOpenerStudio {
           if (id === 'art-move') {
             item.dx += point.x - box.cx; item.dy += point.y - box.cy;
           } else {
-            const oldDistance = Math.hypot(box.w / 2, box.h / 2);
+            const oldDistance = Math.max(4.5, Math.hypot(box.w / 2, box.h / 2));
             const distance = Math.hypot(point.x - box.cx, point.y - box.cy);
             item.size = Math.max(20, Math.min(150, item.size * distance / Math.max(oldDistance, 0.01)));
           }
@@ -407,8 +413,10 @@ export class CanOpenerStudio {
     if (art) {
       const z = this.res.info.size.totalHeight + 2;
       const color = this.artTarget === 'text' ? '#d35cff' : '#21d68b';
+      const radius = Math.hypot(art.w / 2, art.h / 2);
+      const offset = Math.max(1, 4.5 / Math.max(radius, 0.01));
       this.handles.set('art-move', { x: art.cx, y: art.cy, z }, color, 1.4);
-      this.handles.set('art-scale', { x: art.cx + art.w / 2, y: art.cy + art.h / 2, z }, color, 1.1);
+      this.handles.set('art-scale', { x: art.cx + art.w / 2 * offset, y: art.cy + art.h / 2 * offset, z }, color, 1.1);
     }
     this.viewer.requestRender();
   }
