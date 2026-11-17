@@ -4,7 +4,8 @@ import { DEFAULT_PHONESTAND, normalizePhoneStand, preparePhoneStand, phoneStandS
 
 export const CAN_OPENER_SHAPES = [
   { id: 'heart', name: 'Corazón' }, { id: 'star', name: 'Estrella' },
-  { id: 'flower', name: 'Flor' }, { id: 'nailpolish', name: 'Esmalte' },
+  { id: 'flower', name: 'Flor' }, { id: 'nailpolish', name: 'Esmalte clásico' },
+  { id: 'nailpolish-reference', name: 'Esmalte · referencia' },
   { id: 'circle', name: 'Círculo' }, { id: 'square', name: 'Cuadrado redondeado' },
   { id: 'mouse', name: 'Ratón' }, { id: 'bear', name: 'Osito' },
   { id: 'cat', name: 'Gatito' }, { id: 'cloud', name: 'Nube' },
@@ -15,6 +16,7 @@ export const DEFAULT_CAN_OPENER = () => ({
   name: 'Destapador', shape: 'heart', width: 49, thickness: 8,
   side: 'right',
   border: { enabled: false, width: 3, depth: 1.2 },
+  polish: { outline: true, color: '#ffffff', width: 1.2 },
   attachment: { mount: 'integrated', kind: 'round', position: 'left', diameter: 3, slotWidth: 8, wall: 1.5 },
   logo: { ...DEFAULT_PHONESTAND().logo },
   text: { ...DEFAULT_PHONESTAND().text, where: 'top' },
@@ -40,6 +42,10 @@ export function normalizeCanOpener(input = {}) {
   const shared = normalizePhoneStand({ logo: cfg.logo, text: cfg.text, colors: cfg.colors });
   const a = { ...d.attachment, ...(cfg.attachment || {}) };
   const border = { ...d.border, ...(cfg.border || {}) };
+  const polish = { ...d.polish, ...(cfg.polish || {}) };
+  polish.outline = !!polish.outline;
+  polish.color = /^#[0-9a-f]{6}$/i.test(polish.color) ? polish.color : d.polish.color;
+  polish.width = measure(polish.width, d.polish.width, 0.8, 3, 'Ancho del borde de color');
   border.enabled = !!border.enabled;
   border.width = measure(border.width, d.border.width, 1, 6, 'Ancho del borde');
   border.depth = measure(border.depth, d.border.depth, 0.4, 2, 'Profundidad del interior');
@@ -63,8 +69,8 @@ export function normalizeCanOpener(input = {}) {
   if (thickness - sink - borderDepth < 4.6) throw new Error('El logo hundido dejaría muy poco techo sobre la ranura: aumenta el grosor o reduce la profundidad.');
   return {
     name: String(cfg.name || d.name).slice(0, 60), shape,
-    width: measure(cfg.width, d.width, 40, 100, 'Ancho de la forma'),
-    thickness, border, side: cfg.side === 'left' ? 'left' : 'right', notch: !!cfg.notch,
+    width: measure(cfg.width, d.width, shape === 'nailpolish-reference' ? 28 : 40, 100, 'Ancho de la forma'),
+    thickness, border, polish, side: cfg.side === 'left' ? 'left' : 'right', notch: !!cfg.notch,
     openerTarget: cfg.openerTarget && Number.isFinite(cfg.openerTarget.x) && Number.isFinite(cfg.openerTarget.y)
       ? { x: cfg.openerTarget.x, y: cfg.openerTarget.y } : null,
     attachment: a, logo, text, colors: shared.colors,
@@ -80,6 +86,11 @@ function shapeOutline(S, cfg, image, warnings) {
     if (!shape) throw new Error('No se pudo construir la silueta de la imagen.');
   } else if (cfg.shape === 'square') {
     shape = H.roundRect(S, -0.5, 0.5, -0.5, 0.5, 0.13);
+  } else if (cfg.shape === 'nailpolish-reference') {
+    shape = o(new CS([[[-0.38, 0], [0.38, 0], [0.47, 0.2], [0.5, 0.75],
+      [0.48, 0.9], [0.36, 1], [0.34, 1.06], [0.26, 1.94], [0.23, 2],
+      [-0.23, 2], [-0.26, 1.94], [-0.34, 1.06], [-0.36, 1],
+      [-0.48, 0.9], [-0.5, 0.75], [-0.47, 0.2]]], 'NonZero'));
   } else if (cfg.shape === 'nailpolish') {
     shape = o(CS.union([
       H.roundRect(S, -0.45, 0.45, -0.48, 0.23, 0.12),
@@ -289,7 +300,12 @@ export function canOpenerSolids(input = {}, { logoImage = null, shapeImage = nul
     const inset = cfg.border.enabled ? o(original.offset(-cfg.border.width, 'Round', 2, 64)) : null;
     if (inset?.isEmpty()) throw new Error('La figura es demasiado estrecha para ese borde: reduce su ancho o agranda la figura.');
     const surfaceZ = T - (cfg.border.enabled ? cfg.border.depth : 0);
-    const art = H.buildArt(S, { variant: 'short', yh0: original.bounds().min[1] - 1 }, cfg, inset || original, null,
+    let artOutline = inset || original;
+    if (cfg.shape === 'nailpolish-reference') {
+      const bodyArea = H.roundRect(S, -cfg.width, cfg.width, -1, cfg.width * 0.98, 0.5);
+      artOutline = o(artOutline.intersect(bodyArea));
+    }
+    const art = H.buildArt(S, { variant: 'short', yh0: original.bounds().min[1] - 1 }, cfg, artOutline, null,
       { logoImage, font }, warnings, avoid);
     const mode = cfg.logo.mode, sink = mode === 'flat' ? cfg.logo.flatDepth : cfg.logo.depth;
     const artPieces = [];
@@ -314,6 +330,25 @@ export function canOpenerSolids(input = {}, { logoImage = null, shapeImage = nul
       const recess = H.extrudeZ(S, o(art.top.cs.simplify(1e-6)), surfaceZ - sink, surfaceZ + 1);
       body = o(body.subtract(recess));
     }
+    const polishPieces = [];
+    if (cfg.shape === 'nailpolish-reference' && cfg.polish.outline) {
+      const interior = o(original.offset(-cfg.polish.width, 'Round', 2, 64));
+      if (interior.isEmpty()) throw new Error('El borde de color es demasiado ancho para esta figura.');
+      const seam = H.roundRect(S, -cfg.width, cfg.width, cfg.width - cfg.polish.width / 2,
+        cfg.width + cfg.polish.width / 2, cfg.polish.width / 2);
+      let colorArea = o(o(original.subtract(interior)).add(o(seam.intersect(original))));
+      colorArea = o(colorArea.subtract(o(holeCS.offset(0.6, 'Round', 2, 48))));
+      if (art.top) colorArea = o(colorArea.subtract(art.top.cs));
+      const regions = inset
+        ? [{ cs: o(colorArea.subtract(inset)), z: T }, { cs: o(colorArea.intersect(inset)), z: surfaceZ }]
+        : [{ cs: colorArea, z: T }];
+      for (const region of regions) {
+        if (region.cs.isEmpty() || region.cs.area() < 0.01) continue;
+        const solid = H.extrudeZ(S, region.cs, region.z - 0.6, region.z);
+        body = o(body.subtract(solid));
+        polishPieces.push({ solid, color: cfg.polish.color });
+      }
+    }
     const components = body.decompose().map(o);
     if (body.status() !== 'NoError' || body.volume() <= 0 || components.filter((p) => p.volume() > 1e-6).length !== 1) {
       throw new Error('La forma, ranura y enganche no producen un cuerpo sólido. Cambia las medidas o la forma.');
@@ -334,9 +369,9 @@ export function canOpenerSolids(input = {}, { logoImage = null, shapeImage = nul
       attachment: { mount: a.mount, kind: a.kind, wall: a.wall, position, bodyHoles, connectorHoles: connector?.holes || [], lateral: !!layout.lateral, edgeData },
       art: { mode, box: art.top?.box || null }, logo,
       size: { w: bbox.max[0] - bbox.min[0], l: bbox.max[1] - bbox.min[1], h: T },
-      volume: (body.volume() + artPieces.reduce((s, p) => s + p.solid.volume(), 0) + (connector?.solid.volume() || 0)) / 1000,
+      volume: (body.volume() + artPieces.reduce((s, p) => s + p.solid.volume(), 0) + polishPieces.reduce((s, p) => s + p.solid.volume(), 0) + (connector?.solid.volume() || 0)) / 1000,
     };
-    return { cfg, body, outline, artPieces, connector: connector?.solid || null, info, warnings, dispose: () => o.free() };
+    return { cfg, body, outline, artPieces, polishPieces, connector: connector?.solid || null, info, warnings, dispose: () => o.free() };
   } catch (err) { o.free(); throw err; }
 }
 
@@ -351,6 +386,7 @@ export function buildCanOpener(input = {}, media = {}) {
       parts.push({ name, color: shade, filamentIndex, geometry: H.meshGeometry(solid.getMesh()), ...extra });
     };
     add('Cuerpo destapador', sol.body, sol.cfg.colors.body);
+    for (const p of sol.polishPieces) add('Borde de esmalte', p.solid, p.color, { art: true });
     for (const p of sol.artPieces) {
       const label = p.kind === 'text' ? 'Texto' : `Logo color ${p.idx + 1}`;
       add(label, p.solid, sol.cfg.colors.twoColor ? p.color : sol.cfg.colors.body, { art: true, layer: p.key });

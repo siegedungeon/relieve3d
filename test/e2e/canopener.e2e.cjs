@@ -155,6 +155,53 @@ module.exports = async ({ win, run, shot, wait }) => {
       ok(JSON.stringify(geometry(standard.model)) === JSON.stringify(geometry(native.model)), 'standard and A1 exports have identical geometry');
     }
   }
+  await check('logo.enabled', false);
+  await set('shape', 'nailpolish-reference');
+  await set('width', '28');
+  await set('logo.mode', 'relief');
+  await set('colors.body', '#e9a9bd');
+  await set('colors.accent', '#ffffff');
+  await set('polish.color', '#ffffff');
+  await check('colors.twoColor', true);
+  await check('polish.outline', true);
+  await check('text.enabled', true);
+  await set('text.value', 'ANA\nPABON');
+  await run('window.__r3d.canopener.rebuild()');
+  state = await info();
+  ok(state.cfg.shape === 'nailpolish-reference' && Math.abs(state.info.size.w - 28) < 0.1 &&
+    state.info.size.l > 55 && state.cfg.text.value === 'ANA\nPABON', 'reference bottle and personalised multiline text are generated');
+  ok(state.parts.some((p) => p.name === 'Borde de esmalte' && p.color === '#ffffff') &&
+    state.parts.some((p) => p.name === 'Texto'), 'outline and text are printable colour parts');
+  await wait(600); await shot(path.join(dir, 'esmalte-referencia.png'));
+  await run('window.__r3d.canopener.saveProject()');
+  const bottleProject = JSON.parse(fs.readFileSync(projectFile, 'utf8'));
+  ok(bottleProject.cfg.polish.outline && bottleProject.cfg.text.value === 'ANA\nPABON',
+    'the editable bottle project preserves the text and outline');
+  await check('polish.outline', false);
+  ok(await until(`!window.__r3d.canopener.stale && window.__r3d.canopener.res?.cfg.polish.outline === false`),
+    'the colour outline can be removed');
+  ok(!(await info()).parts.some((p) => p.name === 'Borde de esmalte'), 'removing the outline leaves no colour part');
+  await check('polish.outline', true);
+  await until(`!window.__r3d.canopener.stale && window.__r3d.canopener.res?.cfg.polish.outline === true`);
+  await run(`(${q('[data-r="format"]')}.value='standard')`);
+  await run('window.__r3d.canopener.export()');
+  const bottleModel = read3MF(fs.readFileSync(path.join(exp, 'Destapador.3mf')));
+  ok(bottleModel.parts.some((p) => /Borde de esmalte/.test(p.name)) && bottleModel.parts.some((p) => /Texto/.test(p.name)),
+    'the bottle 3MF preserves outline and text');
+  if (installed) {
+    await run(`(${q('[data-r="format"]')}.value='bambu')`);
+    await run('window.__r3d.canopener.export()');
+    const bottleFile = path.join(exp, 'Destapador_Bambu_A1.3mf');
+    const bottleBytes = fs.readFileSync(bottleFile);
+    const bottleNative = read3MF(bottleBytes);
+    const bottleZip = unzipSync(bottleBytes);
+    const bottleProfile = JSON.parse(strFromU8(bottleZip['Metadata/project_settings.config']));
+    ok(bottleNative.parts.some((p) => /Borde de esmalte/.test(p.name)) &&
+      bottleNative.parts.some((p) => /Texto/.test(p.name)) &&
+      JSON.stringify(bottleProfile.filament_colour) === JSON.stringify((await info()).colors),
+      'the Bambu A1 project preserves the coloured outline and text');
+    fs.writeFileSync(path.join(dir, 'esmalte-bambu.3mf'), bottleBytes);
+  }
   ok(hash() === before, 'the source logo remains unchanged');
   await run(`${q('[data-a="home"]')}.click()`);
   ok(await run(`!document.querySelector('#home').hidden && document.querySelector('#canopener').hidden`), 'returning home closes the editor');

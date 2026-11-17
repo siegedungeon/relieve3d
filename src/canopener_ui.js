@@ -58,7 +58,12 @@ export class CanOpenerStudio {
           <h3>1. Figura y destapador</h3>
           ${select('Forma', 'shape', CAN_OPENER_SHAPES.map((s) => [s.id, s.name]))}
           <div data-r="custom"><button class="btn wide" data-a="shape">⬆ Cargar silueta (PNG/JPG/SVG)</button><div class="small muted" data-r="shapeInfo"></div></div>
-          ${number('Ancho de la figura (mm)', 'width', 'De 40 a 100 mm; los enganches o el borde funcional pueden añadir tamaño.')}
+          ${number('Ancho de la figura (mm)', 'width', 'De 28 a 100 mm para el esmalte con borde y de 40 a 100 mm para las demás formas.')}
+          <div data-r="polishSettings">
+            ${check('Borde de color del esmalte', 'polish.outline')}
+            ${color('Color del borde', 'polish.color')}
+            ${number('Ancho del borde de color (mm)', 'polish.width')}
+          </div>
           ${check('Marco del corazón (centro hundido)', 'border.enabled')}
           <div data-r="borderSettings">${number('Ancho del borde (mm)', 'border.width')}${number('Profundidad interior (mm)', 'border.depth')}</div>
           ${number('Grosor del cuerpo (mm)', 'thickness', 'De 6 a 12 mm. La referencia mide aproximadamente 8 mm.')}
@@ -89,7 +94,7 @@ export class CanOpenerStudio {
           ${number('Trazo mínimo del logo (mm)', 'logo.minLine', '0,5 mm recomendado para boquilla de 0,4 mm.')}
           <div data-r="layers"></div>
           ${check('Añadir texto', 'text.enabled')}
-          <label class="row">Texto <input type="text" data-k="text.value" maxlength="40" /></label>
+          <label class="row">Texto <textarea data-k="text.value" maxlength="40" rows="3" placeholder="Escribe el texto; usa Enter para otra línea"></textarea></label>
           ${select('Fuente', 'text.font', Object.keys(PHONESTAND_FONTS).map((name) => [name, name]))}
           ${number('Tamaño del texto (%)', 'text.size')}
           ${color('Color del cuerpo', 'colors.body')}
@@ -136,15 +141,27 @@ export class CanOpenerStudio {
       if (!el.dataset.k) return;
       const value = el.type === 'checkbox' ? el.checked : el.getAttribute('inputmode') === 'decimal' || el.dataset.k === 'logo.colors'
         ? (el.value.trim() ? Number(el.value.replace(',', '.')) : NaN) : el.value;
+      const refreshOnChange = ['text.value', 'text.font', 'colors.body', 'colors.accent', 'colors.twoColor',
+        'text.enabled', 'polish.color', 'polish.outline'].includes(el.dataset.k);
       if (Object.is(get(this.cfg, el.dataset.k), value)) {
-        if (e.type === 'change' && el.getAttribute('inputmode') === 'decimal') this.scheduleRebuild();
+        if (e.type === 'change' && (el.getAttribute('inputmode') === 'decimal' || refreshOnChange)) this.scheduleRebuild();
         return;
       }
+      const previous = get(this.cfg, el.dataset.k);
       set(this.cfg, el.dataset.k, value);
+      if (el.dataset.k === 'shape') {
+        if (value === 'nailpolish-reference' && previous !== value) {
+          if (this.cfg.width === 49) this.cfg.width = 28;
+          if (this.cfg.colors.body.toLowerCase() === '#f4e9dc') this.cfg.colors.body = '#e9a9bd';
+        } else if (previous === 'nailpolish-reference' && this.cfg.width < 40) {
+          this.cfg.width = 40;
+        }
+        this.sync();
+      }
       if (el.dataset.k.startsWith('attachment.') && el.dataset.k !== 'attachment.position' && el.dataset.k !== 'attachment.mount') this.$('preset').value = 'custom';
       this.visibility();
       this.invalidate();
-      if (el.dataset.k === 'notch' || el.dataset.k === 'border.enabled' || (el.tagName === 'SELECT' && (el.dataset.k === 'shape' || el.dataset.k.startsWith('attachment.')))) this.scheduleRebuild();
+      if (el.dataset.k === 'notch' || el.dataset.k === 'border.enabled' || el.dataset.k === 'polish.outline' || el.dataset.k === 'polish.color' || (e.type === 'change' && refreshOnChange) || (el.tagName === 'SELECT' && (el.dataset.k === 'shape' || el.dataset.k.startsWith('attachment.')))) this.scheduleRebuild();
     };
     this.root.addEventListener('input', input);
     this.root.addEventListener('change', input);
@@ -184,6 +201,7 @@ export class CanOpenerStudio {
 
   visibility() {
     this.$('custom').hidden = this.cfg.shape !== 'custom';
+    this.$('polishSettings').hidden = this.cfg.shape !== 'nailpolish-reference';
     this.$('borderSettings').hidden = !this.cfg.border.enabled;
     this.$('slotSize').hidden = this.cfg.attachment.kind !== 'slot';
     this.$('height').hidden = this.cfg.logo.mode !== 'relief';

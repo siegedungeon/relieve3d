@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import { PNG } from 'pngjs';
+import opentype from 'opentype.js';
 import { read3MF } from '../src/core/threemf_read.js';
 import {
   CAN_OPENER_SHAPES, prepareCanOpener, canOpenerSolids, buildCanOpener, exportCanOpener,
@@ -193,6 +194,40 @@ test('external ring and ribbon are joined, open and follow the chosen side', () 
       }
     } finally { top.dispose(); side.dispose(); }
   }
+});
+
+test('reference nail polish has optional colour outline, multiline text and keyring options', () => {
+  const bytes = fs.readFileSync(new URL('../src/fonts/Montserrat-Black.ttf', import.meta.url));
+  const font = opentype.parse(bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength));
+  const cfg = { shape: 'nailpolish-reference', width: 28, polish: { outline: true, color: '#ffffff' },
+    text: { enabled: true, value: 'ANA\nPABON' }, colors: { body: '#ecb3c3', accent: '#ffffff', twoColor: true } };
+  for (const attachment of [{ mount: 'integrated', kind: 'round' }, { mount: 'integrated', kind: 'edge-loop' },
+    { mount: 'external', kind: 'round' }, { mount: 'external', kind: 'slot' }]) {
+    const sol = canOpenerSolids({ ...cfg, attachment }, { font });
+    try {
+      checkSolidAndSlot(sol);
+      assert.ok(sol.polishPieces.length > 0, 'colour outline exists');
+      assert.ok(sol.artPieces.some((p) => p.kind === 'text'), 'multiline text exists');
+      assert.ok(sol.info.size.l > 55 && sol.info.size.l < 70);
+      for (const part of sol.polishPieces) assert.ok(overlap(sol.body, part.solid) < 0.001, 'colour inlay does not overlap body');
+    } finally { sol.dispose(); }
+  }
+  const threeLines = canOpenerSolids({ ...cfg, text: { enabled: true, value: 'YOUR\nTEXT\nHERE' } }, { font });
+  try { assert.ok(threeLines.artPieces.some((p) => p.kind === 'text'), 'three-line text is printable'); }
+  finally { threeLines.dispose(); }
+  const plain = buildCanOpener({ ...cfg, polish: { outline: false } }, { font });
+  const colored = buildCanOpener(cfg, { font });
+  try {
+    assert.ok(!plain.parts.some((p) => p.name === 'Borde de esmalte'));
+    assert.ok(colored.parts.some((p) => p.name === 'Borde de esmalte' && p.color === '#ffffff'));
+    assert.ok(colored.parts.some((p) => p.name === 'Texto'));
+    const model = read3MF(exportCanOpener(colored));
+    assert.ok(model.parts.some((p) => /Borde de esmalte/.test(p.name)));
+    assert.ok(model.parts.some((p) => /Texto/.test(p.name)));
+  } finally { [...plain.parts, ...colored.parts].forEach((p) => p.geometry.dispose()); }
+  const saved = readCanOpenerProject(canOpenerProject(cfg));
+  assert.equal(saved.cfg.text.value, 'ANA\nPABON');
+  assert.equal(saved.cfg.polish.outline, true);
 });
 
 test('the perpendicular opening reaches the outside and left-hand narrow shapes gain a functional lip', () => {

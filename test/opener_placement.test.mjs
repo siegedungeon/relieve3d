@@ -1,5 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import fs from 'node:fs';
+import opentype from 'opentype.js';
 import { prepareCanOpener, canOpenerSolids, canOpenerProject, readCanOpenerProject } from '../src/core/canopener.js';
 import { preparePhoneStand, phoneStandSolids, phoneStandProject, readPhoneStandProject } from '../src/core/phonestand.js';
 
@@ -42,4 +44,14 @@ test('phone stand project preserves the dragged targets and notch setting', () =
   assert.deepEqual(project.cfg.opener.target, cfg.opener.target);
   assert.deepEqual(project.cfg.ring.target, cfg.ring.target);
   assert.equal(project.cfg.opener.notch, true);
+});
+
+test('phone stand retains single-line text and supports multiline text', () => {
+  const bytes = fs.readFileSync(new URL('../src/fonts/Montserrat-Black.ttf', import.meta.url));
+  const font = opentype.parse(bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength));
+  for (const value of ['Pabonitas', 'ANA\nPABON']) {
+    const stand = phoneStandSolids({ text: { enabled: true, value, where: 'top' } }, { font });
+    try { assert.ok(stand.artPieces.some((p) => p.kind === 'text'), value + ' produces text'); }
+    finally { stand.dispose(); }
+  }
 });

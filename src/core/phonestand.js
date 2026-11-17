@@ -966,11 +966,20 @@ function fitBlock(S, region, items, cfg, ctx, warnings, prefer = 'centre') {
   // text alone: cap height H, top at 0
   const textAt = (H) => {
     const cap = view ? (cfg.text.rel / 100) * H : H;
-    const glyphs = layoutText(ctx.font, value, cap / capHeightRatio(ctx.font), 0);
-    const cs = shapesToCS(S, glyphs.map((g) => g.contours), 'NonZero', 0.02);
-    if (!cs || cs.isEmpty()) return null;
+    const lines = value.split(/\r?\n/);
+    const pieces = [];
+    for (const [index, line] of lines.entries()) {
+      if (!line.trim()) continue;
+      const glyphs = layoutText(ctx.font, line, cap / capHeightRatio(ctx.font), 0);
+      const section = shapesToCS(S, glyphs.map((g) => g.contours), 'NonZero', 0.02);
+      if (!section || section.isEmpty()) continue;
+      const b = section.bounds();
+      pieces.push(o(o(section).translate([-(b.min[0] + b.max[0]) / 2, -index * cap * 1.3 - b.max[1]])));
+    }
+    if (!pieces.length) return null;
+    const cs = pieces.length === 1 ? pieces[0] : o(CS.union(pieces));
     const b = cs.bounds();
-    return { cs: o(cs.translate([-(b.min[0] + b.max[0]) / 2, (view ? -0.12 * H : 0) - b.max[1]])), cap };
+    return { cs: o(cs.translate([0, (view ? -0.12 * H : 0) - b.max[1]])), cap };
   };
   const frame = (H, t) => {
     const b = view ? [-view.aspect * H / 2, 0, view.aspect * H / 2, H] : [Infinity, Infinity, -Infinity, -Infinity];
