@@ -30,6 +30,34 @@ module.exports = async ({ win, run, shot, wait }) => {
   const initial = await info();
   ok(initial.cfg.shape === 'heart' && initial.cfg.thickness === 8 && initial.info.opener && initial.info.attachment.kind === 'round' && initial.info.attachment.mount === 'integrated', 'the default heart has a hole inside the figure');
   await wait(600); await shot(path.join(dir, 'canopener-heart.png'));
+  await set('shape', 'nailpolish-reference');
+  ok(await until(`window.__r3d.canopener.res?.cfg.shape === 'nailpolish-reference' && !window.__r3d.canopener.stale`),
+    'reference bottle opens from the default settings');
+  const reference = await info();
+  ok(Math.abs(reference.info.size.w - 28) < 0.02 && Math.abs(reference.info.size.l - 56) < 0.02 &&
+    reference.info.size.h === 4 && reference.info.size.totalHeight === 5 &&
+    reference.info.opener.len === 20 && reference.info.opener.depth === 21 && reference.info.opener.notch &&
+    reference.info.attachment.bodyHoles[0].diameter === 4, 'default dimensions match the original bottle');
+  ok(reference.colors.includes('#e9a9bd') && reference.colors.includes('#ffffff') && reference.cfg.polish.height === 1,
+    'the raised 1 mm outline has the reference colours');
+  await check('text.enabled', true);
+  await set('text.value', 'YOUR\nTEXT\nHERE');
+  await run('window.__r3d.canopener.rebuild()');
+  const referenceText = await info();
+  ok(referenceText.parts.some((p) => p.name === 'Texto' && p.color === '#ffffff') &&
+    referenceText.info.size.totalHeight === 5, 'three-line text stays within the 5 mm total height');
+  const profileRoots = [process.env.ProgramFiles, process.env.LOCALAPPDATA && path.join(process.env.LOCALAPPDATA, 'Programs')].filter(Boolean);
+  if (profileRoots.some((root) => fs.existsSync(path.join(root, 'Bambu Studio', 'resources', 'profiles', 'BBL')))) {
+    await run(`(${q('[data-r="format"]')}.value='bambu')`);
+    await run('window.__r3d.canopener.export()');
+    const refPath = path.join(exp, 'Destapador_Bambu_A1.3mf');
+    ok(fs.existsSync(refPath), 'reference bottle exports to Bambu A1');
+    if (fs.existsSync(refPath)) fs.copyFileSync(refPath, path.join(dir, 'esmalte-medidas-originales.3mf'));
+  }
+  await run(`window.__r3d.canopener.openProject(${JSON.stringify(JSON.stringify({app:'Relieve3D-Destapador',version:1,cfg:{}}))})`);
+  ok(await until(`window.__r3d.canopener.res?.cfg.shape === 'heart' && !window.__r3d.canopener.stale`),
+    'the default heart can still be reopened');
+
   for (const id of ['attachment', 'opener']) {
     const p = await run(`(() => {
       const studio = window.__r3d.canopener, marker = studio.handles.handles.get(${JSON.stringify(id)});
@@ -169,7 +197,9 @@ module.exports = async ({ win, run, shot, wait }) => {
   await run('window.__r3d.canopener.rebuild()');
   state = await info();
   ok(state.cfg.shape === 'nailpolish-reference' && Math.abs(state.info.size.w - 28) < 0.1 &&
-    state.info.size.l > 55 && state.cfg.text.value === 'ANA\nPABON', 'reference bottle and personalised multiline text are generated');
+    state.info.size.l > 55 && state.info.size.h === 4 && state.info.size.totalHeight === 5 &&
+    state.info.opener.len === 20 && state.info.opener.depth === 21 && state.info.opener.notch &&
+    state.cfg.text.value === 'ANA\nPABON', 'reference bottle matches the dimensions, raised border and personalised text');
   const openerPosition = (op) => {
     const a = op.angle * Math.PI / 180, x = op.xin + op.depth, y = op.ys + op.len / 2;
     return { x: op.sg * (x * Math.cos(a) - y * Math.sin(a)), y: x * Math.sin(a) + y * Math.cos(a) };

@@ -16,7 +16,7 @@ export const DEFAULT_CAN_OPENER = () => ({
   name: 'Destapador', shape: 'heart', width: 49, thickness: 8,
   side: 'right',
   border: { enabled: false, width: 3, depth: 1.2 },
-  polish: { outline: true, color: '#ffffff', width: 1.2 },
+  polish: { outline: true, color: '#ffffff', width: 1.2, height: 1 },
   attachment: { mount: 'integrated', kind: 'round', position: 'left', diameter: 3, slotWidth: 8, wall: 1.5 },
   logo: { ...DEFAULT_PHONESTAND().logo },
   text: { ...DEFAULT_PHONESTAND().text, where: 'top' },
@@ -30,7 +30,8 @@ export async function prepareCanOpener() {
 }
 const PROJECT_APP = 'Relieve3D-Destapador';
 const LINK_DIAMETER = 4.5;
-const POLISH_OUTER_MARGIN = 0.8;
+const POLISH_OUTER_MARGIN = 1;
+const POLISH_OPENER = { len: 20, depth: 21, mouth: 1, inner: 1, top: 3, wall: 0.5, notchRadius: 5, notchDepth: 10 };
 
 function measure(v, fallback, min, max, label) {
   const n = v === undefined ? fallback : Number(typeof v === 'string' ? v.replace(',', '.') : v);
@@ -47,6 +48,7 @@ export function normalizeCanOpener(input = {}) {
   polish.outline = !!polish.outline;
   polish.color = /^#[0-9a-f]{6}$/i.test(polish.color) ? polish.color : d.polish.color;
   polish.width = measure(polish.width, d.polish.width, 0.8, 3, 'Ancho del borde de color');
+  polish.height = measure(polish.height, d.polish.height, 0.2, 2, 'Altura del borde de color');
   border.enabled = !!border.enabled;
   border.width = measure(border.width, d.border.width, 1, 6, 'Ancho del borde');
   border.depth = measure(border.depth, d.border.depth, 0.4, 2, 'Profundidad del interior');
@@ -55,19 +57,20 @@ export function normalizeCanOpener(input = {}) {
   if (!['integrated', 'external', 'separate'].includes(a.mount)) throw new Error('Elige un tipo de enganche válido.');
   if (!['round', 'double-horizontal', 'double-vertical', 'slot', 'lateral', 'cord-loop', 'edge-loop'].includes(a.kind)) throw new Error('Elige una forma de agujero válida.');
   if (!['left', 'center', 'right', 'side-left', 'side-right'].includes(a.position)) throw new Error('Elige una posición válida para el enganche.');
-  const thickness = measure(cfg.thickness, d.thickness, 6, 12, 'Grosor');
+  const thickness = measure(cfg.thickness, d.thickness, shape === 'nailpolish-reference' ? 4 : 6, 12, 'Grosor');
   a.diameter = measure(a.diameter, d.attachment.diameter, a.kind === 'edge-loop' ? 2 : 3, 9, 'Diámetro del agujero');
   a.slotWidth = measure(a.slotWidth, d.attachment.slotWidth, 6, 16, 'Ancho de la ranura para cinta');
   a.target = a.target && Number.isFinite(a.target.x) && Number.isFinite(a.target.y)
     ? { x: a.target.x, y: a.target.y } : null;
   a.wall = measure(a.wall, d.attachment.wall, 1.5, 5, 'Pared alrededor del agujero');
   if (a.kind === 'slot' && a.slotWidth < a.diameter) throw new Error('La ranura para cinta debe ser más ancha que su alto.');
-  if ((a.kind === 'lateral' || a.kind === 'cord-loop' || a.kind === 'edge-loop') && a.diameter > thickness - 3) throw new Error('El agujero lateral necesita al menos 1,5 mm arriba y abajo: reduce su diámetro o aumenta el grosor.');
+  const passageWall = shape === 'nailpolish-reference' ? 1 : 1.5;
+  if ((a.kind === 'lateral' || a.kind === 'cord-loop' || a.kind === 'edge-loop') && a.diameter > thickness - 2 * passageWall) throw new Error('El agujero lateral necesita más material arriba y abajo: reduce su diámetro o aumenta el grosor.');
   const logo = { ...shared.logo, where: 'top' }, text = { ...shared.text, where: 'top' };
   const sink = logo.mode === 'flat' ? logo.flatDepth : logo.mode === 'engrave' ? logo.depth : 0;
   const borderDepth = border.enabled ? border.depth : 0;
-  if (a.kind === 'edge-loop' && thickness - a.diameter - sink - borderDepth < 3) throw new Error('El paso necesita más grosor: reduce su diámetro o la profundidad del borde y el logo, o aumenta el grosor.');
-  if (thickness - sink - borderDepth < 4.6) throw new Error('El logo hundido dejaría muy poco techo sobre la ranura: aumenta el grosor o reduce la profundidad.');
+  if (a.kind === 'edge-loop' && thickness - a.diameter - sink - borderDepth < 2 * passageWall) throw new Error('El paso necesita más grosor: reduce su diámetro o la profundidad del borde y el logo, o aumenta el grosor.');
+  if (thickness - sink - borderDepth < (shape === 'nailpolish-reference' ? 3.6 : 4.6)) throw new Error('El logo hundido dejaría muy poco techo sobre la ranura: aumenta el grosor o reduce la profundidad.');
   return {
     name: String(cfg.name || d.name).slice(0, 60), shape,
     width: measure(cfg.width, d.width, shape === 'nailpolish-reference' ? 28 : 40, 100, 'Ancho de la forma'),
@@ -88,10 +91,18 @@ function shapeOutline(S, cfg, image, warnings) {
   } else if (cfg.shape === 'square') {
     shape = H.roundRect(S, -0.5, 0.5, -0.5, 0.5, 0.13);
   } else if (cfg.shape === 'nailpolish-reference') {
-    shape = o(new CS([[[-0.38, 0], [0.38, 0], [0.47, 0.2], [0.5, 0.75],
-      [0.48, 0.9], [0.36, 1], [0.34, 1.06], [0.26, 1.94], [0.23, 2],
-      [-0.23, 2], [-0.26, 1.94], [-0.34, 1.06], [-0.36, 1],
-      [-0.48, 0.9], [-0.5, 0.75], [-0.47, 0.2]]], 'NonZero'));
+    // The outline is sampled from the supplied 28 × 56 mm reference and scales with width.
+    const points = [[-0.1143, 1.9949],[-0.0459, 1.9994],[0.0409, 1.9996],[0.1023, 1.9961],
+      [0.1560, 1.9888],[0.1946, 1.9789],[0.2266, 1.9645],[0.2406, 1.9539],[0.2496, 1.9282],
+      [0.2702, 1.8124],[0.2921, 1.6158],[0.3152, 1.3390],[0.3368, 1.0130],[0.4223, 0.9653],
+      [0.4811, 0.9209],[0.4912, 0.8966],[0.4974, 0.8495],[0.5000, 0.7645],[0.4960, 0.6346],
+      [0.4848, 0.4870],[0.4703, 0.3602],[0.4515, 0.2382],[0.4336, 0.1494],[0.4079, 0.0559],
+      [0.3849, 0],[-0.3849, 0],[-0.4024, 0.0478],[-0.4238, 0.1240],[-0.4429, 0.2114],
+      [-0.4595, 0.3063],[-0.4871, 0.5295],[-0.4960, 0.6477],[-0.4999, 0.7530],[-0.4984, 0.8385],
+      [-0.4931, 0.8882],[-0.4840, 0.9173],[-0.4611, 0.9381],[-0.4064, 0.9751],[-0.3368, 1.0130],
+      [-0.3152, 1.3390],[-0.2947, 1.5884],[-0.2731, 1.7907],[-0.2526, 1.9161],[-0.2406, 1.9539],
+      [-0.2226, 1.9669],[-0.1787, 1.9836]];
+    shape = o(new CS([points.reverse()], 'NonZero'));
   } else if (cfg.shape === 'nailpolish') {
     shape = o(CS.union([
       H.roundRect(S, -0.45, 0.45, -0.48, 0.23, 0.12),
@@ -101,7 +112,7 @@ function shapeOutline(S, cfg, image, warnings) {
   } else shape = H.SHAPE_DEFS[cfg.shape].build(kit);
   let b = shape.bounds(), k = cfg.width / (b.max[0] - b.min[0]);
   shape = o(o(shape.translate([-(b.min[0] + b.max[0]) / 2, -b.min[1]])).scale([k, k]));
-  shape = H.opening(S, shape, 0.6, 48);
+  if (cfg.shape !== 'nailpolish-reference') shape = H.opening(S, shape, 0.6, 48);
   if (shape.isEmpty()) throw new Error('La silueta es demasiado delgada.');
   const components = shape.decompose().map(o);
   if (components.length !== 1) throw new Error('La silueta tiene partes separadas o demasiado delgadas. Usa otra imagen o una forma mayor.');
@@ -260,7 +271,14 @@ export function canOpenerSolids(input = {}, { logoImage = null, shapeImage = nul
       diameter: layout.r * 2,
     }));
     const ringRadius = Math.max(...layout.centers.map(([x, y]) => Math.hypot(x, y) + layout.r));
-    const mech = { W: 150, T, yh0: -48, variant: 'short' }, opCfg = { opener: { enabled: true, side: cfg.side, notch: cfg.notch, target: cfg.openerTarget } };
+    const artDepth = cfg.logo.mode === 'flat' ? cfg.logo.flatDepth : cfg.logo.mode === 'engrave' ? cfg.logo.depth : 0;
+    const polishSlot = cfg.shape === 'nailpolish-reference'
+      ? { ...POLISH_OPENER, top: Math.min(POLISH_OPENER.top, T - (cfg.border.enabled ? cfg.border.depth : 0) - artDepth - 0.8) }
+      : null;
+    const mech = { W: 150, T, yh0: -48, variant: 'short' }, opCfg = { opener: {
+      enabled: true, side: cfg.side, notch: cfg.notch, target: cfg.openerTarget,
+      ...(polishSlot ? { slot: polishSlot } : {}),
+    } };
     const ringGuard = { x: position[0], y: position[1], r: ringRadius + a.wall - 2.5 };
     const place = () => H.placeOpener(mech, opCfg, outline.toPolygons(), outline.bounds().max[1], ringGuard, null, []);
     let opener = place();
@@ -303,6 +321,10 @@ export function canOpenerSolids(input = {}, { logoImage = null, shapeImage = nul
     const surfaceZ = T - (cfg.border.enabled ? cfg.border.depth : 0);
     let artOutline = inset || original;
     if (cfg.shape === 'nailpolish-reference') {
+      if (cfg.polish.outline) {
+        const clearOfOutline = o(original.offset(-(POLISH_OUTER_MARGIN + cfg.polish.width + 0.4), 'Round', 2, 64));
+        artOutline = o(artOutline.intersect(clearOfOutline));
+      }
       const bodyArea = H.roundRect(S, -cfg.width, cfg.width, -1, cfg.width * 0.98, 0.5);
       artOutline = o(artOutline.intersect(bodyArea));
     }
@@ -346,8 +368,7 @@ export function canOpenerSolids(input = {}, { logoImage = null, shapeImage = nul
         : [{ cs: colorArea, z: T }];
       for (const region of regions) {
         if (region.cs.isEmpty() || region.cs.area() < 0.01) continue;
-        const solid = H.extrudeZ(S, region.cs, region.z - 0.6, region.z);
-        body = o(body.subtract(solid));
+        const solid = H.extrudeZ(S, region.cs, region.z, region.z + cfg.polish.height);
         polishPieces.push({ solid, color: cfg.polish.color });
       }
     }
@@ -370,7 +391,9 @@ export function canOpenerSolids(input = {}, { logoImage = null, shapeImage = nul
       shape: cfg.shape, opener, border: { ...cfg.border, surfaceZ },
       attachment: { mount: a.mount, kind: a.kind, wall: a.wall, position, bodyHoles, connectorHoles: connector?.holes || [], lateral: !!layout.lateral, edgeData },
       art: { mode, box: art.top?.box || null }, logo,
-      size: { w: bbox.max[0] - bbox.min[0], l: bbox.max[1] - bbox.min[1], h: T },
+      size: { w: bbox.max[0] - bbox.min[0], l: bbox.max[1] - bbox.min[1], h: T,
+        totalHeight: Math.max(T, ...polishPieces.map((p) => p.solid.boundingBox().max[2]),
+          ...artPieces.map((p) => p.solid.boundingBox().max[2])) },
       volume: (body.volume() + artPieces.reduce((s, p) => s + p.solid.volume(), 0) + polishPieces.reduce((s, p) => s + p.solid.volume(), 0) + (connector?.solid.volume() || 0)) / 1000,
     };
     return { cfg, body, outline, artPieces, polishPieces, connector: connector?.solid || null, info, warnings, dispose: () => o.free() };

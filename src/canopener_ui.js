@@ -63,10 +63,11 @@ export class CanOpenerStudio {
             ${check('Borde de color del esmalte', 'polish.outline')}
             ${color('Color del borde', 'polish.color')}
             ${number('Ancho del borde de color (mm)', 'polish.width')}
+            ${number('Altura del borde de color (mm)', 'polish.height')}
           </div>
           ${check('Marco del corazón (centro hundido)', 'border.enabled')}
           <div data-r="borderSettings">${number('Ancho del borde (mm)', 'border.width')}${number('Profundidad interior (mm)', 'border.depth')}</div>
-          ${number('Grosor del cuerpo (mm)', 'thickness', 'De 6 a 12 mm. La referencia mide aproximadamente 8 mm.')}
+          ${number('Grosor del cuerpo (mm)', 'thickness', 'De 4 a 12 mm para el esmalte y de 6 a 12 mm para las demás figuras.')}
           <div class="small muted">Arrastra el punto naranja para mover el abre latas y el azul para mover el enganche.</div>
           ${check('Muesca inferior en el abre latas', 'notch')}
         </section>
@@ -152,11 +153,22 @@ export class CanOpenerStudio {
       if (el.dataset.k === 'shape') {
         if (value === 'nailpolish-reference' && previous !== value) {
           if (this.cfg.width === 49) this.cfg.width = 28;
+          if (this.cfg.thickness === 8) this.cfg.thickness = 4;
+          if (this.cfg.text.height === 0) this.cfg.text.height = 1;
+          if (this.cfg.text.font === 'Montserrat Black') this.cfg.text.font = 'Montserrat Bold';
+          this.cfg.notch = true;
+          if (this.cfg.attachment.kind === 'round' && this.cfg.attachment.diameter === 3 && !this.cfg.attachment.target) {
+            this.cfg.attachment.diameter = 4;
+            this.cfg.attachment.position = 'center';
+            this.cfg.attachment.target = { x: 0, y: this.cfg.width * 51 / 28 };
+          }
           if (this.cfg.colors.body.toLowerCase() === '#f4e9dc') this.cfg.colors.body = '#e9a9bd';
+          if (this.cfg.colors.accent.toLowerCase() === '#e8127c') this.cfg.colors.accent = '#ffffff';
           this.cfg.side = 'right';
           this.cfg.openerTarget = { x: 0, y: 0 };
-        } else if (previous === 'nailpolish-reference' && this.cfg.width < 40) {
-          this.cfg.width = 40;
+        } else if (previous === 'nailpolish-reference') {
+          if (this.cfg.width < 40) this.cfg.width = 40;
+          if (this.cfg.thickness < 6) this.cfg.thickness = 6;
         }
         this.sync();
       }
@@ -171,6 +183,9 @@ export class CanOpenerStudio {
       const preset = PRESETS[e.target.value];
       if (!preset) return;
       Object.assign(this.cfg.attachment, preset);
+      if (this.cfg.shape === 'nailpolish-reference' && preset.kind === 'edge-loop' && this.cfg.thickness < 5) {
+        this.cfg.attachment.diameter = 2;
+      }
       if (preset.kind !== 'edge-loop' && this.cfg.attachment.position.startsWith('side-')) this.cfg.attachment.position = 'left';
       this.sync();
       e.target.value = Object.keys(PRESETS).find((key) => PRESETS[key] === preset);
@@ -306,7 +321,7 @@ export class CanOpenerStudio {
       this.stale = false;
       this.$('export').disabled = false;
       const d = result.info.size, a = result.info.attachment;
-      this.$('summary').textContent = `${CAN_OPENER_SHAPES.find((s) => s.id === result.cfg.shape)?.name}: ${fmt(d.w)} × ${fmt(d.l)} × ${fmt(d.h)} mm (cuerpo, sin relieve). Ranura de ${fmt(result.info.opener.len)} mm. Pared del enganche: ${fmt(a.wall)} mm. ${result.parts.some((p) => p.apart) ? 'Conector independiente en la misma placa. ' : ''}${result.colors.length} filamento(s); volumen aproximado ${fmt(result.info.volume)} cm³.`;
+      this.$('summary').textContent = `${CAN_OPENER_SHAPES.find((s) => s.id === result.cfg.shape)?.name}: ${fmt(d.w)} × ${fmt(d.l)} × ${fmt(d.h)} mm (cuerpo). Alto total con relieves: ${fmt(d.totalHeight)} mm. Ranura de ${fmt(result.info.opener.len)} mm. Pared del enganche: ${fmt(a.wall)} mm. ${result.parts.some((p) => p.apart) ? 'Conector independiente en la misma placa. ' : ''}${result.colors.length} filamento(s); volumen aproximado ${fmt(result.info.volume)} cm³.`;
       this.$('warn').textContent = result.warnings.join(' ');
       this.$('status').textContent = 'Destapador generado · revisa la vista, el laminado y una impresión de prueba.';
       this.sync();

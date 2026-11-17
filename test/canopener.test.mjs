@@ -30,8 +30,10 @@ function checkSolidAndSlot(s) {
     assert.ok(s.body.volume() > 0);
     const op = s.info.opener;
     assert.ok(op, 'the functional opening cannot silently disappear');
-    const slit = slotBox(op, [op.xin + 4, op.edge + 9], [op.ys + 4, op.ys + op.len - 4], [2.2, 3.2]);
-    const lip = slotBox(op, [op.edge - 3, op.edge - 0.3], [op.ys + 4, op.ys + op.len - 4], [0.1, 0.9]);
+    const slit = slotBox(op, [op.xin + 4, op.edge + 9], [op.ys + 4, op.ys + op.len - 4], [2.2, Math.min(3.2, op.slot.top - 0.1)]);
+    const lip = op.slot.notchDepth && op.notch
+      ? slotBox(op, [op.edge - 3, op.edge - 0.3], [op.ys + 2, op.ys + 4], [0.1, 0.9])
+      : slotBox(op, [op.edge - 3, op.edge - 0.3], [op.ys + 4, op.ys + op.len - 4], [0.1, 0.9]);
     try {
       assert.ok(overlap(s.body, slit) < 1e-3, 'the slot must open all the way to the edge');
       assert.ok(overlap(s.body, lip) > lip.volume() * 0.98, 'the lip under the slot must be solid');
@@ -168,7 +170,7 @@ test('raised border recesses the heart face and supports artwork', () => {
     } finally { s.dispose(); }
   }
   assert.throws(() => canOpenerSolids({ border: { enabled: true }, thickness: 6, logo: { mode: 'engrave', depth: 1 } }), /techo/i);
-  assert.throws(() => canOpenerSolids({ border: { enabled: true }, attachment: { kind: 'edge-loop', diameter: 4 } }), /grosor|paso/i);
+  assert.throws(() => canOpenerSolids({ border: { enabled: true }, attachment: { kind: 'edge-loop', diameter: 6 } }), /grosor|paso/i);
   const edge = canOpenerSolids({ border: { enabled: true }, attachment: { kind: 'edge-loop', diameter: 3 } });
   try { checkSolidAndSlot(edge); } finally { edge.dispose(); }
   const loaded = readCanOpenerProject(canOpenerProject({ border: { enabled: true, width: 2, depth: 1 } }));
@@ -207,12 +209,33 @@ test('the nail polish colour outline leaves a body-coloured outer margin', () =>
       const probe = cylinder.translate([x, y, 7.5]); cylinder.delete();
       return probe;
     };
-    const margin = sample(edge - 0.35), stripe = sample(edge - 1.4);
+    const margin = sample(edge - 0.35), stripeBase = sample(edge - 1.6);
+    const stripe = stripeBase.translate([0, 0, 0.8]); stripeBase.delete();
     try {
       assert.ok(overlap(sol.body, margin) > 0.01, 'outer margin keeps the body colour');
       assert.ok(sol.polishPieces.every((part) => overlap(part.solid, margin) < 1e-4), 'outline does not reach edge');
       assert.ok(sol.polishPieces.some((part) => overlap(part.solid, stripe) > 0.01), 'coloured stripe is inset');
     } finally { margin.delete(); stripe.delete(); }
+  } finally { sol.dispose(); }
+});
+
+test('reference nail polish dimensions match the measured source', () => {
+  const sol = canOpenerSolids({ shape: 'nailpolish-reference', width: 28, thickness: 4, notch: true,
+    openerTarget: { x: 0, y: 0 }, attachment: { kind: 'round', diameter: 4, target: { x: 0, y: 51 } } });
+  try {
+    checkSolidAndSlot(sol);
+    assert.ok(Math.abs(sol.info.size.w - 28) < 0.02);
+    assert.ok(Math.abs(sol.info.size.l - 56) < 0.02);
+    assert.equal(sol.info.size.h, 4);
+    assert.equal(sol.info.size.totalHeight, 5);
+    assert.equal(sol.info.opener.len, 20);
+    assert.equal(sol.info.opener.depth, 21);
+    assert.equal(sol.info.attachment.bodyHoles[0].diameter, 4);
+    const ridge = sol.polishPieces[0].solid.boundingBox();
+    assert.equal(ridge.min[2], 4);
+    assert.equal(ridge.max[2], 5);
+    assert.ok(Math.abs(sol.info.volume * 1000 - 3959.5173) / 3959.5173 < 0.01,
+      'volume stays within 1% of the supplied model before text');
   } finally { sol.dispose(); }
 });
 
@@ -232,6 +255,17 @@ test('reference nail polish has optional colour outline, multiline text and keyr
       for (const part of sol.polishPieces) assert.ok(overlap(sol.body, part.solid) < 0.001, 'colour inlay does not overlap body');
     } finally { sol.dispose(); }
   }
+  const thinEdge = canOpenerSolids({ ...cfg, thickness: 4, attachment: { kind: 'edge-loop', diameter: 2 },
+    logo: { mode: 'relief' } }, { font });
+  try {
+    checkSolidAndSlot(thinEdge);
+    assert.equal(thinEdge.info.attachment.kind, 'edge-loop');
+  } finally { thinEdge.dispose(); }
+  const thinFlat = canOpenerSolids({ ...cfg, thickness: 4, logo: { mode: 'flat' } }, { font });
+  try {
+    checkSolidAndSlot(thinFlat);
+    assert.ok(thinFlat.info.opener.slot.top <= 2.81, 'space remains over the opening with flat artwork');
+  } finally { thinFlat.dispose(); }
   const threeLines = canOpenerSolids({ ...cfg, text: { enabled: true, value: 'YOUR\nTEXT\nHERE' } }, { font });
   try { assert.ok(threeLines.artPieces.some((p) => p.kind === 'text'), 'three-line text is printable'); }
   finally { threeLines.dispose(); }

@@ -1237,15 +1237,16 @@ function nfcMark(S, nfc) {
 // to sit square on a curved edge. A dragged target can select any valid orientation around the outline.
 function placeOpener(mech, cfg, polys, yTop, ring, nfc, warnings) {
   if (!cfg.opener.enabled) return null;
+  const slot = cfg.opener.slot || SLOT;
   const sg = cfg.opener.side === 'left' ? -1 : 1;
   const P0 = sg > 0 ? polys : polys.map((p) => p.map(([x, y]) => [-x, y]));
   const keep0 = [];
   if (ring) keep0.push({ x: sg * ring.x, y: ring.y, r: ring.r + 2.5 });
-  if (nfc && nfc.z0 - SLOT.top < 1) keep0.push({ x: sg * nfc.x, y: nfc.y, r: nfc.r + 1 });
+  if (nfc && nfc.z0 - slot.top < 1) keep0.push({ x: sg * nfc.x, y: nfc.y, r: nfc.r + 1 });
   // 1.5 mm clear of the hinge zone (slot, knuckles, folding leg): only on the bar or the shape behind it
   const yKeep = mech.yh0 + 1.5, W2 = mech.W;
   const win0 = [[-W2, -50], [W2, -50], [W2, yKeep], [-W2, yKeep]];
-  const step = 0.5, nLen = Math.round(SLOT.len / step), nWall = Math.round(SLOT.wall / step);
+  const step = 0.5, nLen = Math.round(slot.len / step), nWall = Math.round(slot.wall / step);
   let best = null;
   const firstAngle = cfg.opener.target ? -180 : -45;
   const lastAngle = cfg.opener.target ? 175 : 60;
@@ -1268,13 +1269,13 @@ function placeOpener(mech, cfg, polys, yTop, ring, nfc, warnings) {
       let lo = Infinity, hi = -Infinity;
       for (let k = i; k <= i + nLen; k++) { if (X[k] < lo) lo = X[k]; if (X[k] > hi) hi = X[k]; }
       if (!(hi - lo <= 6) || hi < front - 1) continue;
-      const xin = lo - SLOT.depth, ys = y0 + i * step, y1 = ys + SLOT.len, x1 = xin + 16;
+      const xin = lo - slot.depth, ys = y0 + i * step, y1 = ys + slot.len, x1 = xin + slot.depth + 6;
       // solid from 3 mm behind the slit out to the edge, 2.5 mm past both of its sides (no gaps, no other lobe)
       let solid = true;
       for (let k = i - nWall; k <= i + nLen + nWall && solid; k++) solid = X[k] >= xin + 3 && CR[k].filter((x) => x > xin - 3).length === 1;
       if (!solid || rectHitsPoly(xin, x1, ys, y1, win) || keep.some((c) => rectHitsCircle(xin, x1, ys, y1, c))) continue;
       const target = cfg.opener.target;
-      const centerX = xin + SLOT.depth, centerY = ys + SLOT.len / 2;
+      const centerX = xin + slot.depth, centerY = ys + slot.len / 2;
       const worldX = sg * (centerX * Math.cos(deg * D2R) - centerY * Math.sin(deg * D2R));
       const worldY = centerX * Math.sin(deg * D2R) + centerY * Math.cos(deg * D2R);
       const score = target ? Math.hypot(worldX - target.x, worldY - target.y) + (hi - lo) * 0.01
@@ -1286,18 +1287,21 @@ function placeOpener(mech, cfg, polys, yTop, ring, nfc, warnings) {
     warnings.push('No hay un borde libre de 16 mm para el abre latas: prueba el otro lado, otra forma o una forma más grande.');
     return null;
   }
-  return { side: cfg.opener.side, sg, notch: !!cfg.opener.notch, angle: best.deg, xin: best.xin, ys: best.ys, edge: best.edge, len: SLOT.len, depth: SLOT.depth, lip: SLOT.mouth };
+  return { side: cfg.opener.side, sg, notch: !!cfg.opener.notch, angle: best.deg, xin: best.xin, ys: best.ys, edge: best.edge, len: slot.len, depth: slot.depth, lip: slot.mouth, slot };
 }
 function openerCutter(S, mech, op) {
-  const { o, CS } = S;
+  const { o, CS } = S, slot = op.slot || SLOT;
   // the edge varies ≤ 6 mm along the slit: run the cut ≥ 4 mm past it so no skin closes the mouth
-  const { xin, ys } = op, x2 = xin + SLOT.depth + 10;
-  const prof = o(new CS([[[xin, SLOT.inner], [xin + SLOT.depth, SLOT.mouth], [x2, SLOT.mouth], [x2, SLOT.top], [xin, SLOT.top]]], 'NonZero'));
-  const plan = extrudeZ(S, roundRect(S, xin, x2 + 3, ys, ys + SLOT.len, 3), -1, mech.T + 1);
-  let cut = o(alongY(S, prof, ys, ys + SLOT.len).intersect(plan));
+  const { xin, ys } = op, x2 = xin + slot.depth + 10;
+  const prof = o(new CS([[[xin, slot.inner], [xin + slot.depth, slot.mouth], [x2, slot.mouth], [x2, slot.top], [xin, slot.top]]], 'NonZero'));
+  const plan = extrudeZ(S, roundRect(S, xin, x2 + 3, ys, ys + slot.len, 3), -1, mech.T + 1);
+  let cut = o(alongY(S, prof, ys, ys + slot.len).intersect(plan));
   if (op.notch) {
-    const notch = o(o(S.M.cylinder(SLOT.mouth + 1.4, 3.2, 3.2, 64))
-      .translate([xin + SLOT.depth + 0.5, ys + SLOT.len / 2, -1]));
+    const notch = slot.notchDepth
+      ? extrudeZ(S, roundRect(S, xin + slot.depth - slot.notchDepth, x2 + 3,
+        ys + slot.len / 2 - slot.notchRadius, ys + slot.len / 2 + slot.notchRadius, slot.notchRadius), -1, slot.mouth + 0.1)
+      : o(o(S.M.cylinder(slot.mouth + 1.4, 3.2, 3.2, 64))
+        .translate([xin + slot.depth + 0.5, ys + slot.len / 2, -1]));
     cut = o(cut.add(notch));
   }
   if (op.angle) cut = o(cut.rotate([0, 0, op.angle]));
