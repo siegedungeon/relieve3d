@@ -16,7 +16,7 @@ export const DEFAULT_CAN_OPENER = () => ({
   name: 'Destapador', shape: 'heart', width: 49, thickness: 8,
   side: 'right',
   border: { enabled: false, width: 3, depth: 1.2 },
-  polish: { outline: true, color: '#ffffff', width: 1.2, height: 1 },
+  polish: { outline: true, fillCap: false, color: '#ffffff', width: 1.2, height: 1 },
   attachment: { mount: 'integrated', kind: 'round', position: 'left', diameter: 3, slotWidth: 8, wall: 1.5 },
   logo: { ...DEFAULT_PHONESTAND().logo },
   text: { ...DEFAULT_PHONESTAND().text, where: 'top', dx: 0, dy: 0 }, artIndependent: true,
@@ -46,6 +46,7 @@ export function normalizeCanOpener(input = {}) {
   const border = { ...d.border, ...(cfg.border || {}) };
   const polish = { ...d.polish, ...(cfg.polish || {}) };
   polish.outline = !!polish.outline;
+  polish.fillCap = !!polish.fillCap;
   polish.color = /^#[0-9a-f]{6}$/i.test(polish.color) ? polish.color : d.polish.color;
   polish.width = measure(polish.width, d.polish.width, 0.8, 3, 'Ancho del borde de color');
   polish.height = measure(polish.height, d.polish.height, 0.2, 2, 'Altura del borde de color');
@@ -363,6 +364,10 @@ export function canOpenerSolids(input = {}, { logoImage = null, shapeImage = nul
       const seam = H.roundRect(S, -cfg.width, cfg.width, cfg.width - cfg.polish.width / 2,
         cfg.width + cfg.polish.width / 2, cfg.polish.width / 2);
       let colorArea = o(o(outer.subtract(interior)).add(o(seam.intersect(outer))));
+      if (cfg.polish.fillCap) {
+        const cap = H.roundRect(S, -cfg.width, cfg.width, cfg.width, cfg.width * 2 + 1, 0.01);
+        colorArea = o(colorArea.add(o(cap.intersect(outer))));
+      }
       colorArea = o(colorArea.subtract(o(holeCS.offset(0.6, 'Round', 2, 48))));
       if (art.top) colorArea = o(colorArea.subtract(art.top.cs));
       const regions = inset

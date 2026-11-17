@@ -238,6 +238,26 @@ test('the nail polish colour outline leaves a body-coloured outer margin', () =>
   } finally { sol.dispose(); }
 });
 
+test('filled polish cap joins the border while keeping the bottle body and hole clear', () => {
+  const cfg = { shape: 'nailpolish-reference', width: 28, thickness: 4,
+    polish: { outline: true, fillCap: true, color: '#ffffff' },
+    attachment: { kind: 'round', diameter: 4, target: { x: 0, y: 51 } } };
+  const filled = canOpenerSolids(cfg), plain = canOpenerSolids({ ...cfg, polish: { ...cfg.polish, fillCap: false } });
+  const sample = (x, y) => { const c = Manifold.cylinder(0.4, 0.3, 0.3, 32); const p = c.translate([x, y, 4.2]); c.delete(); return p; };
+  const cap = sample(0, 40), body = sample(0, 15), hole = sample(0, 51);
+  try {
+    assert.ok(filled.polishPieces.some(p => overlap(p.solid, cap) > 0.05), 'the cap centre has the border colour');
+    assert.ok(plain.polishPieces.every(p => overlap(p.solid, cap) < 0.001), 'the fill is optional');
+    assert.ok(filled.polishPieces.every(p => overlap(p.solid, body) < 0.001), 'the bottle centre remains body coloured');
+    assert.ok(filled.polishPieces.every(p => overlap(p.solid, hole) < 0.001), 'the keyring opening stays clear');
+    assert.equal(filled.info.size.totalHeight, 5);
+    assert.equal(readCanOpenerProject(canOpenerProject(filled.cfg)).cfg.polish.fillCap, true);
+    const model = buildCanOpener(cfg);
+    try { assert.ok(read3MF(exportCanOpener(model)).parts.some(p => /Borde de esmalte/.test(p.name))); }
+    finally { model.parts.forEach(p => p.geometry.dispose()); }
+  } finally { cap.delete(); body.delete(); hole.delete(); filled.dispose(); plain.dispose(); }
+});
+
 test('reference nail polish dimensions match the measured source', () => {
   const sol = canOpenerSolids({ shape: 'nailpolish-reference', width: 28, thickness: 4, notch: true,
     openerTarget: { x: 0, y: 0 }, attachment: { kind: 'round', diameter: 4, target: { x: 0, y: 51 } } });

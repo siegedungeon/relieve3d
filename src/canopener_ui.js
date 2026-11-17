@@ -64,6 +64,7 @@ export class CanOpenerStudio {
           ${number('Ancho de la figura (mm)', 'width', 'De 28 a 100 mm para el esmalte con borde y de 40 a 100 mm para las demás formas.')}
           <div data-r="polishSettings">
             ${check('Borde de color del esmalte', 'polish.outline')}
+            ${check('Rellenar tapa con el color del borde', 'polish.fillCap')}
             ${color('Color del borde', 'polish.color')}
             ${number('Ancho del borde de color (mm)', 'polish.width')}
             ${number('Altura del borde de color (mm)', 'polish.height')}
@@ -159,7 +160,7 @@ export class CanOpenerStudio {
       const value = el.type === 'checkbox' ? el.checked : el.getAttribute('inputmode') === 'decimal' || el.dataset.k === 'logo.colors'
         ? (el.value.trim() ? Number(el.value.replace(',', '.')) : NaN) : el.value;
       const refreshOnChange = ['text.value', 'text.font', 'colors.body', 'colors.accent', 'colors.twoColor',
-        'text.enabled', 'polish.color', 'polish.outline'].includes(el.dataset.k);
+        'text.enabled', 'polish.color', 'polish.outline', 'polish.fillCap'].includes(el.dataset.k);
       if (Object.is(get(this.cfg, el.dataset.k), value)) {
         if (e.type === 'change' && (el.getAttribute('inputmode') === 'decimal' || refreshOnChange)) this.scheduleRebuild();
         return;
@@ -205,7 +206,7 @@ export class CanOpenerStudio {
       if (el.dataset.k.startsWith('attachment.') && el.dataset.k !== 'attachment.position' && el.dataset.k !== 'attachment.mount') this.$('preset').value = 'custom';
       this.visibility();
       this.invalidate();
-      if (el.dataset.k === 'text.value' || el.dataset.k === 'notch' || el.dataset.k === 'border.enabled' || el.dataset.k === 'polish.outline' || el.dataset.k === 'polish.color' || (e.type === 'change' && refreshOnChange) || (el.tagName === 'SELECT' && (el.dataset.k === 'shape' || el.dataset.k.startsWith('attachment.')))) this.scheduleRebuild();
+      if (el.dataset.k === 'text.value' || el.dataset.k === 'notch' || el.dataset.k === 'border.enabled' || el.dataset.k === 'polish.outline' || el.dataset.k === 'polish.fillCap' || el.dataset.k === 'polish.color' || (e.type === 'change' && refreshOnChange) || (el.tagName === 'SELECT' && (el.dataset.k === 'shape' || el.dataset.k.startsWith('attachment.')))) this.scheduleRebuild();
     };
     this.root.addEventListener('input', input);
     this.root.addEventListener('change', input);
@@ -250,6 +251,7 @@ export class CanOpenerStudio {
   visibility() {
     this.$('custom').hidden = this.cfg.shape !== 'custom';
     this.$('polishSettings').hidden = this.cfg.shape !== 'nailpolish-reference';
+    this.root.querySelector('[data-k="polish.fillCap"]').disabled = !this.cfg.polish.outline;
     this.$('borderSettings').hidden = !this.cfg.border.enabled;
     this.$('slotSize').hidden = this.cfg.attachment.kind !== 'slot';
     this.$('height').hidden = this.cfg.logo.mode !== 'relief';

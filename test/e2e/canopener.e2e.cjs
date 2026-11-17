@@ -40,6 +40,11 @@ module.exports = async ({ win, run, shot, wait }) => {
     reference.info.attachment.bodyHoles[0].diameter === 4, 'default dimensions match the original bottle');
   ok(reference.colors.includes('#e9a9bd') && reference.colors.includes('#ffffff') && reference.cfg.polish.height === 1,
     'the raised 1 mm outline has the reference colours');
+  await check('polish.fillCap', true);
+  ok(await until(`!window.__r3d.canopener.stale && window.__r3d.canopener.res?.cfg.polish.fillCap`), 'filled cap regenerates when enabled');
+  ok((await info()).parts.some(p => p.name === 'Borde de esmalte' && p.color === '#ffffff'), 'the cap uses the border colour');
+  await check('polish.fillCap', false);
+  ok(await until(`!window.__r3d.canopener.stale && window.__r3d.canopener.res?.cfg.polish.fillCap === false`), 'the cap fill is optional');
   ok(await run(`!${q('[data-k="text.enabled"]')}.checked`), 'text starts disabled');
   await set('text.font', 'Lilita One');
   await run(`(() => { const el=${q('[data-k="text.value"]')}; el.value='HB'; el.dispatchEvent(new Event('input',{bubbles:true})); })()`);
