@@ -21,6 +21,8 @@ import { ColorSplitStudio } from './colorsplit_ui.js';
 import { Keyring3MFStudio } from './keyring_3mf_ui.js';
 import { ClickerStudio } from './clicker_ui.js';
 import { CanOpenerStudio } from './canopener_ui.js';
+import { installSettingGuides } from './setting_guides.js';
+import { syncVisualSettingChoices } from './setting_choices.js';
 import { PhoneStandStudio } from './phonestand_ui.js';
 import { NameTreeStudio } from './name_tree_ui.js';
 import { ColoringStudio } from './coloring_ui.js';
@@ -887,6 +889,7 @@ function syncSettingsInputs() {
     else el.value = v == null ? '' : fmt(v);
   });
   document.querySelectorAll('[data-when]').forEach((el) => { el.hidden = !evalWhen(el.dataset.when); });
+  syncVisualSettingChoices(document.querySelector('body > main'));
   const p = S.settings.pencil;
   $('pencilValueLabel').textContent = p.measure === 'circumference' ? 'Circunferencia (mm)' : p.type === 'hex' ? 'Ancho entre caras (mm)' : 'Diámetro / ancho (mm)';
   const across = pencilAcross(p);
@@ -2186,6 +2189,7 @@ async function sendStudioTo3D({ dataURL, colors, widthMM, name, module, outlined
 }
 
 const pencilBatch = new PencilBatchUI({ toast, openProject: openProjectFile });
+installSettingGuides();
 $('homeGrid3d').addEventListener('click', (e) => { const b = e.target.closest('[data-mod]'); if (b) enterModule(b.dataset.mod); });
 $('homeGrid2d').addEventListener('click', (e) => { const b = e.target.closest('[data-mod]'); if (b) enterModule(b.dataset.mod); });
 $('homeGridBusiness').addEventListener('click', (e) => { const b = e.target.closest('[data-mod]'); if (b) enterModule(b.dataset.mod); });

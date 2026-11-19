@@ -1,6 +1,7 @@
 import { COLORING_DEFAULTS, coloringOptions, coloringLayout, validateColoringEdits,
   coloringShapes, coloringPathData, coloringSVG, coloringPDF, coloringPngDPI } from './core/coloring.js';
 import { imageReady } from './core/imageload.js';
+import { syncVisualSettingChoices } from './setting_choices.js';
 import { DECORATION_ASSETS, DECORATION_THEMES, validateDecorations, decorationScene, decorationPathData,
   decorationIcon, fitDecoration } from './core/coloring_decorations.js';
 
@@ -50,7 +51,7 @@ export class ColoringStudio {
         <aside class="panel left">
           <section class="card">
             <h3>Convertir a contornos</h3>
-            <label class="row">Conversión <select data-opt="mode"><option value="illustration">Ilustración sin sombras</option><option value="regions">Zonas de color</option></select></label>
+            <label class="row">Conversión <select data-opt="mode" data-visual-setting="coloring" data-visual-title="Cómo se generan los contornos"><option value="illustration">Ilustración sin sombras</option><option value="regions">Zonas de color</option></select></label>
             ${fields.map(row).join('')}
             <label class="row" title="Conserva líneas oscuras estrechas y, en modo ilustración, marcos de color como un solo trazo. Las áreas oscuras grandes se vacían.">Conservar trazos originales <input type="checkbox" data-opt="keepInk" /></label>
             <label class="row" title="Blanquea fondos claros conectados al borde, incluidos dameros grises incrustados. No quita fondos oscuros o de color intenso.">Limpiar fondo claro <input type="checkbox" data-opt="cleanBackground" /></label>
@@ -228,6 +229,7 @@ export class ColoringStudio {
       if (el.type === 'checkbox') el.checked = this.state.options[key]; else el.value = this.state.options[key];
       if (key === 'shadowTolerance') el.disabled = this.state.options.mode !== 'illustration';
     }
+    syncVisualSettingChoices(this.root);
     const o = this.state.options;
     this.$('paper').value = o.pageWidth === 210 && o.pageHeight === 297 ? 'a4' : o.pageWidth === 215.9 && o.pageHeight === 279.4 ? 'letter' : 'custom';
     this.root.querySelector('[data-a="undo"]').disabled = this.hidx <= 0 || this.loading;

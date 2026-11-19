@@ -11,6 +11,7 @@
   <link rel="stylesheet" href="tiktok.css" />
   <link rel="stylesheet" href="inbox.css" />
   <link rel="stylesheet" href="theme.css" />
+  <link rel="stylesheet" href="setting_guides.css" />
   <script type="importmap">
     {
       "imports": {
@@ -29,6 +30,7 @@
 </head>
 <body>
   <div class="theme-bar">
+    <span class="setting-legend"><b aria-hidden="true">↔</b> Señala un control o entra con Tab para ver qué ajusta.</span>
     <label for="themeSelect">Tema</label>
     <select id="themeSelect" aria-label="Tema de la aplicación">
       <option value="light">Claro</option>
@@ -261,7 +263,7 @@
 
       <section class="card" data-card="kctier">
         <h3>💎 Línea de producto</h3>
-        <label class="row">Acabado <select data-set="kc.finish"><option value="relief">Editable por alturas</option><option value="flat">Plano · una capa de color</option></select></label>
+        <label class="row">Acabado <select data-set="kc.finish" data-visual-setting="finish" data-visual-title="Acabado de la cara"><option value="relief">Editable por alturas</option><option value="flat">Plano · una capa de color</option></select></label>
         <p class="muted small" data-when="kc.finish=flat">La cara de color ocupa 0,2 mm y queda al ras de la base. Para limitarla a 3 o 4 colores, ajusta «Colores» en Vectorización. Exporta en 3MF.</p>
         <div class="tier-grid" id="tierGrid">
           <button class="tier" data-tier="basic"><b>Sencillo</b><span>2 colores · delgado</span><small>Base 1.8 mm, relieve 0.8 mm. El más económico.</small></button>
@@ -339,7 +341,7 @@
 
       <section class="card" data-card="base">
         <h3><label class="chk" data-when="kc.finish!=flat"><input type="checkbox" data-set="base.enabled" /> Base / silueta</label><span data-when="kc.finish=flat">Base / silueta</span></h3>
-        <label class="row">Forma <select data-set="base.shape">
+        <label class="row">Forma <select data-set="base.shape" data-visual-setting="shape" data-visual-title="Contorno de la base">
           <option value="contour">Silueta (sigue el diseño)</option><option value="circle">Círculo</option><option value="rect">Rectángulo</option>
           <option value="star">Estrella</option><option value="heart">Corazón</option><option value="hexagon">Hexágono</option><option value="octagon">Octágono</option>
           <option value="shield">Escudo</option><option value="badge">Insignia</option><option value="cloud">Nube</option><option value="speech">Globo de diálogo</option>
@@ -359,7 +361,7 @@
 
       <section class="card" data-card="ring">
         <h3><label class="chk"><input type="checkbox" data-set="ring.enabled" /> Argolla de llavero</label></h3>
-        <label class="row">Tipo <select data-set="ring.style"><option value="round">Argolla redonda</option><option value="slot">Ranura para cordón / lanyard</option></select></label>
+        <label class="row">Tipo <select data-set="ring.style" data-visual-setting="ring" data-visual-title="Abertura de la argolla"><option value="round">Argolla redonda</option><option value="slot">Ranura para cordón / lanyard</option></select></label>
         <label class="row">Posición <select data-set="ring.pos">
           <option value="top">Arriba</option><option value="left">Izquierda</option><option value="right">Derecha</option>
           <option value="topleft">Arriba izquierda</option><option value="topright">Arriba derecha</option><option value="bottom">Abajo</option><option value="manual">Manual (arrastrada)</option>

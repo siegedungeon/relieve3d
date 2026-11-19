@@ -6,6 +6,7 @@ import { imageReady } from './core/imageload.js';
 import { analyzeMockup } from './core/hablador_mockup.js';
 import { ensureFont } from './core/text.js';
 import { FontPicker } from './font_picker.js';
+import { syncVisualSettingChoices } from './setting_choices.js';
 
 const esc = (s) => String(s).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
 const parseNum = (s) => parseFloat(String(s).trim().replace(',', '.'));
@@ -55,7 +56,7 @@ export class HabladorStudio {
       <aside class="panel left">
         <section class="card">
           <h3>Origen del diseño</h3>
-          <label class="row">Frente <select data-k="source"><option value="param">Paramétrico (formulario)</option><option value="mockup">Desde mockup</option></select></label>
+          <label class="row">Frente <select data-k="source" data-visual-setting="source" data-visual-title="Cómo construir el frente"><option value="param">Paramétrico (formulario)</option><option value="mockup">Desde mockup</option></select></label>
           <button class="btn wide primary" data-a="fromMockup" title="Calca el frente (panel, piezas blancas, QR, textos, porta tarjetas) de una imagen frontal">🪄 Generar desde mockup</button>
           <div class="muted small">Usa una vista <b>FRONTAL recta</b> (sin perspectiva), fondo liso, base visible abajo, colores reales del acrílico y mínimo 1500 px de alto. No hacen falta vistas laterales ni superior: el fondo sale de «Ancho / fondo».</div>
           <div class="muted small" data-r="mockInfo"></div>
@@ -287,6 +288,7 @@ export class HabladorStudio {
     }
     this.fontPickers.forEach(picker => picker.sync());
     this.$('qrCount').value = String(Math.max(1, c.qr.items.length));
+    syncVisualSettingChoices(this.root);
     this.renderQrItems();
     this.updateVisibility();
   }

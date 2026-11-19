@@ -10,6 +10,7 @@ import { Viewer3D } from './viewer3d.js';
 import { imageReady } from './core/imageload.js';
 import { ensureFont } from './core/text.js';
 import { FontPicker } from './font_picker.js';
+import { visualSettingChoices } from './setting_choices.js';
 import { threeMF, stlBinary } from './core/exporters.js';
 import {
   PHONESTAND_SHAPES, PHONESTAND_FONTS, PHONESTAND_SIZES, PHONESTAND_VARIANTS, DEFAULT_PHONESTAND, normalizePhoneStand,
@@ -242,6 +243,7 @@ export class PhoneStandStudio {
     <input type="file" data-r="fileShape" accept="image/*,.svg" hidden />
     <input type="file" data-r="fileCfg" accept=".r3p,.json" hidden />`;
     this.$ = (n) => this.root.querySelector(`[data-r="${n}"]`);
+    this.finishChoice = visualSettingChoices(this.root.querySelector('[data-k="logo.mode"]'), { title: 'Acabado del logo y el texto', kind: 'finish' });
     this.picker = new FontPicker(this.root.querySelector('[data-k="text.font"]'), {
       sample: () => ({ text: this.cfg.text.value || 'Tu marca', weight: 400 }), label: 'Fuente del texto', onError: this.cb.toast,
       loadFont: (family) => ensureFont(family, 400, { file: PHONESTAND_FONTS[family] }),
@@ -355,6 +357,7 @@ export class PhoneStandStudio {
     this.renderLayers();
     this.markShape();
     this.updateVisibility();
+    this.finishChoice.sync();
   }
 
   updateVisibility() {

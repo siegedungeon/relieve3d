@@ -5,6 +5,7 @@ import { Viewer3D } from './viewer3d.js';
 import { imageDataFrom, isImageFile, readDataURL } from './phonestand_ui.js';
 import { PHONESTAND_FONTS } from './core/phonestand.js';
 import { FontPicker } from './font_picker.js';
+import { visualSettingChoices } from './setting_choices.js';
 import { ensureFont } from './core/text.js';
 import {
   CAN_OPENER_SHAPES, CAN_OPENER_OPENINGS, CAN_OPENER_PROFILES, DEFAULT_CAN_OPENER,
@@ -210,6 +211,7 @@ export class CanOpenerStudio {
     <input type="file" data-r="fileShape" accept="image/*,.svg" hidden />
     <input type="file" data-r="fileProject" accept=".r3o,.json" hidden />`;
     this.$ = (name) => this.root.querySelector(`[data-r="${name}"]`);
+    this.finishChoice = visualSettingChoices(this.root.querySelector('[data-k="logo.mode"]'), { title: 'Acabado del logo y el texto', kind: 'finish' });
     this.preview = (id) => this.root.querySelector(`[data-preview="${id}"]`);
     for (const [id, { slot }] of Object.entries(CAN_OPENER_OPENINGS)) paintOpening(this.preview(`opening-${id}`), slot);
     for (const [id, { thickness }] of Object.entries(CAN_OPENER_PROFILES)) {
@@ -352,6 +354,7 @@ export class CanOpenerStudio {
     this.visibility();
     this.picker.sync();
     this.renderLayers();
+    this.finishChoice.sync();
   }
 
   visibility() {

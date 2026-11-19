@@ -40,6 +40,15 @@ module.exports = async ({ win, run, shot, wait }) => {
     t.res.plan.stability.frontBack>=8 && Math.abs(t.res.plan.stability.center[2])<0.01 &&
     t.res.parts.every(p=>Math.abs(p.bounds.min[2]+p.bounds.max[2])<0.01) && t.$("summary").textContent.includes("adelante/atrás")`),
   'default follows the reference: list from bottom to top, year trunk, hidden guides and a symmetric depth that stands upright');
+  ok(await p(`t.$('builtDimensions').textContent.includes('Generado:') &&
+    t.$('dimensions').getContext('2d').getImageData(0, 0, 424, 288).data.some((v, i) => i % 4 === 3 && v)`),
+  'the front and profile drawing is rendered with the generated dimensions');
+  await run(`document.querySelector('#nameTree [data-k="maxWidth"]').focus()`);
+  await until(() => run(`document.querySelector('.setting-guide:popover-open')?.textContent.includes('Límite de lado a lado')`));
+  ok(await run(`document.querySelector('.setting-guide:popover-open').textContent.includes('40 mm a 500 mm')`),
+    'focusing width shows its explanation and actual validation limits');
+  if (process.env.R3D_TEST_THEME === 'dark') await picture('00_medidas_y_ayuda');
+  await run(`document.activeElement.blur()`);
   await view('front'); await picture('01_default_front');
   const list = ['Valentina', 'Sebastián', 'Mateo', 'Camila', 'Lucía', 'José', 'Ana'];
   for (const count of [2, 3, 7]) {
@@ -54,7 +63,8 @@ module.exports = async ({ win, run, shot, wait }) => {
   const suggested = await p('t.res.plan.stability.suggestedBottomDepth');
   await set('bottomDepth', suggested);
   ok(await p(`t.res.cfg.bottomDepth===${suggested} && t.res.plan.stability.frontBack>=8 && t.$("warnings").hidden`), 'the suggested bottom depth makes the tree stable');
-  await set('order', 'auto');
+  await run(`document.querySelector('#nameTree input[name="visual-nameTree-order"][value="auto"]').click()`);
+  await idle();
   ok(await p('t.res.parts.filter(p=>p.role==="name").map(p=>p.sourceIndex).some((v,i)=>v!==i)'), 'automatic order moves the longest names down');
   await set('order', 'manual');
   ok(await p('t.res.parts.filter(p=>p.role==="name").map(p=>p.sourceIndex).every((v,i)=>v===i)'), 'manual order follows the list from trunk to topper');

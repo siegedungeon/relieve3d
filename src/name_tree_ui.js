@@ -6,8 +6,10 @@ import { ensureFont } from './core/text.js';
 import { imageReady } from './core/imageload.js';
 import { traceLogo, flatten } from './core/hablador.js';
 import { computeForeground } from './core/processing.js';
+import { visualSettingChoices } from './setting_choices.js';
+import { paintTreeChoice, paintTreeDimensions } from './tree_dimension_view.js';
 import {
-  DEFAULT_NAME_TREE, NAME_TREE_FONTS, normalizeNameTree, prepareNameTree, buildNameTree, packNameTree,
+  DEFAULT_NAME_TREE, NAME_TREE_FONTS, NAME_TREE_MEASURES, normalizeNameTree, prepareNameTree, buildNameTree, packNameTree,
   placedTreeGeometry, nameTreeProject, readNameTreeProject, nameTreeFiles, nameTreeAssembly,
 } from './core/name_tree.js';
 
@@ -16,6 +18,8 @@ const wait = ms => new Promise(resolve => setTimeout(resolve, ms));
 const dispose = res => res?.parts.forEach(p => p.geometry.dispose());
 const basename = s => 'Arbol_' + String(s).replace(/[<>:"/\\|?*\x00-\x1f]/g, '_').replace(/[ .]+$/, '').slice(0, 60);
 const storageKey = 'relieve3d.nameTree.v2', legacyKey = 'relieve3d.nameTree';
+const dimensionKeys = ['maxWidth', 'maxHeight', 'bottomDepth', 'topDepth'];
+const cmFormat = new Intl.NumberFormat('es-CO', { maximumFractionDigits: 1 });
 // Version 1.24 remembered a different design (flat back, its own example). Only names the user typed carry over.
 function rememberedTree() {
   const saved = localStorage.getItem(storageKey), legacy = localStorage.getItem(legacyKey), d = DEFAULT_NAME_TREE();
@@ -35,7 +39,10 @@ export class NameTreeStudio {
     this.build();
   }
   build() {
-    const number = (label, key, title = '') => `<label class="row" title="${esc(title)}">${label}<input type="text" inputmode="decimal" data-k="${key}" /></label>`;
+    const number = (label, key, title = '') => {
+      const [min, max] = NAME_TREE_MEASURES[key];
+      return `<label class="row" title="${esc(title)}">${label}<input type="text" inputmode="decimal" data-k="${key}" data-min="${min}" data-max="${max}" /></label>`;
+    };
     const color = (label, key) => `<label class="row">${label}<input type="color" data-color="${key}" /></label>`;
     this.root.innerHTML = `
       <header class="topbar">
@@ -51,6 +58,20 @@ export class NameTreeStudio {
       </header>
       <main class="layout studio-layout hb-layout nt-layout">
         <aside class="panel left">
+          <section class="card nt-measures">
+            <h3>Medidas del árbol</h3>
+            <figure>
+              <canvas class="nt-dimension-drawing" width="424" height="288" data-r="dimensions" aria-hidden="true"></canvas>
+              <figcaption data-r="builtDimensions"></figcaption>
+            </figure>
+            <div class="nt-measure-pair" aria-label="Límites vistos de frente">
+              ${number('Alto máximo (mm)', 'maxHeight')}${number('Ancho máximo (mm)', 'maxWidth')}
+            </div>
+            <div class="nt-measure-pair" aria-label="Grosor visto de lado">
+              ${number('Grosor abajo (mm)', 'bottomDepth')}${number('Grosor arriba (mm)', 'topDepth')}
+            </div>
+            <p class="muted small">El marco punteado marca los límites. Si el árbol llega antes a uno de ellos, puede quedar más pequeño en el otro.</p>
+          </section>
           <section class="card">
             <h3>Nombres del árbol</h3>
             <label for="treeNames" class="muted small">Uno por renglón; admite nombres compuestos y repetidos.</label>
@@ -69,14 +90,6 @@ export class NameTreeStudio {
             <label class="row">Debe decir<input type="text" data-r="fixText" maxlength="32" spellcheck="false" /></label>
             <button class="btn wide" data-a="fix">Aplicar corrección</button>
             <div data-r="fixList" class="nt-fixes"></div>
-          </section>
-          <section class="card">
-            <h3>Medidas máximas del conjunto</h3>
-            ${number('Alto máximo (mm)', 'maxHeight', 'Incluye tronco, nombres y remate. El árbol puede quedar más bajo para respetar el ancho y la forma.')}
-            ${number('Ancho máximo (mm)', 'maxWidth')}
-            ${number('Grosor inferior (mm)', 'bottomDepth', 'Grosor en la base. Más grosor = más estable.')}
-            ${number('Grosor superior (mm)', 'topDepth', 'Igual al inferior = espesor uniforme. Menor = el árbol se afina hacia arriba por igual delante y detrás.')}
-            <p class="muted small">El grosor se reparte por igual delante y detrás: el árbol queda vertical, sin inclinarse. Sin palabras inclinadas. Los grosores son independientes del alto y ancho.</p>
           </section>
           <section class="card">
             <h3>Remate de la cima</h3>
@@ -120,6 +133,17 @@ export class NameTreeStudio {
       <input type="file" data-r="fileProject" accept=".r3t,.json" hidden />
       <input type="file" data-r="fileShape" accept="image/png,image/jpeg,image/svg+xml,.svg" hidden />`;
     this.$ = key => this.root.querySelector(`[data-r="${key}"]`);
+    this.measureInputs = dimensionKeys.map(key => this.root.querySelector(`[data-k="${key}"]`));
+    this.choices = Object.entries({ order: 'Orden de los nombres', trunk: 'Tronco', shape: 'Figura del remate', bedFace: 'Cara que toma la textura de la cama' })
+      .map(([key, title]) => visualSettingChoices(this.root.querySelector(`[data-k="${key}"]`), {
+        title, paint: (canvas, value) => paintTreeChoice(key, canvas, value),
+      }));
+    window.addEventListener('r3d-theme-change', () => this.paintDimensions());
+    for (const input of this.measureInputs) {
+      input.addEventListener('input', () => this.paintDimensions(input.dataset.k));
+      input.addEventListener('focus', () => this.paintDimensions(input.dataset.k));
+      input.addEventListener('blur', () => this.paintDimensions());
+    }
     this.picker = new FontPicker(this.root.querySelector('[data-k="font"]'), {
       sample: () => ({ text: this.res?.parts.find(p => p.role === 'name')?.name || 'FAMILIA', weight: 400 }),
       label: 'Fuente de los nombres', onError: this.cb.toast,
@@ -173,6 +197,20 @@ export class NameTreeStudio {
     this.root.querySelector('[data-k="trunkText"]').disabled = this.cfg.trunk === 'block';
     this.syncFixes();
     this.picker.sync();
+    this.paintDimensions();
+  }
+
+  paintDimensions(activeKey) {
+    const measurements = {};
+    for (const input of this.measureInputs) {
+      const number = Number(input.value.trim().replace(',', '.'));
+      const [min, max] = NAME_TREE_MEASURES[input.dataset.k];
+      measurements[input.dataset.k] = number >= min && number <= max ? number : this.cfg[input.dataset.k];
+    }
+    const result = this.res?.plan;
+    paintTreeDimensions(this.$('dimensions'), { ...measurements, shape: this.cfg.shape }, result, activeKey);
+    this.$('builtDimensions').textContent = result ? `Generado: ${cmFormat.format(result.width)} × ${cmFormat.format(result.height)} mm`
+      : 'Ancho y alto del conjunto generado';
   }
   fixTextFor(index) {
     return this.cfg.fixes.find(f => f.index === index)?.text ?? this.cfg.names[index]?.text ?? '';
@@ -197,6 +235,7 @@ export class NameTreeStudio {
       this.root.querySelector(`[data-k="${key}"]`).disabled = fixing || (key === 'trunkText' && c.trunk === 'block');
     }
     this.root.querySelector('[data-a="shape"]').disabled = fixing;
+    for (const choice of this.choices) choice.sync();
     this.root.querySelector('[data-a="export"]').textContent = fixing ? `⬇ Solo ${c.fixes.length > 1 ? 'piezas corregidas' : 'pieza corregida'}` : '⬇ Placas por color';
     this.$('faceHint').textContent = c.bedFace === 'front'
       ? 'Piezas boca abajo, con el frente sobre la cama y sin soportes: la textura de la placa queda en la cara que se lee. Una placa por color: no requiere AMS.'
@@ -265,6 +304,7 @@ export class NameTreeStudio {
     const r = this.res, c = this.cfg, p = r.plan, fixed = p.fixes;
     this.picker.sync();
     this.syncFixes(false);
+    this.paintDimensions();
     this.$('status').textContent = `${c.names.length} nombres · ${p.width.toFixed(1)} × ${p.height.toFixed(1)} mm · grosor ${c.bottomDepth} → ${c.topDepth} mm`
       + (fixed.length ? ` · corrección: ${fixed.length === 1 ? '1 pieza' : `${fixed.length} piezas`}` : '');
     this.$('parts').innerHTML = r.parts.filter(part => part.role === 'name').map(part => `<label class="nt-part">${esc(part.name)}

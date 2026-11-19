@@ -2,6 +2,8 @@ import { LASER_DEFAULTS, bounds, transformLoops, validateConfig, validateLayout 
 import { importLaserSVG, groupLaserTemplates, laserSVG, laserProject, readLaserProject, escapeXML as esc } from './laser_svg.js';
 
 const clone = value => JSON.parse(JSON.stringify(value));
+import { syncVisualSettingChoices } from './setting_choices.js';
+
 const number = value => Number(String(value).replace(',', '.').trim());
 const fmt = value => value == null ? '—' : value.toFixed(2);
 
@@ -38,7 +40,7 @@ export class LaserStudio {
           </section>
           <section class="card">
             <h3>Distribución</h3>
-            <label class="row">Modo<select data-config="mode"><option value="fill">Llenar una lámina</option><option value="exact">Cantidades exactas</option></select></label>
+            <label class="row">Modo<select data-config="mode" data-visual-setting="layout" data-visual-title="Cómo repartir las piezas"><option value="fill">Llenar una lámina</option><option value="exact">Cantidades exactas</option></select></label>
             <label class="chk"><input type="checkbox" data-config="balanced"> Equilibrar cantidades por diseño</label>
             <label class="row">Giro cada<select data-config="angleStep">${[5, 10, 15, 30, 45, 90, 180, 360].map(n => `<option value="${n}">${n === 360 ? 'Sin giro' : n + '°'}</option>`).join('')}</select></label>
             <label class="row">Tiempo de búsqueda (s)<input data-config="seconds" type="number" min="1" max="300"></label>
@@ -265,6 +267,7 @@ export class LaserStudio {
     for (const input of this.root.querySelectorAll('[data-config]')) {
       if (input.type === 'checkbox') input.checked = this.config[input.dataset.config]; else input.value = this.config[input.dataset.config];
     }
+    syncVisualSettingChoices(this.root);
     const complements = this.templates.filter(t => t.role === 'complement');
     this.q('library').innerHTML = this.templates.length ? this.templates.map(t => `
       <article class="laser-piece">

@@ -4,6 +4,8 @@ import { imageReady } from './core/imageload.js';
 import { prepareClicker, buildClicker, exportClicker } from './core/clicker.js';
 
 const esc = (s) => String(s).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+import { syncVisualSettingChoices } from './setting_choices.js';
+
 const num = (v) => Number(String(v).trim().replace(',', '.'));
 const fmt = (v) => (Math.round(v * 100) / 100).toLocaleString('es-CO');
 const fileBase = (s) => String(s || 'clicker').replace(/[<>:"/\\|?*\x00-\x1f]/g, '_').replace(/[ .]+$/, '').trim() || 'clicker';
@@ -53,7 +55,7 @@ export class ClickerStudio {
         <section class="card">
           <h3>1. Imagen</h3>
           <div class="muted small" data-r="info">Abre o arrastra una imagen con una silueta conectada.</div>
-          <label class="row">Fondo <select data-k="background"><option value="auto">Automático</option><option value="yes">Quitar fondo</option><option value="no">Conservar fondo</option></select></label>
+          <label class="row">Fondo <select data-k="background" data-visual-setting="background" data-visual-title="Fondo de la imagen"><option value="auto">Automático</option><option value="yes">Quitar fondo</option><option value="no">Conservar fondo</option></select></label>
           <label class="row">Colores del diseño <select data-k="colors"><option value="0">Automático</option><option value="1">1</option><option value="2">2</option><option value="3">3</option><option value="4">4</option><option value="5">5</option><option value="6">6</option></select></label>
         </section>
         <section class="card">
@@ -90,6 +92,7 @@ export class ClickerStudio {
     </main>
     <input type="file" data-r="file" accept="image/*,.svg" hidden />`;
     this.$ = (name) => this.root.querySelector(`[data-r="${name}"]`);
+    syncVisualSettingChoices(this.root);
     this.root.addEventListener('click', (e) => {
       const a = e.target.closest('[data-a]')?.dataset.a;
       if (a === 'home') this.cb.onBack();

@@ -36,6 +36,12 @@ const FLANK = 50, KEY_TIP = 1, KEY_MIN = 0.8, KEY_GOOD = 2.5, KEY_MAX = 6;
 // SHIFT_MAX mm so its letters cover the hidden grooves of the printed neighbours.
 const TRACK_MAX = 0.25, SHIFT_MAX = 2, SHIFT_STEP = 0.25, LOST_TOL = 0.25;
 const TOPPERS = { star: 'Estrella', heart: 'Corazón', circle: 'Círculo', custom: 'Remate personalizado' };
+export const NAME_TREE_MEASURES = {
+  maxWidth: [40, 500, 'Ancho máximo'], maxHeight: [60, 600, 'Alto máximo'],
+  bottomDepth: [8, 80, 'Grosor inferior'], topDepth: [6, 60, 'Grosor superior'],
+  minStroke: [0.8, 3, 'Trazo mínimo'], clearance: [0.12, 0.5, 'Holgura por lado'],
+  bedWidth: [80, 500, 'Ancho de placa'], bedHeight: [80, 500, 'Largo de placa'],
+};
 
 let engine, loading;
 export async function prepareNameTree() {
@@ -91,12 +97,7 @@ export function normalizeNameTree(input = {}) {
   if (!['back', 'front'].includes(c.bedFace)) throw new Error('Cara contra la cama no válida.');
   if ([...c.trunkText].length > 16 || /[\x00-\x1f\x7f]/.test(c.trunkText)) throw new Error('El texto del tronco admite hasta 16 caracteres visibles.');
   if (c.trunk === 'text' && !c.trunkText) throw new Error('Escribe el texto del tronco (por ejemplo, el año) o elige el tronco liso.');
-  for (const [k, lo, hi, label] of [
-    ['maxWidth', 40, 500, 'Ancho máximo'], ['maxHeight', 60, 600, 'Alto máximo'],
-    ['bottomDepth', 8, 80, 'Grosor inferior'], ['topDepth', 6, 60, 'Grosor superior'],
-    ['minStroke', 0.8, 3, 'Trazo mínimo'], ['clearance', 0.12, 0.5, 'Holgura por lado'],
-    ['bedWidth', 80, 500, 'Ancho de placa'], ['bedHeight', 80, 500, 'Largo de placa'],
-  ]) c[k] = number(input[k], d[k], lo, hi, label);
+  for (const [key, [lo, hi, label]] of Object.entries(NAME_TREE_MEASURES)) c[key] = number(input[key], d[key], lo, hi, label);
   if (c.topDepth > c.bottomDepth) throw new Error('El grosor superior no puede superar el inferior.');
   if (!NAME_TREE_FONTS[c.font]) throw new Error('La fuente seleccionada no está disponible.');
   if (!TOPPERS[c.shape]) throw new Error('Remate no válido.');

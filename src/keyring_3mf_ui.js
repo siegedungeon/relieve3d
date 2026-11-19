@@ -3,6 +3,8 @@ import { Viewer3D } from './viewer3d.js';
 import { prepareKeyring, inspectKeyringSource, buildKeyring, exportKeyring } from './core/keyring_3mf.js';
 
 const esc = (s) => String(s).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+import { syncVisualSettingChoices } from './setting_choices.js';
+
 const num = (v) => Number(String(v).trim().replace(',', '.'));
 const fmt = (v) => (Math.round(v * 100) / 100).toLocaleString('es-CO');
 const fileBase = (s) => String(s || 'modelo').replace(/[<>:"/\\|?*\x00-\x1f]/g, '_').replace(/[ .]+$/, '').trim() || 'modelo';
@@ -44,7 +46,7 @@ export class Keyring3MFStudio {
         </section>
         <section class="card">
           <h3>2. Posición de la argolla</h3>
-          <label class="row">Lado <select data-k="side"><option value="top">Arriba</option><option value="bottom">Abajo</option><option value="left">Izquierda</option><option value="right">Derecha</option></select></label>
+          <label class="row">Lado <select data-k="side" data-visual-setting="side" data-visual-title="Borde que recibe la argolla"><option value="top">Arriba</option><option value="bottom">Abajo</option><option value="left">Izquierda</option><option value="right">Derecha</option></select></label>
           <label class="row" title="0 % es izquierda o abajo; 100 % es derecha o arriba">Posición en el lado (%) <input ${N} data-k="position" value="50" /></label>
           <label class="row" title="Desde la cara inferior del objeto. Si es mayor que cero, la argolla puede necesitar soportes">Altura sobre la pieza (mm) <input ${N} data-k="zOffset" value="0" /></label>
           <label class="row">Diámetro exterior (mm) <input ${N} data-k="outer" value="10" /></label>
@@ -74,6 +76,7 @@ export class Keyring3MFStudio {
     </main>
     <input type="file" data-r="file" accept=".3mf" hidden />`;
     this.$ = (name) => this.root.querySelector(`[data-r="${name}"]`);
+    syncVisualSettingChoices(this.root);
     this.root.addEventListener('click', (e) => {
       const a = e.target.closest('[data-a]')?.dataset.a;
       if (a === 'home') this.cb.onBack();

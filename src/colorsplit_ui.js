@@ -4,6 +4,7 @@
 import * as THREE from 'three';
 import { toCreasedNormals } from 'three/addons/utils/BufferGeometryUtils.js';
 import { Viewer3D } from './viewer3d.js';
+import { syncVisualSettingChoices } from './setting_choices.js';
 import { read3MF } from './core/threemf_read.js';
 import { DEFAULT_SPLIT, analyzeModel } from './core/colorsplit.js';
 import { exportFiles, platesFor } from './core/colorsplit_export.js';
@@ -85,7 +86,7 @@ export class ColorSplitStudio {
         <section class="card">
           <h3>Encajes</h3>
           ${SETTINGS.map(([k, l, t]) => `<label class="row" title="${esc(t)}">${l} <input ${N} data-k="${k}" /></label>`).join('')}
-          <label class="row" title="Tallado conserva las dimensiones exteriores. Capa exterior crece sobre el original. Esculpido reconstruye una envolvente mayor, suaviza los colores y abre los recorridos de montaje; rechaza los resultados que no puede liberar sin dañar el cuerpo">Modo <select data-k="mode"><option value="carve">Tallado (recomendado)</option><option value="covers">Base + covers pegados</option><option value="inlays">Incrustaciones</option><option value="skin">Capa exterior (experimental)</option><option value="sculpt">Esculpido exterior</option></select></label>
+          <label class="row">Modo <select data-k="mode" data-visual-setting="split" data-visual-title="Cómo separar los colores"><option value="carve">Tallado</option><option value="covers">Base + tapas</option><option value="inlays">Incrustaciones</option><option value="skin">Capa exterior · experimental</option><option value="sculpt">Esculpido exterior</option></select></label>
           <label class="row" data-r="carveRow" title="Modo tallado: grosor de la capa de color tallada bajo la superficie. Más grosor = piezas de color más rígidas. Una zona enteramente delgada puede pasar al color base; un borde afinado unido a una zona gruesa conserva su color">Grosor del color tallado (mm) <input ${N} data-k="carveDepth" /></label>
           <label class="row" data-r="skinRow" title="Capa exterior conserva el original como base; Esculpido reconstruye también el núcleo. Ambos crecen por fuera y pueden estrechar agujeros: revisa las medidas funcionales">Grosor capa exterior (mm) <input ${N} data-k="skinDepth" /></label>
           <label class="row" data-r="sculptRow" title="Redibuja y redondea las fronteras de color. Mayor que 0 y hasta 3 mm. Puede cambiar detalles; el montaje se comprueba antes de producir las piezas">Suavizado del esculpido (mm) <input ${N} data-k="skinSmooth" /></label>
@@ -174,6 +175,7 @@ export class ColorSplitStudio {
 
   sync() {
     for (const el of this.root.querySelectorAll('[data-k]')) { if (el.type === 'checkbox') el.checked = !!this.opts[el.dataset.k]; else el.value = this.opts[el.dataset.k]; }
+    syncVisualSettingChoices(this.root);
     this.syncMode();
     for (const el of this.root.querySelectorAll('[data-b]')) el.value = this.bed[el.dataset.b];
   }
