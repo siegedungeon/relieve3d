@@ -90,11 +90,15 @@ export function threeMF(parts, modelName = 'Relieve3D', opts = {}) {
   let id = 2;
   const ids = [];
   for (const p of parts) {
-    const g = mergeToIndexed([p.geometry]);
+    // The solids from Manifold already have validated connectivity. Welding
+    // nearby vertices again can open small details in a thin inlay.
+    const indexed = p.preserveTopology && p.geometry.index;
+    const g = indexed ? p.geometry : mergeToIndexed([p.geometry]);
+    const coord = indexed ? v => v.toFixed(6).replace(/\.?0+$/, '') : f;
     const pos = g.getAttribute('position');
     out.push(`<object id="${id}" type="model" name="${esc(p.name)}" pid="1" pindex="${p.filamentIndex}">\n<mesh>\n<vertices>\n`);
     const vs = [];
-    for (let i = 0; i < pos.count; i++) vs.push(`<vertex x="${f(pos.getX(i))}" y="${f(pos.getY(i))}" z="${f(pos.getZ(i))}"/>`);
+    for (let i = 0; i < pos.count; i++) vs.push(`<vertex x="${coord(pos.getX(i))}" y="${coord(pos.getY(i))}" z="${coord(pos.getZ(i))}"/>`);
     out.push(vs.join('\n'), '\n</vertices>\n<triangles>\n');
     const ts = [];
     // blockSupports: faces looking down (> 30° past vertical) above the bed are painted as support blockers
@@ -109,7 +113,7 @@ export function threeMF(parts, modelName = 'Relieve3D', opts = {}) {
     triangles(g, (a, b, c) => { if (a !== b && b !== c && a !== c) ts.push(`<triangle v1="${a}" v2="${b}" v3="${c}"${paint(a, b, c)}/>`); });
     out.push(ts.join('\n'), '\n</triangles>\n</mesh>\n</object>\n');
     ids.push(id++);
-    g.dispose();
+    if (!indexed) g.dispose();
   }
   const cfg = ['<?xml version="1.0" encoding="UTF-8"?>\n<config>\n'], build = [], instances = [];
   assemblies.forEach((a, index) => {

@@ -19,7 +19,7 @@ export const DEFAULT_SETTINGS = () => ({
   bevel: { enabled: false, size: 0.6 },                                      // stepped chamfer on the top edge of the base
   nfc: { enabled: false, diameter: 25.5, depth: 1, floor: 0.6 },             // hidden pocket for an NFC tag (print pauses to insert it)
   back: { enabled: false, text: '', font: 'Poppins Black', heightMM: 5, depth: 0.6 }, // text engraved on the back
-  kc: { tier: '' },
+  kc: { tier: '', finish: 'relief' },
   holes: { enabled: false, count: 2, diameter: 4, inset: 4 },
   magnets: { enabled: false, count: 1, diameter: 10, depth: 2, spacing: 20, clearance: 0.2 },
   tongue: { enabled: false, width: 14, length: 18, thickness: 2 },

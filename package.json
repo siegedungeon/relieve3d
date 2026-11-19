@@ -4,6 +4,7 @@
   "description": "Convierte imágenes en modelos 3D por capas de color (llaveros, letreros, relieves) con vista previa 3D.",
   "main": "main.js",
   "scripts": {
+    "test:keychain": "node test/e2e/run.mjs keychain",
     "test:nametree": "node --test test/name_tree.test.mjs && node test/e2e/run.mjs nametree",
     "test:nametree:print": "node test/name_tree_bambu.mjs",
     "test:keyring": "node --test test/keyring_3mf.test.mjs && node test/e2e/run.mjs keyring3mf",

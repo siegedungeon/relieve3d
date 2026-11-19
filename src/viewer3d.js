@@ -56,7 +56,7 @@ export class Viewer3D {
       const ndc = new THREE.Vector2(((e.clientX - r.left) / r.width) * 2 - 1, -((e.clientY - r.top) / r.height) * 2 + 1);
       const ray = new THREE.Raycaster();
       ray.setFromCamera(ndc, this.camera);
-      const hits = ray.intersectObjects([...this.meshes.values()].filter((m) => m.visible), false);
+      const hits = ray.intersectObjects([...this.meshes.values()].filter(m => m.visible || m.userData.pickable), false);
       this.onPick?.(hits.length ? hits[0].object.userData.pieceId : null, e.shiftKey || e.ctrlKey || e.metaKey);
     });
   }
@@ -104,7 +104,7 @@ export class Viewer3D {
     return mesh;
   }
 
-  updatePiece(id, { color, height, z, visible, selected }) {
+  updatePiece(id, { color, height, z, visible, selected, pickable = false }) {
     const m = this.meshes.get(id);
     if (!m) return;
     m.material.color.set(color);
@@ -113,6 +113,7 @@ export class Viewer3D {
     m.scale.z = Math.max(0.01, height);
     m.position.z = z;
     m.visible = visible;
+    m.userData.pickable = pickable;
   }
 
   setExtra(name, geometry, opts = {}) {

@@ -221,18 +221,18 @@
         <h3>Selección <span id="selCount" class="badge">0</span></h3>
         <div id="selEmpty" class="muted">Selecciona piezas en el lienzo, en el 3D o desde los grupos.</div>
         <div id="selProps" hidden>
-          <div class="row">Altura (mm)
+          <div class="row" data-when="kc.finish!=flat">Altura (mm)
             <span class="inline">
               <button class="btn mini" data-hstep="-0.2" title="Bajar 0.2 mm">−</button>
               <input type="number" id="selHeight" step="0.1" min="0.1" />
               <button class="btn mini" data-hstep="0.2" title="Subir 0.2 mm">＋</button>
             </span>
           </div>
-          <input type="range" id="selHeightRange" min="0.2" max="10" step="0.1" />
-          <label class="row">Elevación (mm) <input type="number" id="selElev" step="0.1" min="0" /></label>
+          <input type="range" id="selHeightRange" min="0.2" max="10" step="0.1" data-when="kc.finish!=flat" />
+          <label class="row" data-when="kc.finish!=flat">Elevación (mm) <input type="number" id="selElev" step="0.1" min="0" /></label>
           <label class="row">Filamento <select id="selFilament"></select></label>
           <label class="row">Incluir en el modelo <input type="checkbox" id="selEnabled" /></label>
-          <div class="quick">
+          <div class="quick" data-when="kc.finish!=flat">
             <span class="muted">Altura rápida (mm):</span>
             <button class="chip" data-hset="0.6">0.6</button>
             <button class="chip" data-hset="1">1</button>
@@ -261,6 +261,8 @@
 
       <section class="card" data-card="kctier">
         <h3>💎 Línea de producto</h3>
+        <label class="row">Acabado <select data-set="kc.finish"><option value="relief">Editable por alturas</option><option value="flat">Plano · una capa de color</option></select></label>
+        <p class="muted small" data-when="kc.finish=flat">La cara de color ocupa 0,2 mm y queda al ras de la base. Para limitarla a 3 o 4 colores, ajusta «Colores» en Vectorización. Exporta en 3MF.</p>
         <div class="tier-grid" id="tierGrid">
           <button class="tier" data-tier="basic"><b>Sencillo</b><span>2 colores · delgado</span><small>Base 1.8 mm, relieve 0.8 mm. El más económico.</small></button>
           <button class="tier" data-tier="medium"><b>Medio</b><span>3 colores · borde</span><small>Base 2.6 mm, relieve 1.2 mm y borde elevado de color.</small></button>
@@ -336,7 +338,7 @@
       </section>
 
       <section class="card" data-card="base">
-        <h3><label class="chk"><input type="checkbox" data-set="base.enabled" /> Base / silueta</label></h3>
+        <h3><label class="chk" data-when="kc.finish!=flat"><input type="checkbox" data-set="base.enabled" /> Base / silueta</label><span data-when="kc.finish=flat">Base / silueta</span></h3>
         <label class="row">Forma <select data-set="base.shape">
           <option value="contour">Silueta (sigue el diseño)</option><option value="circle">Círculo</option><option value="rect">Rectángulo</option>
           <option value="star">Estrella</option><option value="heart">Corazón</option><option value="hexagon">Hexágono</option><option value="octagon">Octágono</option>
@@ -352,7 +354,7 @@
         <label class="row">Grosor (mm) <input inputmode="decimal" type="text" data-set="base.thickness" data-min="0.4" /></label>
         <label class="row">Filamento <select data-set="base.filament" class="fil-select"></select></label>
         <label class="row" data-when="base.shape=contour">Unir letras sueltas <input type="checkbox" data-set="base.weld" /></label>
-        <p class="muted small">Las piezas de color se imprimen encima de la base.</p>
+        <p class="muted small" data-when="kc.finish!=flat">Las piezas de color se imprimen encima de la base.</p>
       </section>
 
       <section class="card" data-card="ring">
@@ -365,9 +367,9 @@
         <label class="row">Diámetro exterior (mm) <input inputmode="decimal" type="text" data-set="ring.outer" data-min="3" /></label>
         <label class="row"><span data-when="ring.style=round">Agujero (mm)</span><span data-when="ring.style=slot">Alto ranura (mm)</span> <input inputmode="decimal" type="text" data-set="ring.inner" data-min="1" /></label>
         <label class="row" data-when="ring.style=slot">Largo ranura (mm) <input inputmode="decimal" type="text" data-set="ring.slotW" data-min="4" /></label>
-        <label class="row">Grosor (mm) <input inputmode="decimal" type="text" data-set="ring.thickness" data-min="0.8" /></label>
+        <label class="row" data-when="kc.finish!=flat">Grosor (mm) <input inputmode="decimal" type="text" data-set="ring.thickness" data-min="0.8" /></label>
         <label class="row">Pegar al borde <input type="checkbox" data-set="ring.snap" /></label>
-        <label class="row" data-when="base.enabled=false">Filamento <select data-set="ring.filament" class="fil-select"></select></label>
+        <div data-when="kc.finish!=flat"><label class="row" data-when="base.enabled=false">Filamento <select data-set="ring.filament" class="fil-select"></select></label></div>
         <div class="quick"><span class="muted">Agujero:</span>
           <button class="chip" data-preset='{"ring":{"style":"round","inner":4,"outer":8}}'>4 mm</button>
           <button class="chip" data-preset='{"ring":{"style":"round","inner":4.5,"outer":9}}'>4.5 mm</button>
@@ -381,6 +383,7 @@
 
       <section class="card" data-card="kcextras">
         <h3>✨ Acabados premium</h3>
+        <div data-when="kc.finish!=flat">
         <h4><label class="chk"><input type="checkbox" data-set="rim.enabled" /> Borde elevado</label></h4>
         <div data-when="rim.enabled=true">
           <label class="row">Ancho (mm) <input inputmode="decimal" type="text" data-set="rim.width" data-min="0.4" /></label>
@@ -395,6 +398,7 @@
         </div>
         <h4><label class="chk"><input type="checkbox" data-set="bevel.enabled" /> Canto biselado</label></h4>
         <label class="row" data-when="bevel.enabled=true">Bisel (mm) <input inputmode="decimal" type="text" data-set="bevel.size" data-min="0.2" /></label>
+        </div>
         <h4><label class="chk"><input type="checkbox" data-set="nfc.enabled" /> Chip NFC oculto</label></h4>
         <div data-when="nfc.enabled=true">
           <label class="row">Diámetro chip (mm) <input inputmode="decimal" type="text" data-set="nfc.diameter" data-min="8" /></label>

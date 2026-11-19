@@ -6,6 +6,7 @@ import { buildFeatures, DEFAULT_SETTINGS, pencilAcross } from './core/features.j
 import { renderTextImage, ensureFont, BUNDLED_FONTS, DEFAULT_TEXT, decorationWidthMM } from './core/text.js';
 import { FontPicker } from './font_picker.js';
 import { preparePencil, joinedPencilGeometry } from './core/pencil.js';
+import { prepareKeychain, buildKeychainGeometry, FACE_LAYER } from './core/keychain.js';
 import { planPencilName } from './core/pencil_batch.js';
 import { PencilBatchUI } from './pencil_batch_ui.js';
 import { MODULES, MIC_PRESETS, CAKE_PRESETS, mergeDeep } from './modules.js';
@@ -173,7 +174,10 @@ const center = () => {
 const filament = (id) => S.filaments.find((f) => f.id === id) || S.filaments[0];
 const filamentIndex = (id) => Math.max(0, S.filaments.findIndex((f) => f.id === id));
 const baseZ = () => feat?.pieceZ ?? 0;
+const flatKeychain = () => S.module === 'keychain' && S.settings.kc.finish === 'flat';
+const separateKeyring = () => S.module === 'keychain' && S.settings.ring.enabled && !S.settings.base.enabled && !flatKeychain();
 const filFor = (fil) => {
+  if (typeof fil === 'number') return fil;
   const set = S.settings;
   const id = fil === 'ring' ? set.ring.filament : fil === 'pencil' ? set.pencil.filament : fil === 'micBody' ? set.micBody.filament
     : fil === 'rim' ? set.rim.filament : fil === 'accent' ? set.accent.filament : set.base.filament;
@@ -285,7 +289,15 @@ async function runProcessing(state = null, { keepSettings = false, textVersion =
       for (const k of FIL_KEYS) S.settings[k].filament = fresh[k].filament;
     }
     if (state && state.pieces?.length === res.pieces.length) applyEditable(state);
-    else if (state) { S.settings = withDefaults(state.settings); }
+    else if (state) {
+      S.settings = withDefaults(state.settings);
+      // A different rasterizer can produce a different number of regions.
+      // Uniform heights still apply without guessing which saved color goes where.
+      const first = state.pieces?.[0];
+      if (S.module === 'keychain' && first && state.pieces.every(p => p.height === first.height && p.elevation === first.elevation)) {
+        for (const p of S.pieces) Object.assign(p, { height: first.height, elevation: first.elevation });
+      }
+    }
 
     viewer.clear();
     pieceGeoms.clear();
@@ -298,9 +310,9 @@ async function runProcessing(state = null, { keepSettings = false, textVersion =
     view2d.setContent(res, S.image.el);
     if (S.source === 'image' && !S.image.composed) setOrig();
     await preparePencil(S.settings);
+    if (S.module === 'keychain') await prepareKeychain();
     if (textVersion !== textSeq) return;
     rebuildFeatures();
-    if (!state && !keepSettings && S.source === 'image' && kcModule()) applyTier(S.settings.kc.tier || 'medium', { commit: false, silent: true });
     view2d.resize();
     view2d.fit();
     refresh();
@@ -358,7 +370,8 @@ function sync3D() {
   const s = scale(), bz = baseZ();
   viewer.setScaleXY(s);
   let rank = null;
-  if (S.explode) {
+  const flat = !!feat?.flat;
+  if (S.explode && !flat) {
     const fids = [...new Set(S.pieces.filter((p) => p.enabled).map((p) => p.filament))].sort((a, b) => filamentIndex(a) - filamentIndex(b));
     rank = new Map(fids.map((f, i) => [f, i]));
   }
@@ -367,9 +380,10 @@ function sync3D() {
     const off = rank ? (rank.get(st.filament) + 1) * 5 : 0;
     viewer.updatePiece(p.id, {
       color: filament(st.filament).color,
-      height: st.height,
-      z: bz + st.elevation + off,
-      visible: st.enabled && !feat?.hidePieces,
+      height: flat ? FACE_LAYER : st.height,
+      z: flat ? feat.zTop - FACE_LAYER : bz + st.elevation + off,
+      visible: st.enabled && !feat?.hidePieces && !flat,
+      pickable: st.enabled && flat,
       selected: S.selection.has(p.id),
     });
   }
@@ -405,16 +419,39 @@ function backMask() {
 }
 
 function rebuildFeatures() {
+  clearTimeout(featTimer);
+  featTimer = null;
   for (const fp of featParts) viewer.setExtra(fp.key, null);
   featParts = [];
   feat = null;
   featureError = '';
   if (!S.result) { view2d.setUnderlays([]); view2d.setBounds(null); renderWarnings(); return; }
+  let replacement;
   try {
-    feat = buildFeatures(S.result, S.settings, {
+    const flat = flatKeychain();
+    const settings = flat ? {
+      ...S.settings,
+      base: { ...S.settings.base, enabled: true },
+      rim: { ...S.settings.rim, enabled: false },
+      accent: { ...S.settings.accent, enabled: false },
+      bevel: { ...S.settings.bevel, enabled: false },
+    } : S.settings;
+    feat = buildFeatures(S.result, settings, {
       scale: scale(), center: center(), detail: S.proc.detail, smooth: S.proc.smooth, customBody: customBodyFor(S.settings.micBody),
       enabled: S.pieces.map((p) => p.enabled), backMask: backMask(),
     });
+    if (!feat.hidePieces && (flat || separateKeyring())) {
+      replacement = buildKeychainGeometry(feat, S.result, S.pieces, {
+        scale: scale(), center: center(), flat, baseFilament: filFor('base'),
+      });
+      if (replacement) {
+        feat.flat = flat;
+        if (flat) feat.zTop = replacement.height;
+        else if (feat.zTop === replacement.layers[0].height && !feat.solids.length) {
+          feat.zTop = Math.max(replacement.height, ...feat.layers.filter(l => !replacement.layers.includes(l)).map(l => l.z + l.height));
+        }
+      }
+    }
   } catch (err) {
     console.error(err);
     featureError = err.message || String(err);
@@ -424,18 +461,25 @@ function rebuildFeatures() {
   const under = [];
   if (feat) {
     for (const L of feat.layers) {
+      const color = filament(filFor(L.fil)).color;
+      under.push({ shapes: L.shapes, color });
+      if (replacement?.layers.includes(L)) continue;
       const g = shapesToGeometry(L.shapes, cx, cy);
       if (!g) continue;
-      const key = 'L:' + L.key, color = filament(filFor(L.fil)).color;
+      const key = 'L:' + L.key;
       viewer.setExtra(key, g, { color, height: L.height, z: L.z });
       featParts.push({ key, name: L.name, fil: L.fil, geometry: g, height: L.height, z: L.z, shapes: L.shapes });
-      under.push({ shapes: L.shapes, color });
     }
     for (const so of feat.solids) {
       const key = 'S:' + so.key, color = filament(filFor(so.fil)).color;
       viewer.setExtra(key, so.geometry, { color, height: 1, z: 0 });
       featParts.push({ key, name: so.name, fil: so.fil, geometry: so.geometry, solid: true, shapes: so.footprint });
       if (so.fil !== 'micBody') under.push({ shapes: so.footprint, color, alpha: 0.85, dashed: true });
+    }
+    for (const p of replacement?.parts || []) {
+      const key = 'K:' + p.key;
+      viewer.setExtra(key, p.geometry, { color: filament(filFor(p.fil)).color });
+      featParts.push({ ...p, key, solid: true, keychainMesh: true });
     }
   }
   view2d.setUnderlays(under);
@@ -477,7 +521,8 @@ function onSelectionChanged() {
 // ---------------------------------------------------------------- editing
 function setPropFor(ids, prop, value) {
   for (const id of ids) S.pieces[id][prop] = value;
-  if (prop === 'enabled') rebuildFeatures();
+  if (prop === 'enabled' || (flatKeychain() && prop === 'filament')) rebuildFeatures();
+  else if (separateKeyring() && (prop === 'height' || prop === 'elevation')) rebuildFeaturesDebounced();
   refresh();
 }
 function setSelProp(prop, value, doCommit = true) {
@@ -607,7 +652,7 @@ function renderGroups() {
       ${sw}
       <span class="name" title="${escHtml(row.name)}">${escHtml(row.name)}</span>
       <span class="cnt">${row.ids.length}</span>
-      <span class="h-wrap"><input class="h" type="text" inputmode="decimal" title="Altura (mm) para todo el grupo · Enter para aplicar" value="${hs.length === 1 ? fmt(hs[0]) : ''}" data-orig="${hs.length === 1 ? fmt(hs[0]) : ''}" placeholder="—" /><span class="unit">mm</span></span>
+      <span class="h-wrap"><input class="h" type="text" inputmode="decimal" title="Altura (mm) para todo el grupo · Enter para aplicar" value="${flatKeychain() ? fmt(FACE_LAYER) : hs.length === 1 ? fmt(hs[0]) : ''}" data-orig="${hs.length === 1 ? fmt(hs[0]) : ''}" placeholder="—" ${flatKeychain() ? 'disabled' : ''} /><span class="unit">mm</span></span>
       <button class="eye" title="Incluir / excluir del modelo">${enabled ? '👁' : '◌'}</button>
       ${row.custom ? '<button class="x" title="Eliminar grupo">✕</button>' : ''}
     </div>`;
@@ -709,6 +754,7 @@ $('selEnabled').addEventListener('change', (e) => setSelProp('enabled', e.target
 document.querySelectorAll('[data-hstep]').forEach((b) => b.addEventListener('click', () => {
   const d = parseFloat(b.dataset.hstep);
   for (const id of S.selection) S.pieces[id].height = Math.max(0.1, Math.round((S.pieces[id].height + d) * 100) / 100);
+  if (separateKeyring()) rebuildFeaturesDebounced();
   refresh(); commit();
 }));
 document.querySelectorAll('[data-hset]').forEach((b) => b.addEventListener('click', () => setSelProp('height', parseFloat(b.dataset.hset))));
@@ -760,6 +806,7 @@ $('filamentList').addEventListener('click', (e) => {
   for (const p of S.pieces) if (p.filament === id) p.filament = fallback;
   S.clusterFilament = S.clusterFilament.map((f) => (f === id ? fallback : f));
   for (const k of FIL_KEYS) if (S.settings[k].filament === id) S.settings[k].filament = fallback;
+  if (flatKeychain()) rebuildFeatures();
   refresh(); commit();
 });
 $('btnAddFilament').onclick = () => {
@@ -771,6 +818,7 @@ $('colorMatch').addEventListener('change', (e) => {
   const fid = Number(e.target.value);
   S.clusterFilament[c] = fid;
   S.result.pieces.forEach((p) => { if (p.cluster === c) S.pieces[p.id].filament = fid; });
+  if (flatKeychain()) rebuildFeatures();
   refresh(); commit();
 });
 
@@ -871,7 +919,10 @@ async function onSettingChanged(path) {
   }
   syncSettingsInputs();
   if (!S.result) return;
-  try { await preparePencil(S.settings); }
+  try {
+    await preparePencil(S.settings);
+    if (S.module === 'keychain') await prepareKeychain();
+  }
   catch (err) { featureError = err.message; console.error(err); renderWarnings(); toast(featureError, true); return; }
   if (S.module === 'pencil' && S.source === 'text' && ['pencil.relief', 'pencil.decorationRelief'].includes(path)) {
     for (const p of S.result.pieces) S.pieces[p.id].height = pencilRelief(p);
@@ -1051,7 +1102,7 @@ function renderStatus() {
   if (!S.result) { $('stPieces').textContent = 'Sin diseño'; $('stSize').textContent = ''; return; }
   const s = scale();
   const [x0, y0, x1, y1] = modelBounds();
-  const pieceTop = feat?.hidePieces ? 0 : Math.max(0, ...S.pieces.filter((p) => p.enabled).map((p) => p.height + p.elevation)) + baseZ();
+  const pieceTop = (feat?.hidePieces || feat?.flat) ? 0 : Math.max(0, ...S.pieces.filter((p) => p.enabled).map((p) => p.height + p.elevation)) + baseZ();
   const zMax = Math.max(pieceTop, feat?.zTop || 0);
   $('stPieces').textContent = `${S.result.pieces.length} piezas · ${S.filaments.length} filamentos`;
   $('stSelection').textContent = S.selection.size ? `${S.selection.size} seleccionadas` : '';
@@ -1140,6 +1191,7 @@ const baseName = () => S.source === 'text' ? (S.text.text || 'nombre').replace(/
 
 // ---------------------------------------------------------------- export
 function exportParts() {
+  if (featTimer) rebuildFeatures();
   if (featureError || textError) throw new Error(featureError || textError);
   if (S.settings.pencil.enabled && S.settings.pencil.mount === 'integrated') {
     if (!feat?.pencilChannel) throw new Error('Regenera la base con el canal antes de exportar.');
@@ -1149,7 +1201,7 @@ function exportParts() {
   const byFil = new Map();
   const add = (fid, g) => { if (!byFil.has(fid)) byFil.set(fid, []); byFil.get(fid).push(g); };
   const parts = [];
-  if (!feat?.hidePieces) {
+  if (!feat?.hidePieces && !feat?.flat) {
     for (const p of S.result.pieces) {
       const st = S.pieces[p.id], g = pieceGeoms.get(p.id);
       if (!st.enabled || !g) continue;
@@ -1162,8 +1214,9 @@ function exportParts() {
   // accessories (base, ring, sleeve…): one part per layer/solid, never merged, so stacked layers stay manifold
   for (const fp of featParts) {
     const fid = filFor(fp.fil);
-    const geometry = mergeToIndexed([fp.solid ? toWorld(fp.geometry, s, 1, 0) : toWorld(fp.geometry, s, fp.height, fp.z)]);
-    parts.push({ name: fp.name || fp.key, color: filament(fid).color, filamentIndex: filamentIndex(fid), filamentId: fid, geometry });
+    const world = fp.solid ? toWorld(fp.geometry, s, 1, 0) : toWorld(fp.geometry, s, fp.height, fp.z);
+    const geometry = fp.keychainMesh ? world : mergeToIndexed([world]);
+    parts.push({ name: fp.name || filament(fid).name, color: filament(fid).color, filamentIndex: filamentIndex(fid), filamentId: fid, geometry, preserveTopology: fp.keychainMesh });
   }
   if (feat?.pencilChannel) joinedPencilGeometry(parts.map(p => p.geometry)).dispose();
   return parts;
@@ -1171,7 +1224,9 @@ function exportParts() {
 async function doExport(kind) {
   if (!S.result) { toast('Primero carga una imagen.'); return; }
   showBusy('Generando archivo…');
-  await nextFrame();
+  // Saving must also work when another window covers the editor and Chromium
+  // pauses its animation frames or throttles its timers.
+  await globalThis.scheduler?.yield?.();
   try {
     if (featureError || textError) throw new Error(featureError || textError);
     const name = baseName();
@@ -1179,7 +1234,8 @@ async function doExport(kind) {
     if (kind === 'svg') {
       const layers = [];
       const s = scale();
-      for (const fp of featParts) if (fp.key !== 'S:micrings') layers.push({ name: fp.name, color: filament(filFor(fp.fil)).color, items: [fp.shapes] });
+      for (const l of feat?.layers || []) layers.push({ name: l.name, color: filament(filFor(l.fil)).color, items: [l.shapes] });
+      for (const fp of featParts) if (fp.solid && !fp.keychainMesh && fp.key !== 'S:micrings') layers.push({ name: fp.name, color: filament(filFor(fp.fil)).color, items: [fp.shapes] });
       if (!feat?.hidePieces) for (const f of S.filaments) {
         const items = S.result.pieces.filter((p) => S.pieces[p.id].enabled && S.pieces[p.id].filament === f.id).map((p) => p.shapes);
         if (items.length) layers.push({ name: f.name, color: f.color, items });
@@ -1682,6 +1738,7 @@ function applyTier(tier, { commit: doCommit = true, silent = false } = {}) {
   const T = TIERS[tier];
   const cols = designColors();
   if (!T || !cols.length) return;
+  S.settings.kc.finish = 'relief';
   const B = luminance(cols[0].hex) < 140 ? '#ffffff' : '#000000';
   const cand = cols.filter((c) => labDist(c.hex, B) > 25);
   const kept = (cand.length ? cand : cols).slice(0, T.n);
@@ -1759,8 +1816,8 @@ function gramsEstimate() {
   if (!S.result) return 0;
   const s2 = scale() ** 2;
   let v = 0;
-  if (!feat?.hidePieces) for (const p of S.result.pieces) { const st = S.pieces[p.id]; if (st.enabled) v += p.area * s2 * st.height; }
-  for (const fp of featParts) if (!fp.solid) v += shapesArea(fp.shapes) * s2 * fp.height;
+  if (!feat?.hidePieces && !feat?.flat) for (const p of S.result.pieces) { const st = S.pieces[p.id]; if (st.enabled) v += p.area * s2 * st.height; }
+  for (const fp of featParts) v += fp.keychainMesh ? fp.volume : fp.solid ? 0 : shapesArea(fp.shapes) * s2 * fp.height;
   return Math.round((v / 1000) * 1.24 * 10) / 10;
 }
 

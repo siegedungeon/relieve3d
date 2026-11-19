@@ -321,6 +321,8 @@ Regresiones: `node test\pencil.test.mjs` comprueba sólidos, calibre y paredes; 
 
 ### Módulo Llavero (marcas y empresas)
 
+- La importación conserva la paleta detectada. Los presets de producto reducen o reemplazan colores únicamente al elegirlos.
+- En **Acabado → Plano · una capa de color**, el diseño queda incrustado 0,2 mm en la cara de la base. En **Vectorización → Colores** puedes fijar 3 o 4 colores. Usa un color de esa paleta para la base si quieres mantener el mismo total de filamentos. Exporta en 3MF para imprimir varios colores en la misma capa.
 - **Partes del logo**: detecta automáticamente ícono, nombre, eslogan y detalles. Marca cuáles salen (p. ej. solo el ícono, sin eslogan), cambia el tamaño de cada parte (%) y elige entre **alternativas de ubicación** con miniatura: como el logo, sin eslogan, solo ícono, solo nombre, ícono arriba + nombre, ícono + nombre en fila. «Volver al logo original» deshace la recomposición.
 - **3 versiones de producto** con un clic:
   - **Sencillo**: 2 colores, base 1.8 mm, relieve 0.8 mm (el más económico).
@@ -330,6 +332,8 @@ Regresiones: `node test\pencil.test.mjs` comprueba sólidos, calibre y paredes; 
 - **Argolla**: «📍 Ubicar con el mouse» muestra la argolla en vivo pegada al borde más cercano mientras mueves el mouse; clic para fijarla, **Alt** para ubicarla libre, también se puede arrastrar. Estilo redondo o **ranura para cordón/lanyard**.
 - **Acabados**: borde elevado, contorno de acento, canto biselado, **chip NFC oculto** (bolsillo + pausa automática en el 3MF para insertar el chip en Bambu Studio) y **texto grabado atrás** (nombre del empleado, web).
 - **Marca / empresas**: **código QR** en el frente (avisa si queda muy pequeño para escanear), **nombres en lote** (un 3MF por empleado, atrás o al frente), **peso estimado en gramos** para cotizar y **hoja de propuesta PNG** con las 3 versiones lado a lado para enviar al cliente.
+
+Regresión: `npm run test:keychain` verifica la paleta, el espesor de la cara y las mallas exportadas. El comando `node test/e2e/run.mjs keychain ruta/al/proyecto.r3d` también comprueba la unión de la argolla del caso guardado de Pabonitas.
 
 ### Módulo Soporte celular llavero
 
