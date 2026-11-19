@@ -287,6 +287,35 @@ textarea { width: 100%; font: inherit; font-size: 14px; padding: 6px 8px; border
 
 /* Separar colores 3D */
 .cs-layout .hb-tabs { align-items: center; }
+
+.co-choices { min-width: 0; margin: 0 0 12px; padding: 0; border: 0; }
+.co-choices legend { margin-bottom: 5px; padding: 0; font-size: 12px; font-weight: 600; }
+.co-choice-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 6px; }
+.co-shape-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+.co-choice { position: relative; display: grid; min-width: 0; cursor: pointer; }
+.co-choice input { position: absolute; width: 1px; height: 1px; margin: 0; clip-path: inset(50%); }
+.co-choice-card {
+  position: relative; display: flex; flex-direction: column; align-items: center; justify-content: center;
+  padding: 3px 4px 6px; border: 1px solid var(--border); border-radius: 7px;
+  background: color-mix(in srgb, var(--panel), var(--bg) 50%); text-align: center;
+}
+.co-choice-card canvas { display: block; width: 82px; max-width: 100%; height: auto; }
+.co-shape-grid canvas { width: 72px; }
+.co-choice-name { font-size: 11px; font-weight: 600; line-height: 1.15; }
+.co-choice-card small { margin-top: 2px; font-size: 10px; font-variant-numeric: tabular-nums; }
+.co-choice:hover .co-choice-card { border-color: var(--sel); }
+.co-choice input:checked + .co-choice-card {
+  border-color: var(--sel); background: color-mix(in srgb, var(--panel), var(--sel) 11%);
+}
+.co-choice input:checked + .co-choice-card::after {
+  content: ''; position: absolute; top: 5px; right: 5px; width: 5px; height: 5px;
+  border-radius: 50%; background: var(--sel);
+}
+.co-choice input:focus-visible + .co-choice-card { outline: 2px solid var(--sel); outline-offset: 2px; }
+.co-choice-custom { grid-column: 1 / -1; }
+.co-choice-custom .co-choice-card { flex-direction: row; padding-block: 0; }
+.co-choice-custom canvas { width: 54px; }
+
 .cs-explode { display: flex; align-items: center; gap: 6px; font-size: 12px; color: var(--muted); }
 .cs-explode input { width: 140px; }
 .cs-colors { display: flex; flex-direction: column; gap: 4px; margin-bottom: 6px; }

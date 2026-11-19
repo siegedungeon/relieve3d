@@ -16,6 +16,7 @@ module.exports = async ({ win, run, shot, wait }) => {
   const before = hash(), logo = fs.readFileSync(process.env.E2E_INPUT);
   const q = (selector) => `document.querySelector('#canopener ${selector}')`;
   const set = (key, value) => run(`(() => { const el=${q(`[data-k="${key}"]`)}; el.value=${JSON.stringify(value)}; el.dispatchEvent(new Event('input',{bubbles:true})); el.dispatchEvent(new Event('change',{bubbles:true})); })()`);
+  const choose = (key, value) => run(`${q(`[data-k="${key}"][value="${value}"]`)}.closest('label').click()`);
   const check = (key, value) => run(`(() => { const el=${q(`[data-k="${key}"]`)}; if(el.checked!==${value}) el.click(); })()`);
   const drop = (bytes, name, type) => run(`(() => { const b=Uint8Array.from(atob('${bytes.toString('base64')}'),c=>c.charCodeAt(0)), dt=new DataTransfer(); dt.items.add(new File([b],${JSON.stringify(name)},{type:${JSON.stringify(type)}})); document.dispatchEvent(new DragEvent('drop',{bubbles:true,cancelable:true,dataTransfer:dt})); })()`);
   const until = async (expr, timeout = 90000) => {
@@ -29,10 +30,40 @@ module.exports = async ({ win, run, shot, wait }) => {
   ok(await until(`!!window.__r3d.canopener.res && !window.__r3d.canopener.stale`), 'the default heart is generated with a functional slot');
   const initial = await info();
   ok(initial.cfg.shape === 'heart' && initial.cfg.thickness === 8 && initial.info.opener && initial.info.attachment.kind === 'round' && initial.info.attachment.mount === 'integrated', 'the default heart has a hole inside the figure');
+  ok(await run(`(() => {
+    const miniatures = [...document.querySelectorAll('#canopener canvas[data-preview]')];
+    return miniatures.length === 17 && miniatures.every(c => c.getContext('2d').getImageData(0, 0, c.width, c.height).data.some((v, i) => i % 4 === 3 && v));
+  })()`), 'every silhouette, profile and opening has a rendered miniature');
   await wait(600); await shot(path.join(dir, 'canopener-heart.png'));
-  await set('shape', 'nailpolish-reference');
+  await choose('opening', 'wide');
+  ok(await until(`!window.__r3d.canopener.stale && window.__r3d.canopener.res?.info.opener.depth === 21`), 'the wide opening rebuilds the normal heart');
+  await choose('profile', 'slim');
+  await choose('shape', 'circle');
+  ok(await until(`!window.__r3d.canopener.stale && window.__r3d.canopener.res?.cfg.shape === 'circle'`), 'changing silhouettes keeps the selected options');
+  const slim = await info();
+  ok(slim.cfg.opening === 'wide' && slim.cfg.profile === 'slim' && slim.info.size.h === 4 && slim.info.size.totalHeight === 5 &&
+    slim.parts.some(p => p.name === 'Borde de color'), 'any silhouette gets the selected opening, thin body and coloured rim');
+  await wait(550); await shot(path.join(dir, 'canopener-slim-wide.png'));
+  const customPreview = q('[data-preview="shape-custom"]');
+  const placeholder = await run(`${customPreview}.toDataURL()`);
+  await choose('shape', 'custom');
+  await run(`(() => {
+    const input = ${q('[data-r="fileShape"]')}, transfer = new DataTransfer();
+    const svg = '<svg xmlns="http://www.w3.org/2000/svg" width="96" height="96"><ellipse cx="48" cy="48" rx="30" ry="40"/></svg>';
+    transfer.items.add(new File([svg], 'silueta.svg', { type: 'image/svg+xml' }));
+    input.files = transfer.files;
+    input.dispatchEvent(new Event('change', { bubbles: true }));
+  })()`);
+  ok(await until(`!window.__r3d.canopener.stale && window.__r3d.canopener.res?.cfg.shape === 'custom'`), 'the uploaded silhouette builds with the new options');
+  const custom = await info();
+  ok(custom.cfg.opening === 'wide' && custom.cfg.profile === 'slim' &&
+    (await run(`${customPreview}.toDataURL()`)) !== placeholder, 'the custom card previews the uploaded silhouette');
+  await choose('opening', 'classic');
+  await choose('shape', 'nailpolish-reference');
+  ok(await until(`!window.__r3d.canopener.stale && window.__r3d.canopener.res?.cfg.shape === 'nailpolish-reference' && window.__r3d.canopener.res?.info.opener.len === 16`), 'the reference silhouette supports the classic opening');
+  await choose('opening', 'wide');
   ok(await until(`window.__r3d.canopener.res?.cfg.shape === 'nailpolish-reference' && !window.__r3d.canopener.stale`),
-    'reference bottle opens from the default settings');
+    'reference bottle opens with its wide opening and slim profile');
   const reference = await info();
   ok(Math.abs(reference.info.size.w - 28) < 0.02 && Math.abs(reference.info.size.l - 56) < 0.02 &&
     reference.info.size.h === 4 && reference.info.size.totalHeight === 5 &&
@@ -142,7 +173,7 @@ module.exports = async ({ win, run, shot, wait }) => {
     ok(fs.existsSync(path.join(exp, 'Destapador.3mf')), preset + ' exports a 3MF');
   }
   await run(`(${q('[data-r="format"]')}.value='bambu')`);
-  await set('shape', 'circle');
+  await choose('shape', 'circle');
   await run(`(() => { const el=${q('[data-r="preset"]')}; el.value='edge'; el.dispatchEvent(new Event('change',{bubbles:true})); })()`);
   for (const position of ['center', 'left', 'right', 'side-left', 'side-right']) {
     await run(`window.__r3d.canopener.cfg.attachment.position = ${JSON.stringify(position)}; window.__r3d.canopener.rebuild()`);
@@ -152,7 +183,7 @@ module.exports = async ({ win, run, shot, wait }) => {
   await run('window.__r3d.canopener.rebuild()');
   ok(await run("window.__r3d.canopener.res?.cfg.attachment.diameter === 4 && !window.__r3d.canopener.stale"), 'edge passage uses the custom diameter');
   await run(`(() => { const el=${q('[data-r="preset"]')}; el.value='ribbon'; el.dispatchEvent(new Event('change',{bubbles:true})); })()`);
-  await set('shape', 'nailpolish'); await set('width', '60'); await set('thickness', '8');
+  await choose('shape', 'nailpolish'); await set('width', '60'); await set('thickness', '8');
   await run('window.__r3d.canopener.rebuild()');
   await drop(logo, 'logo-prueba.png', 'image/png');
   ok(await until(`!!window.__r3d.canopener.logoImg && !!window.__r3d.canopener.res && !window.__r3d.canopener.stale`), 'dropping a client logo loads and rebuilds the custom opener');
@@ -179,7 +210,7 @@ module.exports = async ({ win, run, shot, wait }) => {
   if (fs.existsSync(projectFile)) {
     const project = fs.readFileSync(projectFile), parsed = JSON.parse(project.toString());
     ok(parsed.app === 'Relieve3D-Destapador' && parsed.logoSrc?.startsWith('data:image/') && parsed.cfg.attachment.kind === 'slot', 'the project embeds the logo and attachment settings');
-    await set('shape', 'flower'); await run('window.__r3d.canopener.rebuild()');
+    await choose('shape', 'flower'); await run('window.__r3d.canopener.rebuild()');
     await drop(project, 'Destapador.r3o', 'application/json');
     ok(await until(`window.__r3d.canopener.cfg.shape === 'nailpolish' && !!window.__r3d.canopener.res && !window.__r3d.canopener.stale`), 'dropping the project restores the figure, logo and settings');
   }
@@ -214,7 +245,9 @@ module.exports = async ({ win, run, shot, wait }) => {
     }
   }
   await check('logo.enabled', false);
-  await set('shape', 'nailpolish-reference');
+  await choose('shape', 'nailpolish-reference');
+  await choose('opening', 'wide');
+  await choose('profile', 'slim');
   await set('width', '28');
   await set('logo.mode', 'relief');
   await set('colors.body', '#e9a9bd');
@@ -262,8 +295,9 @@ module.exports = async ({ win, run, shot, wait }) => {
   await wait(600); await shot(path.join(dir, 'esmalte-referencia.png'));
   await run('window.__r3d.canopener.saveProject()');
   const bottleProject = JSON.parse(fs.readFileSync(projectFile, 'utf8'));
-  ok(bottleProject.cfg.polish.outline && bottleProject.cfg.text.value === 'ANA\nPABON',
-    'the editable bottle project preserves the text and outline');
+  ok(bottleProject.cfg.polish.outline && bottleProject.cfg.text.value === 'ANA\nPABON' &&
+    bottleProject.cfg.profile === 'slim' && bottleProject.cfg.opening === 'wide',
+    'the editable bottle project preserves the text, outline, opening and profile');
   await check('polish.outline', false);
   ok(await until(`!window.__r3d.canopener.stale && window.__r3d.canopener.res?.cfg.polish.outline === false`),
     'the colour outline can be removed');

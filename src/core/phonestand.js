@@ -1639,5 +1639,5 @@ export function readPhoneStandProject(text) {
 // Shared by the standalone can-tab opener so its shapes, artwork and functional slit match the phone stand.
 export const phoneStandShared = Object.freeze({
   SHAPE_DEFS, shapeKit, customSilhouette, makeScope, roundRect, circle, extrudeZ, meshGeometry,
-  opening, inside, maxAt, buildArt, placeOpener, openerCutter,
+  opening, inside, maxAt, buildArt, placeOpener, openerCutter, openerSlot: SLOT,
 });

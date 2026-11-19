@@ -67,6 +67,45 @@ test('every advertised shape is one solid with a usable open slot', () => {
   }
 });
 
+test('both openings and both profiles generate on every silhouette, including an uploaded one', () => {
+  const size = 96, data = new Uint8ClampedArray(size * size * 4);
+  for (let y = 0; y < size; y++) for (let x = 0; x < size; x++) {
+    if (Math.hypot((x - 48) / 30, (y - 48) / 40) < 1) data[(y * size + x) * 4 + 3] = 255;
+  }
+  const shapeImage = { width: size, height: size, data };
+  for (const { id: shape } of CAN_OPENER_SHAPES) {
+    const width = shape === 'nailpolish-reference' ? 28 : 40;
+    for (const [opening, dimensions] of [['classic', [16, 10]], ['wide', [20, 21]]]) {
+      for (const [profile, thickness] of [['normal', 8], ['slim', 4]]) {
+        const s = canOpenerSolids({ shape, width, opening, profile }, { shapeImage });
+        try {
+          checkSolidAndSlot(s);
+          assert.deepEqual([s.info.opener.len, s.info.opener.depth], dimensions, shape);
+          assert.equal(s.info.size.h, thickness, shape);
+          assert.equal(s.info.size.totalHeight, profile === 'slim' ? 5 : 8, shape);
+          assert.equal(s.polishPieces.length, profile === 'slim' ? 1 : 0, shape);
+          for (const part of s.polishPieces) assert.ok(overlap(s.body, part.solid) < 0.001, shape);
+        } finally { s.dispose(); }
+      }
+    }
+  }
+});
+
+test('saved profiles and openings are independent, and legacy reference files retain their geometry', () => {
+  const old = readCanOpenerProject({ app: 'Relieve3D-Destapador', version: 1,
+    cfg: { shape: 'nailpolish-reference', width: 28, thickness: 4 } }).cfg;
+  assert.equal(old.profile, 'slim');
+  assert.equal(old.opening, 'wide');
+  assert.equal(old.thickness, 4);
+  const normalBottle = readCanOpenerProject(canOpenerProject({ ...old, profile: 'normal', opening: 'classic', thickness: 8 })).cfg;
+  assert.equal(normalBottle.profile, 'normal');
+  assert.equal(normalBottle.opening, 'classic');
+  const slimHeart = readCanOpenerProject(canOpenerProject({ shape: 'heart', profile: 'slim', opening: 'wide' })).cfg;
+  assert.equal(slimHeart.profile, 'slim');
+  assert.equal(slimHeart.opening, 'wide');
+  assert.equal(slimHeart.thickness, 4);
+});
+
 test('keyring variants have open holes, safe walls and a separate connector when requested', () => {
   for (const [mount, kind] of [
     ['integrated', 'round'], ['integrated', 'double-horizontal'], ['integrated', 'double-vertical'],

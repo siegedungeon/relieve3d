@@ -7,8 +7,9 @@ import { PHONESTAND_FONTS } from './core/phonestand.js';
 import { FontPicker } from './font_picker.js';
 import { ensureFont } from './core/text.js';
 import {
-  CAN_OPENER_SHAPES, DEFAULT_CAN_OPENER, prepareCanOpener, buildCanOpener, exportCanOpener,
-  canOpenerProject, readCanOpenerProject,
+  CAN_OPENER_SHAPES, CAN_OPENER_OPENINGS, CAN_OPENER_PROFILES, DEFAULT_CAN_OPENER,
+  prepareCanOpener, buildCanOpener, exportCanOpener, canOpenerProfileThickness,
+  canOpenerProject, readCanOpenerProject, canOpenerShapeThumbnail,
 } from './core/canopener.js';
 
 const esc = (s) => String(s).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
@@ -24,6 +25,76 @@ const PRESETS = {
   externalRibbon: { mount: 'external', kind: 'slot', diameter: 3.2, wall: 2, slotWidth: 10 },
   ribbon: { mount: 'integrated', kind: 'slot', diameter: 3.2, wall: 2.5, slotWidth: 10 },
 };
+
+function choiceCards(label, key, choices) {
+  const shapes = key === 'shape';
+  return `<fieldset class="co-choices"><legend>${esc(label)}</legend>
+    <div class="co-choice-grid${shapes ? ' co-shape-grid' : ''}">${choices.map(({ id, name, detail }) => `
+      <label class="co-choice${id === 'custom' ? ' co-choice-custom' : ''}">
+        <input type="radio" name="co-${key}" data-k="${key}" value="${id}" />
+        <span class="co-choice-card">
+          <canvas width="160" height="80" data-preview="${key}-${id}" aria-hidden="true"></canvas>
+          <span class="co-choice-name">${esc(name)}</span>
+          ${detail ? `<small>${esc(detail)}</small>` : ''}
+        </span>
+      </label>`).join('')}</div></fieldset>`;
+}
+
+function paintSilhouette(canvas, silhouette) {
+  const ctx = canvas.getContext('2d');
+  ctx.clearRect(0, 0, 160, 80);
+  ctx.strokeStyle = '#436c9b';
+  if (!silhouette) {
+    ctx.lineWidth = 3;
+    ctx.setLineDash([5, 4]);
+    ctx.strokeRect(56, 16, 48, 48);
+    ctx.setLineDash([]);
+    ctx.beginPath();
+    ctx.moveTo(70, 40); ctx.lineTo(90, 40);
+    ctx.moveTo(80, 30); ctx.lineTo(80, 50);
+    ctx.stroke();
+    return;
+  }
+  const { polygons, bounds: { min: [left, bottom], max: [right, top] } } = silhouette;
+  const scale = Math.min(104 / (right - left), 65 / (top - bottom));
+  const point = ([x, y]) => [80 + (x - (left + right) / 2) * scale, 41 - (y - (top + bottom) / 2) * scale];
+  ctx.beginPath();
+  for (const polygon of polygons) {
+    ctx.moveTo(...point(polygon[0]));
+    for (const p of polygon.slice(1)) ctx.lineTo(...point(p));
+    ctx.closePath();
+  }
+  ctx.fillStyle = '#87b1db';
+  ctx.lineWidth = 2.5;
+  ctx.lineJoin = 'round';
+  ctx.fill('evenodd');
+  ctx.stroke();
+}
+
+function paintOpening(canvas, { len, depth }) {
+  const ctx = canvas.getContext('2d'), scale = 2.25;
+  ctx.beginPath();
+  ctx.roundRect(25, 9, 110, 62, 10);
+  ctx.fillStyle = '#87b1db'; ctx.fill();
+  ctx.strokeStyle = '#436c9b'; ctx.lineWidth = 2.5; ctx.stroke();
+  ctx.beginPath();
+  ctx.roundRect(80 - len * scale / 2, 72 - depth * scale, len * scale, depth * scale + 1, [6, 6, 0, 0]);
+  ctx.fillStyle = '#28496d'; ctx.fill();
+}
+
+function paintProfile(canvas, thickness, rimHeight) {
+  const ctx = canvas.getContext('2d'), scale = 5;
+  const top = 67 - thickness * scale;
+  ctx.beginPath();
+  ctx.roundRect(25, top, 110, thickness * scale, 4);
+  ctx.fillStyle = '#87b1db'; ctx.fill();
+  ctx.strokeStyle = '#436c9b'; ctx.lineWidth = 2.5; ctx.stroke();
+  if (rimHeight) {
+    ctx.beginPath();
+    for (const x of [30, 119]) ctx.roundRect(x, top - rimHeight * scale, 11, rimHeight * scale, [2, 2, 0, 0]);
+    ctx.fillStyle = '#f9f1e5'; ctx.fill(); ctx.stroke();
+  }
+}
 
 export class CanOpenerStudio {
   constructor(root, cb) {
@@ -45,6 +116,8 @@ export class CanOpenerStudio {
     const color = (label, key) => `<label class="row">${label} <input type="color" data-k="${key}" /></label>`;
     const check = (label, key) => `<label class="row">${label} <input type="checkbox" data-k="${key}" /></label>`;
     const select = (label, key, choices, title = '') => `<label class="row" title="${esc(title)}">${label} <select data-k="${key}">${choices.map(([v, n]) => `<option value="${esc(v)}">${esc(n)}</option>`).join('')}</select></label>`;
+    const openings = Object.entries(CAN_OPENER_OPENINGS).map(([id, { name, slot }]) => ({ id, name, detail: `${slot.len} × ${slot.depth} mm` }));
+    const profiles = Object.entries(CAN_OPENER_PROFILES).map(([id, { name, thickness }]) => ({ id, name, detail: `${thickness} mm de cuerpo` }));
     this.root.innerHTML = `
     <header class="topbar">
       <button class="btn" data-a="home">⌂ Inicio</button>
@@ -59,26 +132,30 @@ export class CanOpenerStudio {
       <aside class="panel left">
         <section class="card">
           <h3>1. Figura y destapador</h3>
-          ${select('Forma', 'shape', CAN_OPENER_SHAPES.map((s) => [s.id, s.name]))}
+          ${choiceCards('Silueta', 'shape', CAN_OPENER_SHAPES)}
           <div data-r="custom"><button class="btn wide" data-a="shape">⬆ Cargar silueta (PNG/JPG/SVG)</button><div class="small muted" data-r="shapeInfo"></div></div>
-          ${number('Ancho de la figura (mm)', 'width', 'De 28 a 100 mm para el esmalte con borde y de 40 a 100 mm para las demás formas.')}
+          ${choiceCards('Abertura para la pestaña', 'opening', openings)}
+          ${choiceCards('Perfil del cuerpo', 'profile', profiles)}
+          ${number('Ancho de la figura (mm)', 'width', 'De 28 a 100 mm para el esmalte de referencia y de 40 a 100 mm para las demás formas.')}
+          ${number('Grosor del cuerpo (mm)', 'thickness', 'De 4 a 12 mm en Slim y de 6 a 12 mm en Normal, según el enganche y los rebajes.')}
           <div data-r="polishSettings">
-            ${check('Borde de color del esmalte', 'polish.outline')}
-            ${check('Rellenar tapa con el color del borde', 'polish.fillCap')}
-            ${color('Color del borde', 'polish.color')}
-            ${number('Ancho del borde de color (mm)', 'polish.width')}
-            ${number('Altura del borde de color (mm)', 'polish.height')}
+            ${check('Borde de color elevado', 'polish.outline')}
+            <div data-r="outlineDetails">
+              <div data-r="fillCap">${check('Rellenar tapa con el color del borde', 'polish.fillCap')}</div>
+              ${color('Color del borde', 'polish.color')}
+              ${number('Ancho del borde de color (mm)', 'polish.width')}
+              ${number('Altura del borde de color (mm)', 'polish.height')}
+            </div>
           </div>
-          ${check('Marco del corazón (centro hundido)', 'border.enabled')}
+          ${check('Marco con centro hundido', 'border.enabled')}
           <div data-r="borderSettings">${number('Ancho del borde (mm)', 'border.width')}${number('Profundidad interior (mm)', 'border.depth')}</div>
-          ${number('Grosor del cuerpo (mm)', 'thickness', 'De 4 a 12 mm para el esmalte y de 6 a 12 mm para las demás figuras.')}
           <div class="small muted">Arrastra el punto naranja para mover el abre latas y el azul para mover el enganche.</div>
           ${check('Muesca inferior en el abre latas', 'notch')}
         </section>
         <section class="card">
           <h3>2. Enganche del llavero</h3>
           <label class="row">Tipo de enganche <select data-r="preset"><option value="custom">Configuración actual</option><option value="small">Anillo de llavero</option><option value="cord">Correa de hilo</option><option value="ribbon">Cinta</option><option value="edge">Paso de hilo en el borde</option><option value="externalRing">Argolla exterior para anillo o hilo</option><option value="externalRibbon">Argolla exterior para cinta</option></select></label>
-          ${number('Diámetro / alto del agujero (mm)', 'attachment.diameter', 'De 2 a 9 mm para el paso en el borde y de 3 a 9 mm para las demás opciones. Para el paso en el borde se conservan al menos 1,5 mm arriba y abajo.')}
+          ${number('Diámetro / alto del agujero (mm)', 'attachment.diameter', 'De 2 a 9 mm para el paso en el borde y de 3 a 9 mm para las demás opciones. El paso lateral conserva al menos 1,5 mm arriba y abajo en Normal y 1 mm en Slim.')}
           <div data-r="slotSize">${number('Ancho de la ranura de cinta (mm)', 'attachment.slotWidth', 'De 6 a 16 mm; no menor que el alto.')}</div>
           ${number('Pared alrededor (mm)', 'attachment.wall', 'De 1,5 a 5 mm de material alrededor del agujero.')}
           <div class="small muted">Las argollas exteriores se unen al contorno y se mueven con el punto azul. El paso en el borde tiene dos entradas conectadas dentro de la figura. La correa de hilo pasa por un solo ojal: introduce el lazo y pasa la correa por él. Elige un tamaño que permita pasar tu anillo o cinta y comprueba el ajuste con una impresión de prueba.</div>
@@ -133,6 +210,12 @@ export class CanOpenerStudio {
     <input type="file" data-r="fileShape" accept="image/*,.svg" hidden />
     <input type="file" data-r="fileProject" accept=".r3o,.json" hidden />`;
     this.$ = (name) => this.root.querySelector(`[data-r="${name}"]`);
+    this.preview = (id) => this.root.querySelector(`[data-preview="${id}"]`);
+    for (const [id, { slot }] of Object.entries(CAN_OPENER_OPENINGS)) paintOpening(this.preview(`opening-${id}`), slot);
+    for (const [id, { thickness }] of Object.entries(CAN_OPENER_PROFILES)) {
+      paintProfile(this.preview(`profile-${id}`), thickness, id === 'slim' ? this.cfg.polish.height : 0);
+    }
+    paintSilhouette(this.preview('shape-custom'));
     this.picker = new FontPicker(this.root.querySelector('[data-k="text.font"]'), {
       sample: () => ({ text: this.cfg.text.value || 'Tu marca', weight: 400 }),
       label: 'Fuente del texto', onError: this.cb.toast,
@@ -157,6 +240,7 @@ export class CanOpenerStudio {
       const el = e.target;
       if (el.dataset.lm) { this.layerChanged(el); return; }
       if (!el.dataset.k) return;
+      if (el.type === 'radio' && !el.checked) return;
       const value = el.type === 'checkbox' ? el.checked : el.getAttribute('inputmode') === 'decimal' || el.dataset.k === 'logo.colors'
         ? (el.value.trim() ? Number(el.value.replace(',', '.')) : NaN) : el.value;
       const refreshOnChange = ['text.value', 'text.font', 'colors.body', 'colors.accent', 'colors.twoColor',
@@ -165,7 +249,6 @@ export class CanOpenerStudio {
         if (e.type === 'change' && (el.getAttribute('inputmode') === 'decimal' || refreshOnChange)) this.scheduleRebuild();
         return;
       }
-      const previous = get(this.cfg, el.dataset.k);
       if (!this.cfg.artIndependent && ['text.dx', 'text.dy', 'text.size'].includes(el.dataset.k)) {
         this.cfg.artIndependent = true;
         if (this.logoImg && this.cfg.logo.enabled && this.cfg.text.enabled) {
@@ -173,7 +256,8 @@ export class CanOpenerStudio {
           this.cfg.text.size = this.cfg.logo.size;
         }
       }
-      set(this.cfg, el.dataset.k, value);
+      if (el.dataset.k === 'shape') this.selectShape(value);
+      else set(this.cfg, el.dataset.k, value);
       if (el.dataset.k === 'text.value') {
         if (value.trim()) {
           this.cfg.text.enabled = true;
@@ -181,32 +265,14 @@ export class CanOpenerStudio {
         }
         this.picker.sync();
       }
-      if (el.dataset.k === 'shape') {
-        if (value === 'nailpolish-reference' && previous !== value) {
-          if (this.cfg.width === 49) this.cfg.width = 28;
-          if (this.cfg.thickness === 8) this.cfg.thickness = 4;
-          if (this.cfg.text.height === 0) this.cfg.text.height = 1;
-          if (this.cfg.text.font === 'Montserrat Black') this.cfg.text.font = 'Montserrat Bold';
-          this.cfg.notch = true;
-          if (this.cfg.attachment.kind === 'round' && this.cfg.attachment.diameter === 3 && !this.cfg.attachment.target) {
-            this.cfg.attachment.diameter = 4;
-            this.cfg.attachment.position = 'center';
-            this.cfg.attachment.target = { x: 0, y: this.cfg.width * 51 / 28 };
-          }
-          if (this.cfg.colors.body.toLowerCase() === '#f4e9dc') this.cfg.colors.body = '#e9a9bd';
-          if (this.cfg.colors.accent.toLowerCase() === '#e8127c') this.cfg.colors.accent = '#ffffff';
-          this.cfg.side = 'right';
-          this.cfg.openerTarget = { x: 0, y: 0 };
-        } else if (previous === 'nailpolish-reference') {
-          if (this.cfg.width < 40) this.cfg.width = 40;
-          if (this.cfg.thickness < 6) this.cfg.thickness = 6;
-        }
+      if (el.dataset.k === 'profile') this.cfg.thickness = canOpenerProfileThickness(this.cfg);
+      if (el.dataset.k === 'shape' || el.dataset.k === 'profile') {
         this.sync();
       }
       if (el.dataset.k.startsWith('attachment.') && el.dataset.k !== 'attachment.position' && el.dataset.k !== 'attachment.mount') this.$('preset').value = 'custom';
       this.visibility();
       this.invalidate();
-      if (el.dataset.k === 'text.value' || el.dataset.k === 'notch' || el.dataset.k === 'border.enabled' || el.dataset.k === 'polish.outline' || el.dataset.k === 'polish.fillCap' || el.dataset.k === 'polish.color' || (e.type === 'change' && refreshOnChange) || (el.tagName === 'SELECT' && (el.dataset.k === 'shape' || el.dataset.k.startsWith('attachment.')))) this.scheduleRebuild();
+      if (el.type === 'radio' || el.dataset.k === 'text.value' || el.dataset.k === 'notch' || el.dataset.k === 'border.enabled' || el.dataset.k === 'polish.outline' || el.dataset.k === 'polish.fillCap' || el.dataset.k === 'polish.color' || (e.type === 'change' && refreshOnChange) || (el.tagName === 'SELECT' && el.dataset.k.startsWith('attachment.'))) this.scheduleRebuild();
     };
     this.root.addEventListener('input', input);
     this.root.addEventListener('change', input);
@@ -214,7 +280,7 @@ export class CanOpenerStudio {
       const preset = PRESETS[e.target.value];
       if (!preset) return;
       Object.assign(this.cfg.attachment, preset);
-      if (this.cfg.shape === 'nailpolish-reference' && preset.kind === 'edge-loop' && this.cfg.thickness < 5) {
+      if (this.cfg.profile === 'slim' && preset.kind === 'edge-loop' && this.cfg.thickness < 5) {
         this.cfg.attachment.diameter = 2;
       }
       if (preset.kind !== 'edge-loop' && this.cfg.attachment.position.startsWith('side-')) this.cfg.attachment.position = 'left';
@@ -232,10 +298,50 @@ export class CanOpenerStudio {
     this.sync();
   }
 
+  selectShape(shape) {
+    const cfg = this.cfg, previous = cfg.shape;
+    if (shape === previous) return;
+    cfg.shape = shape;
+    if (shape === 'nailpolish-reference') {
+      if (cfg.width === 49) cfg.width = 28;
+      if (cfg.text.height === 0) cfg.text.height = 1;
+      if (cfg.text.font === 'Montserrat Black') cfg.text.font = 'Montserrat Bold';
+      cfg.notch = true;
+      if (cfg.attachment.kind === 'round' && cfg.attachment.diameter === 3 && !cfg.attachment.target) {
+        cfg.attachment.diameter = 4;
+        cfg.attachment.position = 'center';
+        cfg.attachment.target = { x: 0, y: cfg.width * 51 / 28 };
+      }
+      if (cfg.colors.body.toLowerCase() === '#f4e9dc') cfg.colors.body = '#e9a9bd';
+      if (cfg.colors.accent.toLowerCase() === '#e8127c') cfg.colors.accent = '#ffffff';
+      cfg.side = 'right';
+      cfg.openerTarget = { x: 0, y: 0 };
+    } else if (previous === 'nailpolish-reference' && cfg.width < 40) cfg.width = 40;
+  }
+
+  renderShapeThumbnails() {
+    if (!this.shapeThumbnailsReady) {
+      for (const { id } of CAN_OPENER_SHAPES) {
+        if (id !== 'custom') paintSilhouette(this.preview(`shape-${id}`), canOpenerShapeThumbnail(id));
+      }
+      this.shapeThumbnailsReady = true;
+    }
+    if (this.shapeThumbnailImage === this.shapeImg) return;
+    this.shapeThumbnailImage = this.shapeImg;
+    let silhouette;
+    if (this.shapeImg) {
+      try { silhouette = canOpenerShapeThumbnail('custom', this.shapeImg); }
+      catch { /* The model generator reports invalid custom images. */ }
+    }
+    paintSilhouette(this.preview('shape-custom'), silhouette);
+  }
+
   sync() {
     for (const el of this.root.querySelectorAll('[data-k]')) {
       const value = get(this.cfg, el.dataset.k);
-      if (el.type === 'checkbox') el.checked = !!value; else if (el.value !== String(value ?? '')) el.value = value ?? '';
+      if (el.type === 'checkbox') el.checked = !!value;
+      else if (el.type === 'radio') el.checked = el.value === value;
+      else if (el.value !== String(value ?? '')) el.value = value ?? '';
     }
     this.$('preset').value = Object.keys(PRESETS).find((key) =>
       Object.entries(PRESETS[key]).every(([field, value]) => this.cfg.attachment[field] === value)) || 'custom';
@@ -250,8 +356,9 @@ export class CanOpenerStudio {
 
   visibility() {
     this.$('custom').hidden = this.cfg.shape !== 'custom';
-    this.$('polishSettings').hidden = this.cfg.shape !== 'nailpolish-reference';
-    this.root.querySelector('[data-k="polish.fillCap"]').disabled = !this.cfg.polish.outline;
+    this.$('polishSettings').hidden = this.cfg.profile !== 'slim';
+    this.$('outlineDetails').hidden = !this.cfg.polish.outline;
+    this.$('fillCap').hidden = this.cfg.shape !== 'nailpolish-reference';
     this.$('borderSettings').hidden = !this.cfg.border.enabled;
     this.$('slotSize').hidden = this.cfg.attachment.kind !== 'slot';
     this.$('height').hidden = this.cfg.logo.mode !== 'relief';
@@ -361,6 +468,7 @@ export class CanOpenerStudio {
     this.cb.showBusy('Generando el destapador…');
     try {
       await prepareCanOpener();
+      this.renderShapeThumbnails();
       const font = await this.textFont();
       await new Promise((resolve) => setTimeout(resolve, 30));
       const result = buildCanOpener(this.cfg, { logoImage: this.logoImg, shapeImage: this.shapeImg, font });
@@ -371,8 +479,10 @@ export class CanOpenerStudio {
       this.cfg = result.cfg;
       this.stale = false;
       this.$('export').disabled = false;
-      const d = result.info.size, a = result.info.attachment;
-      this.$('summary').textContent = `${CAN_OPENER_SHAPES.find((s) => s.id === result.cfg.shape)?.name}: ${fmt(d.w)} × ${fmt(d.l)} × ${fmt(d.h)} mm (cuerpo). Alto total con relieves: ${fmt(d.totalHeight)} mm. Ranura de ${fmt(result.info.opener.len)} mm. Pared del enganche: ${fmt(a.wall)} mm. ${result.parts.some((p) => p.apart) ? 'Conector independiente en la misma placa. ' : ''}${result.colors.length} filamento(s); volumen aproximado ${fmt(result.info.volume)} cm³.`;
+      const d = result.info.size, a = result.info.attachment, op = result.info.opener;
+      const shape = CAN_OPENER_SHAPES.find((s) => s.id === result.cfg.shape).name;
+      const opening = CAN_OPENER_OPENINGS[result.cfg.opening].name.toLowerCase();
+      this.$('summary').textContent = `${shape} · ${fmt(d.w)} × ${fmt(d.l)} × ${fmt(d.h)} mm (cuerpo). Alto total con relieves de ${fmt(d.totalHeight)} mm. Abertura ${opening} de ${fmt(op.len)} × ${fmt(op.depth)} mm. Pared del enganche de ${fmt(a.wall)} mm. ${result.parts.some((p) => p.apart) ? 'Conector independiente en la misma placa. ' : ''}${result.colors.length} filamento(s) · volumen aproximado de ${fmt(result.info.volume)} cm³.`;
       this.$('warn').textContent = result.warnings.join(' ');
       this.$('status').textContent = 'Destapador generado · revisa la vista, el laminado y una impresión de prueba.';
       this.sync();
@@ -435,7 +545,8 @@ export class CanOpenerStudio {
         this.logoSrc = src; this.logoImg = image; this.logoName = file.name;
         Object.assign(this.cfg.logo, { enabled: true, colors: 0, layers: {} });
       } else {
-        this.shapeSrc = src; this.shapeImg = image; this.shapeName = file.name; this.cfg.shape = 'custom';
+        this.shapeSrc = src; this.shapeImg = image; this.shapeName = file.name;
+        this.selectShape('custom');
       }
       this.sync();
       this.invalidate();
