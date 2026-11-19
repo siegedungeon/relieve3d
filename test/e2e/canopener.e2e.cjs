@@ -44,6 +44,18 @@ module.exports = async ({ win, run, shot, wait }) => {
   ok(slim.cfg.opening === 'wide' && slim.cfg.profile === 'slim' && slim.info.size.h === 4 && slim.info.size.totalHeight === 5 &&
     slim.parts.some(p => p.name === 'Borde de color'), 'any silhouette gets the selected opening, thin body and coloured rim');
   await wait(550); await shot(path.join(dir, 'canopener-slim-wide.png'));
+  await check('border.enabled', true);
+  ok(await until(`!window.__r3d.canopener.stale && window.__r3d.canopener.res?.cfg.border.enabled`), 'enabling a recessed frame rebuilds a 4 mm Slim body');
+  const framed = await info();
+  ok(framed.cfg.thickness === 4.8 && framed.cfg.border.depth === 1.2 && framed.info.opener.slot.top <= 2.81 &&
+    (await run(`${q('[data-r="borderAdjustment"]')}.textContent`)).includes('4,8 mm'), 'the frame preserves its depth and raises the body to the safe minimum');
+  await set('thickness', '4');
+  ok(await until(`${q('[data-r="status"]')}.textContent.startsWith('Vista anterior')`), 'an invalid manual thickness shows why the last good model is still visible');
+  ok(await run(`(() => { const s = window.__r3d.canopener; return s.stale && s.res.cfg.thickness === 4.8 &&
+    s.viewer.meshes.size > 0 && ${q('[data-r="export"]')}.disabled; })()`), 'invalid dimensions preserve the last generated geometry and disable export');
+  await set('thickness', '4,8');
+  ok(await until(`!window.__r3d.canopener.stale && !${q('[data-r="export"]')}.disabled`), 'correcting the thickness restores export');
+  await run(`window.__r3d.canopener.openProject(${JSON.stringify(JSON.stringify({ app: 'Relieve3D-Destapador', version: 1, cfg: slim.cfg }))})`);
   const customPreview = q('[data-preview="shape-custom"]');
   const placeholder = await run(`${customPreview}.toDataURL()`);
   await choose('shape', 'custom');

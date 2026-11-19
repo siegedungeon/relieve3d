@@ -9,7 +9,7 @@ import { visualSettingChoices } from './setting_choices.js';
 import { ensureFont } from './core/text.js';
 import {
   CAN_OPENER_SHAPES, CAN_OPENER_OPENINGS, CAN_OPENER_PROFILES, DEFAULT_CAN_OPENER,
-  prepareCanOpener, buildCanOpener, exportCanOpener, canOpenerProfileThickness,
+  prepareCanOpener, buildCanOpener, exportCanOpener, canOpenerMinimumThickness, canOpenerProfileThickness,
   canOpenerProject, readCanOpenerProject, canOpenerShapeThumbnail,
 } from './core/canopener.js';
 
@@ -149,7 +149,10 @@ export class CanOpenerStudio {
             </div>
           </div>
           ${check('Marco con centro hundido', 'border.enabled')}
-          <div data-r="borderSettings">${number('Ancho del borde (mm)', 'border.width')}${number('Profundidad interior (mm)', 'border.depth')}</div>
+          <div data-r="borderSettings">
+            ${number('Ancho del borde (mm)', 'border.width')}${number('Profundidad interior (mm)', 'border.depth')}
+            <div class="small muted" data-r="borderAdjustment" role="status" hidden></div>
+          </div>
           <div class="small muted">Arrastra el punto naranja para mover el abre latas y el azul para mover el enganche.</div>
           ${check('Muesca inferior en el abre latas', 'notch')}
         </section>
@@ -268,7 +271,17 @@ export class CanOpenerStudio {
         this.picker.sync();
       }
       if (el.dataset.k === 'profile') this.cfg.thickness = canOpenerProfileThickness(this.cfg);
-      if (el.dataset.k === 'shape' || el.dataset.k === 'profile') {
+      if (['border.enabled', 'border.depth', 'profile', 'thickness'].includes(el.dataset.k)) this.clearBorderAdjustment();
+      if (el.dataset.k === 'border.enabled' && value) {
+        const minimum = canOpenerMinimumThickness(this.cfg);
+        if (minimum > this.cfg.thickness && minimum <= 12) {
+          this.cfg.thickness = minimum;
+          const note = this.$('borderAdjustment');
+          note.textContent = `Grosor ajustado a ${fmt(minimum)} mm para conservar material sobre la abertura y junto al enganche.`;
+          note.hidden = false;
+        }
+      }
+      if (el.dataset.k === 'shape' || el.dataset.k === 'profile' || el.dataset.k === 'border.enabled') {
         this.sync();
       }
       if (el.dataset.k.startsWith('attachment.') && el.dataset.k !== 'attachment.position' && el.dataset.k !== 'attachment.mount') this.$('preset').value = 'custom';
@@ -367,6 +380,12 @@ export class CanOpenerStudio {
     this.$('height').hidden = this.cfg.logo.mode !== 'relief';
     this.$('flat').hidden = this.cfg.logo.mode !== 'flat';
     this.$('engrave').hidden = this.cfg.logo.mode !== 'engrave';
+  }
+
+  clearBorderAdjustment() {
+    const note = this.$('borderAdjustment');
+    note.hidden = true;
+    note.textContent = '';
   }
 
   scheduleRebuild() {
@@ -479,7 +498,7 @@ export class CanOpenerStudio {
       this.handles.clear();
       this.viewer.clear();
       this.res = result;
-      this.cfg = result.cfg;
+      this.cfg = structuredClone(result.cfg);
       this.stale = false;
       this.$('export').disabled = false;
       const d = result.info.size, a = result.info.attachment, op = result.info.opener;
@@ -493,11 +512,12 @@ export class CanOpenerStudio {
       this.viewer.frame();
     } catch (err) {
       if (seq !== this.seq) return;
-      this.res = null;
-      this.viewer?.clear();
+      this.handles?.clear();
+      if (!this.res) this.viewer?.clear();
       this.$('warn').textContent = err.message;
-      this.$('summary').textContent = 'No se exportará hasta que la forma y el enganche sean válidos.';
-      this.$('status').textContent = 'Ajusta los valores y vuelve a generar.';
+      this.$('summary').textContent = this.res ? 'Se muestra el último modelo válido. Ajusta los valores para poder exportar.'
+        : 'Ajusta los valores para poder generar el modelo.';
+      this.$('status').textContent = this.res ? 'Vista anterior · ' + err.message : err.message;
     } finally { this.cb.hideBusy(); }
   }
 
@@ -517,7 +537,7 @@ export class CanOpenerStudio {
   }
 
   updateHandles() {
-    if (!this.handles || !this.res || !this.viewer) return;
+    if (!this.handles || !this.res || !this.viewer || this.stale) return;
     this.handles.clear();
     this.root.querySelector('[data-a="editLogo"]').setAttribute('aria-pressed', String(this.artTarget === 'logo'));
     this.root.querySelector('[data-a="editText"]').setAttribute('aria-pressed', String(this.artTarget === 'text'));
@@ -577,21 +597,23 @@ export class CanOpenerStudio {
     const [logo, shape] = await Promise.all([p.logoSrc ? imageDataFrom(p.logoSrc, 1000) : null, p.shapeSrc ? imageDataFrom(p.shapeSrc, 800) : null]);
     this.cfg = p.cfg; this.logoSrc = p.logoSrc; this.logoImg = logo; this.logoName = p.logoSrc ? 'Logo del proyecto' : '';
     this.shapeSrc = p.shapeSrc; this.shapeImg = shape; this.shapeName = p.shapeSrc ? 'Silueta del proyecto' : '';
-    this.res = null; this.sync();
+    this.res = null; this.clearBorderAdjustment(); this.sync();
     await this.open();
     this.cb.toast('✓ Proyecto abierto.');
   }
 
   async export() {
     if (!this.res || this.stale) return null;
+    const result = this.res;
     this.cb.showBusy('Guardando el destapador…');
     try {
       await new Promise((resolve) => setTimeout(resolve, 30));
       const native = this.$('format').value === 'bambu';
       if (native && !window.api.clickerBambuProfile) throw new Error('El perfil Bambu A1 no está disponible. Selecciona 3MF estándar.');
-      const profile = native ? await window.api.clickerBambuProfile(this.res.colors.length) : undefined;
-      const data = exportCanOpener(this.res, { bambu: profile });
-      const path = await window.api.saveFile({ defaultPath: `${fileBase(this.cfg.name)}${native ? '_Bambu_A1' : ''}.3mf`, filters: [{ name: '3MF', extensions: ['3mf'] }], data });
+      const profile = native ? await window.api.clickerBambuProfile(result.colors.length) : undefined;
+      if (this.stale || this.res !== result) return null;
+      const data = exportCanOpener(result, { bambu: profile });
+      const path = await window.api.saveFile({ defaultPath: `${fileBase(result.cfg.name)}${native ? '_Bambu_A1' : ''}.3mf`, filters: [{ name: '3MF', extensions: ['3mf'] }], data });
       if (path) this.cb.toast('3MF guardado. Revisa el laminado y realiza una impresión de prueba.');
       return path;
     } catch (err) {

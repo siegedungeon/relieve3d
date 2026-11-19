@@ -49,6 +49,7 @@ const byModule = {
   canopener: {
     preset: ['fit', 'Cambia cómo se une el llavero al anillo, hilo o cinta. Algunos enganches van dentro de la figura y otros sobresalen.'],
     notch: ['depth', 'Abre una muesca inferior en el centro de la ranura para dar acceso a la pestaña.'],
+    'border.enabled': ['depth', 'Rebaja el centro y deja un marco alrededor. Si hace falta, aumenta el grosor del cuerpo para sostener la abertura.'],
     'border.depth': ['depth', 'Mide cuánto baja el centro de la figura respecto al marco exterior.'],
     'attachment.wall': ['wall', 'Mide el material que se conserva alrededor del agujero del llavero. Aumentarla refuerza el borde y ocupa más espacio.'],
   },

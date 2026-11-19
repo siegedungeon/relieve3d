@@ -44,13 +44,17 @@ const OUTLINE_MARGIN = 1;
 const artSink = (logo) => logo.mode === 'flat' ? logo.flatDepth : logo.mode === 'engrave' ? logo.depth : 0;
 const hasSidePassage = (kind) => ['lateral', 'cord-loop', 'edge-loop'].includes(kind);
 
-export function canOpenerProfileThickness({ profile, attachment, border, logo }) {
+export function canOpenerMinimumThickness({ profile, attachment, border, logo }) {
   const style = CAN_OPENER_PROFILES[profile];
   const recess = artSink(logo) + (border.enabled ? border.depth : 0);
   const passage = hasSidePassage(attachment.kind) ? attachment.diameter + 2 * style.passageWall : 0;
-  const thickness = Math.max(style.thickness, style.roofBase + recess,
+  const thickness = Math.max(style.min, style.roofBase + recess,
     passage + (attachment.kind === 'edge-loop' ? recess : 0));
   return Math.ceil((thickness - 1e-8) * 100) / 100;
+}
+
+export function canOpenerProfileThickness(cfg) {
+  return Math.max(CAN_OPENER_PROFILES[cfg.profile].thickness, canOpenerMinimumThickness(cfg));
 }
 
 function measure(v, fallback, min, max, label) {
